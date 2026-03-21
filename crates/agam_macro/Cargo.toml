@@ -1,0 +1,8 @@
+[package]
+name = "agam_macro"
+description = "Macro engine and embedded DSL system"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

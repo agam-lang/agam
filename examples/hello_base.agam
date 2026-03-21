@@ -1,0 +1,14 @@
+@lang.base
+# Agam Base Mode - Hello World
+fn main():
+    let name = "World"
+    print(f"Hello, {name}!")
+    
+    let scores = [90, 85, 72, 95]
+    let total = 0
+    for score in scores:
+        total += score
+    
+    let avg = total / scores.len()
+    print(f"Average score: {avg}")
+    return 0

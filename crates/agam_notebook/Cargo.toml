@@ -1,0 +1,8 @@
+[package]
+name = "agam_notebook"
+description = "Jupyter-like notebook and REPL engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

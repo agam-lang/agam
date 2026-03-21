@@ -1,0 +1,8 @@
+[package]
+name = "agam_pkg"
+description = "Package manager (agpm) and environment management"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

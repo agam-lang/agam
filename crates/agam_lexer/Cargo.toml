@@ -1,0 +1,9 @@
+[package]
+name = "agam_lexer"
+description = "Dual-mode tokenizer for the Agam programming language"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agam_errors = { workspace = true }

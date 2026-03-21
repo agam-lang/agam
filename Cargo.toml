@@ -1,0 +1,73 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/agam_errors",
+    "crates/agam_ast",
+    "crates/agam_lexer",
+    "crates/agam_parser",
+    "crates/agam_sema",
+    "crates/agam_hir",
+    "crates/agam_mir",
+    "crates/agam_codegen",
+    "crates/agam_jit",
+    "crates/agam_runtime",
+    "crates/agam_std",
+    "crates/agam_ffi",
+    "crates/agam_notebook",
+    "crates/agam_ui",
+    "crates/agam_game",
+    "crates/agam_pkg",
+    "crates/agam_fmt",
+    "crates/agam_lint",
+    "crates/agam_lsp",
+    "crates/agam_doc",
+    "crates/agam_debug",
+    "crates/agam_profile",
+    "crates/agam_test",
+    "crates/agam_macro",
+    "crates/agam_driver",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/agam-lang/agam"
+
+[workspace.dependencies]
+# Shared dependencies across crates
+thiserror = "2"
+miette = { version = "7", features = ["fancy"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+logos = "0.15"
+codespan-reporting = "0.11"
+
+# Internal crate dependencies
+agam_errors = { path = "crates/agam_errors" }
+agam_ast = { path = "crates/agam_ast" }
+agam_lexer = { path = "crates/agam_lexer" }
+agam_parser = { path = "crates/agam_parser" }
+agam_sema = { path = "crates/agam_sema" }
+agam_hir = { path = "crates/agam_hir" }
+agam_mir = { path = "crates/agam_mir" }
+agam_codegen = { path = "crates/agam_codegen" }
+agam_jit = { path = "crates/agam_jit" }
+agam_runtime = { path = "crates/agam_runtime" }
+agam_std = { path = "crates/agam_std" }
+agam_ffi = { path = "crates/agam_ffi" }
+agam_notebook = { path = "crates/agam_notebook" }
+agam_ui = { path = "crates/agam_ui" }
+agam_game = { path = "crates/agam_game" }
+agam_pkg = { path = "crates/agam_pkg" }
+agam_fmt = { path = "crates/agam_fmt" }
+agam_lint = { path = "crates/agam_lint" }
+agam_lsp = { path = "crates/agam_lsp" }
+agam_doc = { path = "crates/agam_doc" }
+agam_debug = { path = "crates/agam_debug" }
+agam_profile = { path = "crates/agam_profile" }
+agam_test = { path = "crates/agam_test" }
+agam_macro = { path = "crates/agam_macro" }
+agam_driver = { path = "crates/agam_driver" }

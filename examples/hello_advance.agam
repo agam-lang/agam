@@ -1,0 +1,16 @@
+@lang.advance
+// Agam Advance Mode - Hello World
+fn main() -> i32 {
+    let name: String = "World";
+    println("Hello, " + name + "!");
+    
+    let scores: Array<i32> = [90, 85, 72, 95];
+    let mut total: i32 = 0;
+    for score in scores {
+        total += score;
+    }
+    
+    let avg: i32 = total / scores.len();
+    println("Average score: {}", avg);
+    return 0;
+}

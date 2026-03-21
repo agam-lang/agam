@@ -1,0 +1,11 @@
+[package]
+name = "agam_parser"
+description = "Recursive-descent parser for the Agam programming language"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agam_errors = { workspace = true }
+agam_ast = { workspace = true }
+agam_lexer = { workspace = true }

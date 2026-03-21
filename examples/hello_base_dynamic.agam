@@ -1,0 +1,14 @@
+@lang.base.dynamic
+# Agam Base Dynamic Mode - Hello World
+fn main():
+    name = "World"
+    print("Hello,", name)
+    
+    scores = [90, 85, 72, 95]
+    total = 0
+    for score in scores:
+        total += score
+    
+    avg = total / scores.len()
+    print(f"Average score: {avg}")
+    return 0

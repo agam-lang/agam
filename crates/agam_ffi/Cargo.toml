@@ -1,0 +1,8 @@
+[package]
+name = "agam_ffi"
+description = "Foreign function interface bridges (Python, C++, Java)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

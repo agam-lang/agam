@@ -1,0 +1,18 @@
+[package]
+name = "agam_driver"
+description = "The agamc compiler CLI entry point"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agamc"
+path = "src/main.rs"
+
+[dependencies]
+agam_errors = { workspace = true }
+agam_lexer = { workspace = true }
+agam_parser = { workspace = true }
+agam_ast = { workspace = true }
+clap = { workspace = true }
+miette = { workspace = true }

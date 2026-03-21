@@ -1,0 +1,8 @@
+[package]
+name = "agam_mir"
+description = "Mid-level intermediate representation with SSA and CFG"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

@@ -1,0 +1,8 @@
+[package]
+name = "agam_test"
+description = "Test framework, property testing, and fuzzing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

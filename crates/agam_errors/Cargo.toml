@@ -1,0 +1,11 @@
+[package]
+name = "agam_errors"
+description = "Diagnostic errors, source spans, and error reporting for the Agam compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+miette = { workspace = true }
+codespan-reporting = { workspace = true }

@@ -1,0 +1,8 @@
+[package]
+name = "agam_lsp"
+description = "Language Server Protocol implementation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

@@ -1,0 +1,8 @@
+[package]
+name = "agam_game"
+description = "Game engine with ECS architecture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
