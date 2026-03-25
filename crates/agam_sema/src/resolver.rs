@@ -446,6 +446,11 @@ impl Resolver {
             ExprKind::Resume(inner) => {
                 self.resolve_expr(inner);
             }
+            ExprKind::BlockExpr(block) => {
+                for stmt in &block.stmts {
+                    self.resolve_stmt(stmt);
+                }
+            }
             // Literals don't need resolution
             ExprKind::IntLiteral(_) | ExprKind::FloatLiteral(_)
             | ExprKind::StringLiteral(_) | ExprKind::BoolLiteral(_) => {}

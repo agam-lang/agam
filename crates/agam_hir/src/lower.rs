@@ -306,7 +306,7 @@ impl HirLowering {
                 HirExprKind::Tuple(elems.iter().map(|e| self.lower_expr(e)).collect())
             }
 
-            ExprKind::Block(block) => HirExprKind::Block(self.lower_block(block)),
+            ExprKind::BlockExpr(block) => HirExprKind::Block(self.lower_block(block)),
 
             ExprKind::Cast { expr: inner, .. } => HirExprKind::Cast {
                 expr: Box::new(self.lower_expr(inner)),

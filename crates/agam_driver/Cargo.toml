@@ -14,5 +14,9 @@ agam_errors = { workspace = true }
 agam_lexer = { workspace = true }
 agam_parser = { workspace = true }
 agam_ast = { workspace = true }
+agam_sema = { workspace = true }
+agam_hir = { workspace = true }
+agam_mir = { workspace = true }
+agam_codegen = { workspace = true }
 clap = { workspace = true }
 miette = { workspace = true }

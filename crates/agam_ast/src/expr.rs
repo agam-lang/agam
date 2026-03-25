@@ -35,6 +35,8 @@ pub enum ExprKind {
     BoolLiteral(bool),
     /// Array literal: `[1, 2, 3]`
     ArrayLiteral(Vec<Expr>),
+    /// Block expression: `{ stmt1; stmt2; expr }`
+    BlockExpr(Block),
     /// Tuple literal: `(1, "a", true)`
     TupleLiteral(Vec<Expr>),
 

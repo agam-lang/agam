@@ -50,9 +50,13 @@ name = "agam_driver"
 version = "0.1.0"
 dependencies = [
  "agam_ast",
+ "agam_codegen",
  "agam_errors",
+ "agam_hir",
  "agam_lexer",
+ "agam_mir",
  "agam_parser",
+ "agam_sema",
  "clap",
  "miette",
 ]

@@ -429,6 +429,12 @@ impl TypeChecker {
                 // resume passes a value to the continuation
                 self.types.fresh_var()
             }
+            ExprKind::BlockExpr(block) => {
+                for stmt in &block.stmts {
+                    self.check_stmt(stmt);
+                }
+                self.types.fresh_var()
+            }
         }
     }
 

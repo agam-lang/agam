@@ -115,29 +115,21 @@ fn main() {
                 eprintln!("[agamc] Optimization level: O{}", opt_level);
             }
 
-            for file in &files {
-                if let Err(e) = compile_file(file, cli.verbose) {
+            let out_path = output
+                .unwrap_or_else(|| {
+                    let stem = files[0].file_stem().unwrap().to_str().unwrap();
+                    PathBuf::from(format!("{}.exe", stem))
+                });
+
+            match build_file(&files[0], &out_path, opt_level, cli.verbose) {
+                Ok(()) => {
+                    eprintln!("\x1b[1;32m✓\x1b[0m Built: {}", out_path.display());
+                }
+                Err(e) => {
                     eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
                     process::exit(1);
                 }
             }
-
-            let out = output
-                .unwrap_or_else(|| {
-                    let stem = files[0].file_stem().unwrap().to_str().unwrap();
-                    PathBuf::from(stem)
-                });
-
-            if cli.verbose {
-                eprintln!("[agamc] Output: {}", out.display());
-            }
-
-            eprintln!(
-                "\x1b[1;32minfo\x1b[0m: compilation pipeline not yet implemented (Phase 43+)"
-            );
-            eprintln!(
-                "\x1b[1;32minfo\x1b[0m: lexer and parser are functional — use `agamc check` to validate syntax"
-            );
         }
 
         Command::Run { file, args } => {
@@ -147,9 +139,34 @@ fn main() {
                     eprintln!("[agamc] Args: {:?}", args);
                 }
             }
-            eprintln!(
-                "\x1b[1;32minfo\x1b[0m: `run` subcommand not yet implemented (requires codegen, Phase 43+)"
-            );
+
+            let stem = file.file_stem().unwrap().to_str().unwrap();
+            let exe_path = PathBuf::from(format!("{}.exe", stem));
+
+            match build_file(&file, &exe_path, 2, cli.verbose) {
+                Ok(()) => {
+                    // Execute the built binary
+                    let status = std::process::Command::new(&exe_path)
+                        .args(&args)
+                        .status();
+
+                    match status {
+                        Ok(s) => {
+                            if !s.success() {
+                                process::exit(s.code().unwrap_or(1));
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("\x1b[1;31merror\x1b[0m: failed to run {}: {}", exe_path.display(), e);
+                            process::exit(1);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
         }
 
         Command::Check { files } => {
@@ -261,3 +278,96 @@ fn compile_file(path: &PathBuf, verbose: bool) -> Result<(), String> {
     }
 }
 
+/// Full compilation pipeline: Lex → Parse → HIR → MIR → C → gcc → native binary
+fn build_file(path: &PathBuf, output: &PathBuf, opt_level: u8, verbose: bool) -> Result<(), String> {
+    let source = std::fs::read_to_string(path)
+        .map_err(|e| format!("could not read `{}`: {}", path.display(), e))?;
+
+    if verbose {
+        eprintln!("[agamc] Read {} ({} bytes)", path.display(), source.len());
+    }
+
+    // === Phase 1: Lexing ===
+    let tokens = agam_lexer::tokenize(&source, SourceId(0));
+    if verbose {
+        eprintln!("[agamc] Lexed {} tokens", tokens.len());
+    }
+
+    // === Phase 2: Parsing ===
+    let module = agam_parser::parse(tokens, SourceId(0))
+        .map_err(|errors| {
+            for err in &errors {
+                eprintln!("\x1b[1;31merror\x1b[0m: {}", err.message);
+            }
+            format!("{} parse error(s)", errors.len())
+        })?;
+
+    if verbose {
+        eprintln!("[agamc] Parsed {} declarations", module.declarations.len());
+    }
+
+    // === Phase 3: HIR Lowering ===
+    let mut hir_lowering = agam_hir::lower::HirLowering::new();
+    let hir = hir_lowering.lower_module(&module);
+
+    if verbose {
+        eprintln!("[agamc] Lowered to HIR: {} functions", hir.functions.len());
+    }
+
+    // === Phase 4: MIR Lowering ===
+    let mut mir_lowering = agam_mir::lower::MirLowering::new();
+    let mir = mir_lowering.lower_module(&hir);
+
+    if verbose {
+        eprintln!("[agamc] Lowered to MIR: {} functions", mir.functions.len());
+    }
+
+    // === Phase 5: C Code Generation ===
+    let c_code = agam_codegen::c_emitter::emit_c(&mir);
+
+    let c_path = output.with_extension("c");
+    std::fs::write(&c_path, &c_code)
+        .map_err(|e| format!("failed to write C file: {}", e))?;
+
+    if verbose {
+        eprintln!("[agamc] Generated C code: {} ({} bytes)", c_path.display(), c_code.len());
+    }
+
+    // === Phase 6: Native Compilation via gcc/clang ===
+    let opt_flag = format!("-O{}", opt_level);
+    let compiler = if cfg!(windows) { "gcc" } else { "cc" };
+
+    let result = std::process::Command::new(compiler)
+        .args(&[
+            c_path.to_str().unwrap(),
+            "-o", output.to_str().unwrap(),
+            &opt_flag,
+            "-lm",
+        ])
+        .output();
+
+    match result {
+        Ok(out) => {
+            if !out.status.success() {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                // If gcc is not found, fall back to just producing the C file
+                if stderr.contains("not recognized") || stderr.contains("not found") {
+                    eprintln!("\x1b[1;33mwarning\x1b[0m: C compiler not found, generated C file: {}", c_path.display());
+                    eprintln!("\x1b[1;32minfo\x1b[0m: compile manually with: gcc {} -o {} -O2 -lm",
+                        c_path.display(), output.display());
+                    return Ok(());
+                }
+                return Err(format!("C compilation failed:\n{}", stderr));
+            }
+            // Clean up .c file
+            let _ = std::fs::remove_file(&c_path);
+            Ok(())
+        }
+        Err(_) => {
+            eprintln!("\x1b[1;33mwarning\x1b[0m: C compiler not found, generated C file: {}", c_path.display());
+            eprintln!("\x1b[1;32minfo\x1b[0m: compile manually with: gcc {} -o {} -O2 -lm",
+                c_path.display(), output.display());
+            Ok(())
+        }
+    }
+}

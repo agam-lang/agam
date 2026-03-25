@@ -448,6 +448,16 @@ impl Parser {
             let next_min = if assoc == Assoc::Left { prec + 1 } else { prec };
             left = self.parse_infix(left, next_min)?;
         }
+
+        // Contextual struct literal: only for dotted paths like `module.Type { ... }`
+        if self.peek_kind() == TokenKind::LBrace {
+            if let ExprKind::FieldAccess { .. } = &left.kind {
+                let id = self.node_id();
+                let span = self.peek().span;
+                left = self.parse_infix(left, 14)?;
+            }
+        }
+
         Ok(left)
     }
 
@@ -490,6 +500,35 @@ impl Parser {
                 self.advance();
                 let ident = Ident::new(&tok.lexeme, tok.span);
                 Ok(Expr { id, span: tok.span, kind: ExprKind::Identifier(ident) })
+            }
+            TokenKind::Pipe => {
+                self.advance();
+                let mut params = Vec::new();
+                while self.peek_kind() != TokenKind::Pipe && !self.at_end() {
+                    let name_tok = self.expect(TokenKind::Identifier)?;
+                    let name = Ident::new(&name_tok.lexeme, name_tok.span);
+                    let mut ty = None;
+                    if self.eat(TokenKind::Colon) {
+                        ty = Some(self.parse_type_expr()?);
+                    }
+                    let span = name.span;
+                    params.push(LambdaParam { name, ty, span });
+                    if !self.eat(TokenKind::Comma) { break; }
+                }
+                self.expect(TokenKind::Pipe)?;
+                
+                let mut return_type = None;
+                if self.eat(TokenKind::Arrow) {
+                    return_type = Some(Box::new(self.parse_type_expr()?));
+                }
+                
+                let body = if self.peek_kind() == TokenKind::LBrace {
+                    let block = self.parse_block()?;
+                    Expr { id: self.node_id(), span: block.span, kind: ExprKind::BlockExpr(block) }
+                } else {
+                    self.parse_expression(0)?
+                };
+                Ok(Expr { id, span: tok.span, kind: ExprKind::Lambda { params, return_type, body: Box::new(body) } })
             }
             TokenKind::LParen => {
                 self.advance();
@@ -613,6 +652,44 @@ impl Parser {
                 let index = self.parse_expression(0)?;
                 self.expect(TokenKind::RBracket)?;
                 Ok(Expr { id, span: op_tok.span, kind: ExprKind::Index { object: Box::new(left), index: Box::new(index) } })
+            }
+            // Struct Literal
+            TokenKind::LBrace => {
+                self.advance();
+                
+                // Convert the 'left' expression into a Path
+                let path = match &left.kind {
+                    ExprKind::Identifier(ident) => Path { segments: vec![ident.clone()], span: left.span },
+                    ExprKind::FieldAccess { object, field } => {
+                        if let ExprKind::Identifier(obj_id) = &object.kind {
+                            Path { segments: vec![obj_id.clone(), field.clone()], span: left.span }
+                        } else {
+                            return Err(self.error("Invalid struct path".to_string()));
+                        }
+                    },
+                    _ => return Err(self.error("Expected identifier or path before '{'".to_string())),
+                };
+
+                let mut fields = Vec::new();
+                while self.peek_kind() != TokenKind::RBrace && !self.at_end() {
+                    let field_name_str = if self.peek_kind() == TokenKind::StringLiteral {
+                        let lit = self.peek().lexeme.clone();
+                        self.advance();
+                        lit[1..lit.len()-1].to_string() // stip quotes for dict-like struct init
+                    } else {
+                        let id_tok = self.expect(TokenKind::Identifier)?;
+                        id_tok.lexeme.clone()
+                    };
+                    
+                    let name = Ident::new(&field_name_str, self.peek().span);
+                    let span = name.span;
+                    self.expect(TokenKind::Colon)?;
+                    let value = self.parse_expression(0)?;
+                    fields.push(FieldInit { name, value, span });
+                    if !self.eat(TokenKind::Comma) { break; }
+                }
+                self.expect(TokenKind::RBrace)?;
+                Ok(Expr { id, span: op_tok.span, kind: ExprKind::StructLiteral { path, fields } })
             }
             // Try
             TokenKind::Question => {
