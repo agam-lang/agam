@@ -11,8 +11,14 @@
 //! 3. **Internal Types** (`types`) — resolved type representation with an
 //!    interning `TypeStore`, type variables for inference, and well-known
 //!    primitive type IDs.
+//! 4. **Type Inference** (`infer`) — union-find based constraint solver that
+//!    unifies type variables with concrete types.
+//! 5. **Type Checking** (`checker`) — walks the AST to generate type constraints
+//!    and delegates solving to the inference engine.
 
 pub mod symbol;
 pub mod types;
 pub mod scope;
 pub mod resolver;
+pub mod infer;
+pub mod checker;
