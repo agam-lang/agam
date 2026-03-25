@@ -27,6 +27,15 @@ dependencies = [
 [[package]]
 name = "agam_codegen"
 version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
+ "agam_hir",
+ "agam_lexer",
+ "agam_mir",
+ "agam_parser",
+ "agam_sema",
+]
 
 [[package]]
 name = "agam_debug"
@@ -72,6 +81,13 @@ version = "0.1.0"
 [[package]]
 name = "agam_hir"
 version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
+ "agam_lexer",
+ "agam_parser",
+ "agam_sema",
+]
 
 [[package]]
 name = "agam_jit"
@@ -99,6 +115,14 @@ version = "0.1.0"
 [[package]]
 name = "agam_mir"
 version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
+ "agam_hir",
+ "agam_lexer",
+ "agam_parser",
+ "agam_sema",
+]
 
 [[package]]
 name = "agam_notebook"
