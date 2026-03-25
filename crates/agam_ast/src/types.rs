@@ -113,6 +113,13 @@ pub enum TypeExprKind {
     /// `var x: dyn = anything`
     Dynamic,
 
+    /// Refinement type: `{ base | predicate }`.
+    /// E.g., `{v: i32 | v > 0}`
+    Refined {
+        base: Box<TypeExpr>,
+        predicate: Box<super::expr::Expr>,
+    },
+
     /// `dyn Trait` — a trait object (dynamically dispatched).
     DynTrait(Box<TypeExpr>),
 

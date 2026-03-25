@@ -528,6 +528,10 @@ impl Resolver {
                 let ret_id = self.resolve_type_expr_to_id(return_type);
                 self.types.insert(Type::Function { params: param_ids, ret: ret_id })
             }
+            TypeExprKind::Refined { base, .. } => {
+                // Return the base type ID while type system learns refinement predicates
+                self.resolve_type_expr_to_id(base)
+            }
             _ => self.types.fresh_var(),
         }
     }

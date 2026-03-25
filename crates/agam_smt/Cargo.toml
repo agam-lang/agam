@@ -1,0 +1,8 @@
+[package]
+name = "agam_smt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+agam_ast = { path = "../agam_ast" }
+agam_errors = { path = "../agam_errors" }

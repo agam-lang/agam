@@ -157,6 +157,15 @@ dependencies = [
  "agam_errors",
  "agam_lexer",
  "agam_parser",
+ "agam_smt",
+]
+
+[[package]]
+name = "agam_smt"
+version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
 ]
 
 [[package]]

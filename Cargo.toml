@@ -25,7 +25,7 @@ members = [
     "crates/agam_profile",
     "crates/agam_test",
     "crates/agam_macro",
-    "crates/agam_driver",
+    "crates/agam_driver", "crates/agam_smt",
 ]
 
 [workspace.package]

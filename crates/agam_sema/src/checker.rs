@@ -18,6 +18,8 @@ use crate::scope::ScopeStack;
 use crate::types::{Type, TypeStore, IntSize, FloatSize};
 use crate::infer::InferenceEngine;
 use crate::resolver::Resolver;
+use agam_smt::solver::{Z3Solver, SmtSolver, Constraint, SolverResult};
+use agam_smt::verify::{VerificationCache, VerificationStatus};
 
 /// A type error reported to the user.
 #[derive(Debug, Clone)]
@@ -32,6 +34,7 @@ pub struct TypeChecker {
     pub scopes: ScopeStack,
     pub engine: InferenceEngine,
     pub errors: Vec<TypeError>,
+    pub smt_cache: VerificationCache,
 }
 
 impl TypeChecker {
@@ -43,6 +46,7 @@ impl TypeChecker {
             scopes: resolver.scopes,
             engine: InferenceEngine::new(capacity),
             errors: Vec::new(),
+            smt_cache: VerificationCache::new(),
         }
     }
 
@@ -66,7 +70,32 @@ impl TypeChecker {
 
     fn check_decl(&mut self, decl: &Decl) {
         match &decl.kind {
-            DeclKind::Function(f) => self.check_function(f),
+            DeclKind::Function(f) => {
+                // Check if already verified
+                if let Some(VerificationStatus::VerifiedSafe) = self.smt_cache.get_status(decl.id) {
+                    // Skip SMT checking if unchanged
+                } else {
+                    // Basic SMT verification pass
+                    let mut solver = Z3Solver::new();
+                    // (In a full implementation, we'd walk the body and assert preconditions/path conditions)
+                    // Mock verification: prove basic bounds
+                    solver.declare_int("v");
+                    solver.push();
+                    // Assume v != 0 locally
+                    solver.assert(Constraint::NotEq(
+                        Box::new(Constraint::Var("v".to_string())),
+                        Box::new(Constraint::Int(0))
+                    ));
+                    
+                    let is_safe = match solver.check_sat() {
+                        SolverResult::Sat | SolverResult::Unknown => VerificationStatus::Failed,
+                        SolverResult::Unsat => VerificationStatus::VerifiedSafe,
+                    };
+                    self.smt_cache.set_status(decl.id, is_safe);
+                }
+
+                self.check_function(f);
+            }
             DeclKind::Struct(_) => {} // Struct fields are checked when used
             DeclKind::Impl(imp) => {
                 for item in &imp.items {
@@ -431,6 +460,9 @@ impl TypeChecker {
             }
             TypeExprKind::Inferred | TypeExprKind::Dynamic | TypeExprKind::Any => {
                 self.types.any()
+            }
+            TypeExprKind::Refined { base, .. } => {
+                self.resolve_type_expr(base)
             }
             _ => self.types.fresh_var(),
         }
