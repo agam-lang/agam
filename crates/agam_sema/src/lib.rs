@@ -19,6 +19,12 @@
 //!    before trait), coherence checking, and completeness verification.
 //! 7. **Ownership Analysis** (`ownership`) — move tracking, borrow rules,
 //!    mutability enforcement, and scope-based drop analysis.
+//! 8. **Lifetime Analysis** (`lifetime`) — region inference, lifetime constraints,
+//!    elision rules, and dangling reference detection.
+//! 9. **Exhaustiveness Checking** (`exhaustive`) — ensures match expressions
+//!    cover all possible values, detects unreachable/duplicate arms.
+//! 10. **Const Evaluation** (`consteval`) — compile-time expression evaluation
+//!     for `const` declarations, array sizes, and contract assertions.
 
 pub mod symbol;
 pub mod types;
@@ -28,3 +34,6 @@ pub mod infer;
 pub mod checker;
 pub mod traits;
 pub mod ownership;
+pub mod lifetime;
+pub mod exhaustive;
+pub mod consteval;
