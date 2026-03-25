@@ -436,6 +436,13 @@ impl Resolver {
                     }
                 }
             }
+            // Differentiable programming
+            ExprKind::Grad { func, .. } => {
+                self.resolve_expr(func);
+            }
+            ExprKind::Backward(inner) => {
+                self.resolve_expr(inner);
+            }
             // Literals don't need resolution
             ExprKind::IntLiteral(_) | ExprKind::FloatLiteral(_)
             | ExprKind::StringLiteral(_) | ExprKind::BoolLiteral(_) => {}

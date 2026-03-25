@@ -383,6 +383,18 @@ impl TypeChecker {
                 }
                 self.types.fresh_var()
             }
+
+            // ── Differentiable Programming ──
+            ExprKind::Grad { func, .. } => {
+                self.infer_expr(func);
+                // grad(f, x) returns a function: the derivative of f w.r.t. x
+                self.types.fresh_var()
+            }
+            ExprKind::Backward(inner) => {
+                self.infer_expr(inner);
+                // backward produces gradient values (f64)
+                self.types.f64()
+            }
         }
     }
 

@@ -96,6 +96,14 @@ pub enum TokenKind {
     Static,
     /// `var` — variable with inferred/dynamic type
     Var,
+    /// `grad` — automatic differentiation
+    Grad,
+    /// `backward` — reverse-mode autodiff
+    Backward,
+    /// `tensor` — tensor type
+    Tensor,
+    /// `strict` — strict ownership block
+    Strict,
 
     // ── Operators ────────────────────────────────────────
     /// `+`
@@ -348,6 +356,10 @@ pub fn lookup_keyword(ident: &str) -> Option<TokenKind> {
         "dyn" => Some(TokenKind::Dyn),
         "static" => Some(TokenKind::Static),
         "var" => Some(TokenKind::Var),
+        "grad" => Some(TokenKind::Grad),
+        "backward" => Some(TokenKind::Backward),
+        "tensor" => Some(TokenKind::Tensor),
+        "strict" => Some(TokenKind::Strict),
         "true" => Some(TokenKind::True),
         "false" => Some(TokenKind::False),
         _ => None,

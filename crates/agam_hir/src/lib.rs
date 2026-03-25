@@ -10,3 +10,4 @@
 
 pub mod nodes;
 pub mod lower;
+pub mod autodiff;

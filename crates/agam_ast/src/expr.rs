@@ -161,6 +161,16 @@ pub enum ExprKind {
         path: Path,
         fields: Vec<FieldInit>,
     },
+
+    // ── Differentiable Programming ──
+
+    /// Gradient: `grad(f, x)` — computes ∂f/∂x
+    Grad {
+        func: Box<Expr>,
+        wrt: Ident,
+    },
+    /// Backward pass: `backward(expr)` — reverse-mode autodiff
+    Backward(Box<Expr>),
 }
 
 /// A part of an f-string.
