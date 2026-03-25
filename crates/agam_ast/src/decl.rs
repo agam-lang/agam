@@ -9,12 +9,34 @@ use crate::types::TypeExpr;
 use crate::pattern::Pattern;
 use agam_errors::Span;
 
+/// A compiler attribute, e.g. `#[align(64)]`, `#[dispatch(SIMD)]`.
+#[derive(Debug, Clone)]
+pub struct Attribute {
+    pub name: String,
+    pub args: Vec<String>,
+    pub span: Span,
+}
+
+impl Attribute {
+    /// Check if this attribute has the given name.
+    pub fn is(&self, name: &str) -> bool {
+        self.name == name
+    }
+
+    /// Get the first argument, if any.
+    pub fn first_arg(&self) -> Option<&str> {
+        self.args.first().map(|s| s.as_str())
+    }
+}
+
 /// A declaration node.
 #[derive(Debug, Clone)]
 pub struct Decl {
     pub id: NodeId,
     pub span: Span,
     pub kind: DeclKind,
+    /// Compiler attributes: `#[align(64)]`, `#[dispatch(SIMD)]`, etc.
+    pub attributes: Vec<Attribute>,
 }
 
 /// The different kinds of declarations.

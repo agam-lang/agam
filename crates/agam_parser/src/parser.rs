@@ -126,6 +126,7 @@ impl Parser {
                         annotations: vec![], span: Span::dummy(),
                     }),
                     span: Span::new(self.peek().span.source_id, span_start, self.peek().span.end),
+                    attributes: vec![],
                 });
             }
         };
@@ -134,6 +135,7 @@ impl Parser {
             id: self.node_id(),
             span: Span::new(self.peek().span.source_id, span_start, self.peek().span.end),
             kind,
+            attributes: vec![],
         })
     }
 
