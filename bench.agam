@@ -1,0 +1,45 @@
+@lang.advance
+
+import agam_std.numerical
+import agam_std.ndarray
+import agam_std.dataframe
+
+// 1. Array & Numerical Optimization Benchmark
+fn optimize_rosenbrock() {
+    print("Agam: Optimizing Rosenbrock function using Adam (50,000 iters)...")
+    
+    // f(x, y) = (1 - x)^2 + 100 * (y - x^2)^2
+    let grad_f = |x: Array<f64>| -> Array<f64> {
+        return [
+            -2.0 * (1.0 - x[0]) - 400.0 * x[0] * (x[1] - x[0]*x[0]),
+            200.0 * (x[1] - x[0]*x[0])
+        ];
+    };
+    
+    let result = numerical.adam(grad_f, [-1.0, 2.0], 0.001, 50000, 1e-8);
+    println("Found minimum: {}", result);
+}
+
+// 2. Heavy DataFrame Filter / Map / Reduce Benchmark
+fn process_dataframe() {
+    print("Agam: Processing DataFrame (30 million rows)...")
+    let rows: i32 = 30000000;
+    
+    // Columnar layout: simulating sinusoidal data extraction
+    let df = dataframe.DataFrame {
+        "id": ndarray.arange(0, rows),
+        "score": ndarray.arange(0, rows).map(|x| (x * 0.1).sin())
+    };
+    
+    // Declarative query: pipeline compiles down to heavily SIMD vectorized filters
+    let filtered_df = df.filter(|row| row.score > 0.5);
+    let mean_score = filtered_df.mean("score");
+    
+    println("Mean score of filtered dataframe (Agam): {}", mean_score);
+}
+
+fn main() -> i32 {
+    optimize_rosenbrock();
+    process_dataframe();
+    return 0;
+}
