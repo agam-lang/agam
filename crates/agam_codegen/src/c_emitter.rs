@@ -17,6 +17,8 @@ pub fn emit_c(module: &MirModule) -> String {
     writeln!(output, "#include <stdlib.h>").unwrap();
     writeln!(output, "#include <string.h>").unwrap();
     writeln!(output, "#include <stdint.h>").unwrap();
+    writeln!(output, "#include <math.h>").unwrap();
+    writeln!(output, "#include <time.h>").unwrap();
     writeln!(output).unwrap();
 
     // Type aliases
@@ -25,6 +27,42 @@ pub fn emit_c(module: &MirModule) -> String {
     writeln!(output, "typedef int agam_bool;").unwrap();
     writeln!(output, "typedef const char* agam_str;").unwrap();
     writeln!(output).unwrap();
+
+    // Runtime prelude — stub implementations for standard library functions
+    writeln!(output, "/* ── Agam Runtime Prelude ──────────────────── */").unwrap();
+    writeln!(output, "agam_int agam_println(agam_str s) {{ printf(\"%s\\n\", s); return 0; }}").unwrap();
+    writeln!(output, "agam_int agam_print(agam_str s) {{ printf(\"%s\", s); return 0; }}").unwrap();
+    writeln!(output, "double agam_clock() {{ return (double)clock() / CLOCKS_PER_SEC; }}").unwrap();
+    writeln!(output).unwrap();
+
+    // Collect all unknown function calls and generate stub declarations
+    let mut unknown_funcs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for func in &module.functions {
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                if let Op::Call { callee, args } = &instr.op {
+                    let mangled = mangle_name(callee);
+                    if callee != "print" && callee != "println"
+                        && !module.functions.iter().any(|f| mangle_name(&f.name) == mangled)
+                        && mangled != "agam_println" && mangled != "agam_print"
+                        && mangled != "agam_clock"
+                    {
+                        unknown_funcs.insert(format!("agam_int {}({});",
+                            mangled,
+                            (0..args.len()).map(|i| format!("agam_int __a{}", i)).collect::<Vec<_>>().join(", ")
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    if !unknown_funcs.is_empty() {
+        writeln!(output, "/* ── External function stubs ── */").unwrap();
+        for stub in &unknown_funcs {
+            writeln!(output, "{}", stub).unwrap();
+        }
+        writeln!(output).unwrap();
+    }
 
     // Forward declarations
     for func in &module.functions {
@@ -93,7 +131,7 @@ fn emit_instruction(out: &mut String, instr: &Instruction) {
             writeln!(out, "  agam_str {} = \"{}\";", v, escape_c_string(val)).unwrap();
         }
         Op::Unit => {
-            writeln!(out, "  /* {} = unit */", v).unwrap();
+            writeln!(out, "  agam_int {} = 0; /* unit */", v).unwrap();
         }
         Op::BinOp { op, left, right } => {
             let op_str = binop_to_c(*op);
@@ -104,19 +142,21 @@ fn emit_instruction(out: &mut String, instr: &Instruction) {
             writeln!(out, "  agam_int {} = {}__v{};", v, op_str, operand.0).unwrap();
         }
         Op::Call { callee, args } => {
-            if callee == "print" {
-                // Special-case: print → printf
+            if callee == "print" || callee == "println" {
+                // Special-case: print/println → printf
                 if args.is_empty() {
                     writeln!(out, "  printf(\"\\n\");").unwrap();
                 } else {
-                    // Print each argument separated by space
+                    // Print each argument — use %s for strings, %lld for ints
                     for (i, arg) in args.iter().enumerate() {
                         if i > 0 {
                             writeln!(out, "  printf(\" \");").unwrap();
                         }
-                        writeln!(out, "  printf(\"%lld\", (long long)__v{});", arg.0).unwrap();
+                        writeln!(out, "  printf(\"%s\", (agam_str)__v{});", arg.0).unwrap();
                     }
-                    writeln!(out, "  printf(\"\\n\");").unwrap();
+                    if callee == "println" {
+                        writeln!(out, "  printf(\"\\n\");").unwrap();
+                    }
                 }
                 writeln!(out, "  agam_int {} = 0;", v).unwrap();
             } else {

@@ -132,7 +132,7 @@ pub fn linear_regression(x: &[f64], y: &[f64]) -> (f64, f64, f64) {
     let sum_y: f64 = y.iter().sum();
     let sum_xy: f64 = x.iter().zip(y).map(|(a, b)| a * b).sum();
     let sum_x2: f64 = x.iter().map(|a| a * a).sum();
-    let sum_y2: f64 = y.iter().map(|a| a * a).sum();
+    let _sum_y2: f64 = y.iter().map(|a| a * a).sum();
 
     let a = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
     let b = (sum_y - a * sum_x) / n;

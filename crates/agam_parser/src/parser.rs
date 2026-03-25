@@ -452,8 +452,6 @@ impl Parser {
         // Contextual struct literal: only for dotted paths like `module.Type { ... }`
         if self.peek_kind() == TokenKind::LBrace {
             if let ExprKind::FieldAccess { .. } = &left.kind {
-                let id = self.node_id();
-                let span = self.peek().span;
                 left = self.parse_infix(left, 14)?;
             }
         }
