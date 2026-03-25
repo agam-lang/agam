@@ -1,0 +1,43 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running `target\debug\agamc.exe build bench_advanced.agam -v -O 2`
+[agamc] Building 1 file(s)...
+[agamc] Optimization level: O2
+[agamc] Read bench_advanced.agam (3220 bytes)
+[agamc] Lexed 644 tokens
+[agamc] Parsed 6 declarations
+[agamc] Lowered to HIR: 6 functions
+[agamc] Lowered to MIR: 6 functions
+[agamc] Generated C code: bench_advanced.c (9618 bytes)
+error: C compilation failed:
+bench_advanced.c:26:10: error: conflicting types for 'agam_sum_loop'; have 'agam_int(agam_int)' {aka 'long long int(long long int)'}
+   26 | agam_int agam_sum_loop(agam_int __p0) {
+      |          ^~~~~~~~~~~~~
+bench_advanced.c:19:10: note: previous declaration of 'agam_sum_loop' with type 'agam_int(void)' {aka 'long long int(void)'}
+   19 | agam_int agam_sum_loop();
+      |          ^~~~~~~~~~~~~
+bench_advanced.c:57:10: error: conflicting types for 'agam_fibonacci'; have 'agam_int(agam_int)' {aka 'long long int(long long int)'}
+   57 | agam_int agam_fibonacci(agam_int __p0) {
+      |          ^~~~~~~~~~~~~~
+bench_advanced.c:20:10: note: previous declaration of 'agam_fibonacci' with type 'agam_int(void)' {aka 'long long int(void)'}
+   20 | agam_int agam_fibonacci();
+      |          ^~~~~~~~~~~~~~
+bench_advanced.c:101:10: error: conflicting types for 'agam_count_primes'; have 'agam_int(agam_int)' {aka 'long long int(long long int)'}
+  101 | agam_int agam_count_primes(agam_int __p0) {
+      |          ^~~~~~~~~~~~~~~~~
+bench_advanced.c:21:10: note: previous declaration of 'agam_count_primes' with type 'agam_int(void)' {aka 'long long int(void)'}
+   21 | agam_int agam_count_primes();
+      |          ^~~~~~~~~~~~~~~~~
+bench_advanced.c:160:10: error: conflicting types for 'agam_matrix_multiply'; have 'agam_int(agam_int)' {aka 'long long int(long long int)'}
+  160 | agam_int agam_matrix_multiply(agam_int __p0) {
+      |          ^~~~~~~~~~~~~~~~~~~~
+bench_advanced.c:22:10: note: previous declaration of 'agam_matrix_multiply' with type 'agam_int(void)' {aka 'long long int(void)'}
+   22 | agam_int agam_matrix_multiply();
+      |          ^~~~~~~~~~~~~~~~~~~~
+bench_advanced.c:237:10: error: conflicting types for 'agam_integrate_x2'; have 'agam_int(agam_int)' {aka 'long long int(long long int)'}
+  237 | agam_int agam_integrate_x2(agam_int __p0) {
+      |          ^~~~~~~~~~~~~~~~~
+bench_advanced.c:23:10: note: previous declaration of 'agam_integrate_x2' with type 'agam_int(void)' {aka 'long long int(void)'}
+   23 | agam_int agam_integrate_x2();
+      |          ^~~~~~~~~~~~~~~~~
+
+error: process didn't exit successfully: `target\debug\agamc.exe build bench_advanced.agam -v -O 2` (exit code: 1)

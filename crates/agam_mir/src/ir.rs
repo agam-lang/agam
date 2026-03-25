@@ -24,6 +24,7 @@ pub struct MirFunction {
 /// A function parameter.
 #[derive(Debug)]
 pub struct MirParam {
+    pub name: String,
     pub value: ValueId,
     pub ty: TypeId,
 }

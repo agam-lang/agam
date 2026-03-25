@@ -69,7 +69,12 @@ pub fn emit_c(module: &MirModule) -> String {
         if func.name == "main" {
             writeln!(output, "int main(int argc, char** argv);").unwrap();
         } else {
-            writeln!(output, "agam_int {}();", mangle_name(&func.name)).unwrap();
+            write!(output, "agam_int {}(", mangle_name(&func.name)).unwrap();
+            for (i, _) in func.params.iter().enumerate() {
+                if i > 0 { write!(output, ", ").unwrap(); }
+                write!(output, "agam_int __p{}", i).unwrap();
+            }
+            writeln!(output, ");").unwrap();
         }
     }
     writeln!(output).unwrap();
@@ -96,6 +101,11 @@ fn emit_function(out: &mut String, func: &MirFunction) {
         writeln!(out, ") {{").unwrap();
     }
 
+    // Emit parameter → local aliases
+    for (i, param) in func.params.iter().enumerate() {
+        writeln!(out, "  agam_int {} = __p{};", mangle_local(&param.name), i).unwrap();
+    }
+
     // Emit all basic blocks
     for block in &func.blocks {
         emit_block(out, block);
@@ -105,7 +115,7 @@ fn emit_function(out: &mut String, func: &MirFunction) {
 }
 
 fn emit_block(out: &mut String, block: &BasicBlock) {
-    writeln!(out, "  /* block_{} */", block.id.0).unwrap();
+    writeln!(out, "block_{}:", block.id.0).unwrap();
 
     for instr in &block.instructions {
         emit_instruction(out, instr);
@@ -142,20 +152,25 @@ fn emit_instruction(out: &mut String, instr: &Instruction) {
             writeln!(out, "  agam_int {} = {}__v{};", v, op_str, operand.0).unwrap();
         }
         Op::Call { callee, args } => {
-            if callee == "print" || callee == "println" {
-                // Special-case: print/println → printf
+            if callee == "print" || callee == "println" || callee == "print_int" || callee == "print_str" {
+                let is_str = callee == "print_str";
                 if args.is_empty() {
                     writeln!(out, "  printf(\"\\n\");").unwrap();
                 } else {
-                    // Print each argument — use %s for strings, %lld for ints
                     for (i, arg) in args.iter().enumerate() {
                         if i > 0 {
                             writeln!(out, "  printf(\" \");").unwrap();
                         }
-                        writeln!(out, "  printf(\"%s\", (agam_str)__v{});", arg.0).unwrap();
+                        if is_str {
+                            writeln!(out, "  printf(\"%s\", (agam_str)__v{});", arg.0).unwrap();
+                        } else {
+                            writeln!(out, "  printf(\"%lld\", (long long)__v{});", arg.0).unwrap();
+                        }
                     }
-                    if callee == "println" {
+                    if callee == "println" || callee == "print_str" {
                         writeln!(out, "  printf(\"\\n\");").unwrap();
+                    } else if callee == "print" || callee == "print_int" {
+                        writeln!(out, "  printf(\"\\n\");").unwrap(); // always append newline for benchmarking clarify
                     }
                 }
                 writeln!(out, "  agam_int {} = 0;", v).unwrap();

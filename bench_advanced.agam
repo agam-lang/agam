@@ -84,34 +84,29 @@ fn integrate_x2(steps: i32) -> i32 {
 
 fn main() -> i32 {
     // Benchmark 1: Sum loop (100 million iterations)
-    print("Benchmark 1: Sum of 0..100_000_000");
+    print_str("Benchmark 1: Sum of 0..100_000_000");
     let r1: i32 = sum_loop(100000000);
-    print("Result:");
-    print(r1);
+    print_int(r1);
 
     // Benchmark 2: Fibonacci(40th number)
-    print("Benchmark 2: Fibonacci(40)");
+    print_str("Benchmark 2: Fibonacci(40)");
     let r2: i32 = fibonacci(40);
-    print("Result:");
-    print(r2);
+    print_int(r2);
 
     // Benchmark 3: Count primes below 100,000
-    print("Benchmark 3: Count primes < 100000");
+    print_str("Benchmark 3: Count primes < 100000");
     let r3: i32 = count_primes(100000);
-    print("Result:");
-    print(r3);
+    print_int(r3);
 
     // Benchmark 4: Matrix multiply 100x100
-    print("Benchmark 4: Matrix multiply 100x100");
+    print_str("Benchmark 4: Matrix multiply 100x100");
     let r4: i32 = matrix_multiply(100);
-    print("Result:");
-    print(r4);
+    print_int(r4);
 
     // Benchmark 5: Numerical integration (10 million steps)
-    print("Benchmark 5: Integrate x^2 (10M steps)");
+    print_str("Benchmark 5: Integrate x^2 (10M steps)");
     let r5: i32 = integrate_x2(10000000);
-    print("Result:");
-    print(r5);
+    print_int(r5);
 
     return 0;
 }

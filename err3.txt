@@ -1,0 +1,80 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.07s
+     Running `target\debug\agamc.exe build bench_advanced.agam -v -O 2`
+[agamc] Building 1 file(s)...
+[agamc] Optimization level: O2
+[agamc] Read bench_advanced.agam (3150 bytes)
+[agamc] Lexed 614 tokens
+[agamc] Parsed 6 declarations
+[agamc] Lowered to HIR: 6 functions
+[agamc] Lowered to MIR: 6 functions
+[agamc] Generated C code: bench_advanced.c (10927 bytes)
+error: C compilation failed:
+bench_advanced.c: In function 'agam_sum_loop':
+bench_advanced.c:48:3: error: label 'block_3' used but not defined
+   48 |   if (__v9) goto block_2; else goto block_3;
+      |   ^~
+bench_advanced.c:48:3: error: label 'block_2' used but not defined
+bench_advanced.c:60:3: error: label 'block_1' used but not defined
+   60 |   goto block_1;
+      |   ^~~~
+bench_advanced.c: In function 'agam_fibonacci':
+bench_advanced.c:92:3: error: label 'block_8' used but not defined
+   92 |   if (__v32) goto block_7; else goto block_8;
+      |   ^~
+bench_advanced.c:92:3: error: label 'block_7' used but not defined
+bench_advanced.c:112:3: error: label 'block_6' used but not defined
+  112 |   goto block_6;
+      |   ^~~~
+bench_advanced.c: In function 'agam_count_primes':
+bench_advanced.c:170:3: error: label 'block_19' used but not defined
+  170 |   goto block_19;
+      |   ^~~~
+bench_advanced.c:165:3: error: label 'block_17' used but not defined
+  165 |   if (__v73) goto block_17; else goto block_19;
+      |   ^~
+bench_advanced.c:158:3: error: label 'block_16' used but not defined
+  158 |   if (__v68) goto block_15; else goto block_16;
+      |   ^~
+bench_advanced.c:158:3: error: label 'block_15' used but not defined
+bench_advanced.c:177:3: error: label 'block_14' used but not defined
+  177 |   goto block_14;
+      |   ^~~~
+bench_advanced.c:139:3: error: label 'block_13' used but not defined
+  139 |   if (__v57) goto block_12; else goto block_13;
+      |   ^~
+bench_advanced.c:139:3: error: label 'block_12' used but not defined
+bench_advanced.c:189:3: error: label 'block_11' used but not defined
+  189 |   goto block_11;
+      |   ^~~~
+bench_advanced.c: In function 'agam_matrix_multiply':
+bench_advanced.c:245:3: error: label 'block_30' used but not defined
+  245 |   if (__v114) goto block_29; else goto block_30;
+      |   ^~
+bench_advanced.c:245:3: error: label 'block_29' used but not defined
+bench_advanced.c:267:3: error: label 'block_28' used but not defined
+  267 |   goto block_28;
+      |   ^~~~
+bench_advanced.c:228:3: error: label 'block_27' used but not defined
+  228 |   if (__v105) goto block_26; else goto block_27;
+      |   ^~
+bench_advanced.c:228:3: error: label 'block_26' used but not defined
+bench_advanced.c:279:3: error: label 'block_25' used but not defined
+  279 |   goto block_25;
+      |   ^~~~
+bench_advanced.c:216:3: error: label 'block_24' used but not defined
+  216 |   if (__v99) goto block_23; else goto block_24;
+      |   ^~
+bench_advanced.c:216:3: error: label 'block_23' used but not defined
+bench_advanced.c:286:3: error: label 'block_22' used but not defined
+  286 |   goto block_22;
+      |   ^~~~
+bench_advanced.c: In function 'agam_integrate_x2':
+bench_advanced.c:313:3: error: label 'block_35' used but not defined
+  313 |   if (__v156) goto block_34; else goto block_35;
+      |   ^~
+bench_advanced.c:313:3: error: label 'block_34' used but not defined
+bench_advanced.c:327:3: error: label 'block_33' used but not defined
+  327 |   goto block_33;
+      |   ^~~~
+
+error: process didn't exit successfully: `target\debug\agamc.exe build bench_advanced.agam -v -O 2` (exit code: 1)

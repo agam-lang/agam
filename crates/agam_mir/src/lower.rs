@@ -14,6 +14,7 @@ pub struct MirLowering {
     next_block: u32,
     blocks: Vec<BasicBlock>,
     current_instrs: Vec<Instruction>,
+    current_block: BlockId,
     types: TypeStore,
 }
 
@@ -24,6 +25,7 @@ impl MirLowering {
             next_block: 0,
             blocks: Vec::new(),
             current_instrs: Vec::new(),
+            current_block: BlockId(0),
             types: TypeStore::new(),
         }
     }
@@ -46,10 +48,10 @@ impl MirLowering {
         result
     }
 
-    fn finish_block(&mut self, id: BlockId, terminator: Terminator) {
+    fn finish_block(&mut self, terminator: Terminator) {
         let instrs = std::mem::take(&mut self.current_instrs);
         self.blocks.push(BasicBlock {
-            id,
+            id: self.current_block,
             instructions: instrs,
             terminator,
         });
@@ -66,22 +68,23 @@ impl MirLowering {
         self.current_instrs.clear();
 
         let entry = self.fresh_block();
+        self.current_block = entry;
 
         // Emit parameter allocas
         let params: Vec<MirParam> = func.params.iter().map(|p| {
             let v = self.fresh_value();
-            MirParam { value: v, ty: p.ty }
+            MirParam { name: p.name.clone(), value: v, ty: p.ty }
         }).collect();
 
         // Lower body
         let result = self.lower_block(&func.body);
 
-        // Finish entry block with return
+        // Finish the last block with return
         match result {
-            Some(val) => self.finish_block(entry, Terminator::Return(val)),
+            Some(val) => self.finish_block(Terminator::Return(val)),
             None => {
                 let unit = self.emit(self.types.unit(), Op::Unit);
-                self.finish_block(entry, Terminator::Return(unit));
+                self.finish_block(Terminator::Return(unit));
             }
         }
 
@@ -114,22 +117,60 @@ impl MirLowering {
                 self.lower_expr(expr);
             }
             HirStmt::Return(val) => {
-                // Return is handled by block terminator — emit value for now.
-                if let Some(v) = val {
-                    self.lower_expr(v);
-                }
+                let v = if let Some(v) = val {
+                    self.lower_expr(v)
+                } else {
+                    self.emit(self.types.unit(), Op::Unit)
+                };
+                self.finish_block(Terminator::Return(v));
+                self.current_block = self.fresh_block(); // unreachable block
             }
             HirStmt::While { condition, body } => {
-                // Simplified: just lower the condition and body inline.
-                let _cond = self.lower_expr(condition);
+                let cond_block = self.fresh_block();
+                let body_block = self.fresh_block();
+                let after_block = self.fresh_block();
+
+                self.finish_block(Terminator::Jump(cond_block));
+                self.current_block = cond_block;
+
+                let cond_val = self.lower_expr(condition);
+                self.finish_block(Terminator::Branch {
+                    condition: cond_val,
+                    then_block: body_block,
+                    else_block: after_block,
+                });
+
+                self.current_block = body_block;
                 self.lower_block(body);
+                self.finish_block(Terminator::Jump(cond_block));
+
+                self.current_block = after_block;
             }
             HirStmt::If { condition, then_branch, else_branch } => {
-                let _cond = self.lower_expr(condition);
+                let then_block = self.fresh_block();
+                let else_block = self.fresh_block();
+                let after_block = self.fresh_block();
+
+                let cond_val = self.lower_expr(condition);
+                
+                let target_else = if else_branch.is_some() { else_block } else { after_block };
+                self.finish_block(Terminator::Branch {
+                    condition: cond_val,
+                    then_block,
+                    else_block: target_else,
+                });
+
+                self.current_block = then_block;
                 self.lower_block(then_branch);
+                self.finish_block(Terminator::Jump(after_block));
+
                 if let Some(eb) = else_branch {
+                    self.current_block = else_block;
                     self.lower_block(eb);
+                    self.finish_block(Terminator::Jump(after_block));
                 }
+
+                self.current_block = after_block;
             }
             _ => {}
         }
