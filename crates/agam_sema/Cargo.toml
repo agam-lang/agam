@@ -6,3 +6,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agam_ast = { path = "../agam_ast" }
+agam_errors = { path = "../agam_errors" }
+
+[dev-dependencies]
+agam_lexer = { path = "../agam_lexer" }
+agam_parser = { path = "../agam_parser" }
