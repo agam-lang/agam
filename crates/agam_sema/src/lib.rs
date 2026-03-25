@@ -15,6 +15,10 @@
 //!    unifies type variables with concrete types.
 //! 5. **Type Checking** (`checker`) — walks the AST to generate type constraints
 //!    and delegates solving to the inference engine.
+//! 6. **Trait Resolution** (`traits`) — trait registry, method dispatch (inherent
+//!    before trait), coherence checking, and completeness verification.
+//! 7. **Ownership Analysis** (`ownership`) — move tracking, borrow rules,
+//!    mutability enforcement, and scope-based drop analysis.
 
 pub mod symbol;
 pub mod types;
@@ -22,3 +26,5 @@ pub mod scope;
 pub mod resolver;
 pub mod infer;
 pub mod checker;
+pub mod traits;
+pub mod ownership;
