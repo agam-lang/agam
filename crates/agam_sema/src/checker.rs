@@ -395,6 +395,11 @@ impl TypeChecker {
                 // backward produces gradient values (f64)
                 self.types.f64()
             }
+            ExprKind::Resume(inner) => {
+                self.infer_expr(inner);
+                // resume passes a value to the continuation
+                self.types.fresh_var()
+            }
         }
     }
 

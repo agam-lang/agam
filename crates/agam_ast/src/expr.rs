@@ -171,6 +171,9 @@ pub enum ExprKind {
     },
     /// Backward pass: `backward(expr)` — reverse-mode autodiff
     Backward(Box<Expr>),
+
+    /// Resume from effect handler: `resume(value)`
+    Resume(Box<Expr>),
 }
 
 /// A part of an f-string.

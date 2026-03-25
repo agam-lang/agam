@@ -443,6 +443,9 @@ impl Resolver {
             ExprKind::Backward(inner) => {
                 self.resolve_expr(inner);
             }
+            ExprKind::Resume(inner) => {
+                self.resolve_expr(inner);
+            }
             // Literals don't need resolution
             ExprKind::IntLiteral(_) | ExprKind::FloatLiteral(_)
             | ExprKind::StringLiteral(_) | ExprKind::BoolLiteral(_) => {}

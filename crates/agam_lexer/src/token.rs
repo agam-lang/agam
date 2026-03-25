@@ -104,6 +104,12 @@ pub enum TokenKind {
     Tensor,
     /// `strict` — strict ownership block
     Strict,
+    /// `effect` — algebraic effect declaration
+    Effect,
+    /// `handle` — effect handler
+    Handle,
+    /// `resume` — resume from effect
+    Resume,
 
     // ── Operators ────────────────────────────────────────
     /// `+`
@@ -360,6 +366,9 @@ pub fn lookup_keyword(ident: &str) -> Option<TokenKind> {
         "backward" => Some(TokenKind::Backward),
         "tensor" => Some(TokenKind::Tensor),
         "strict" => Some(TokenKind::Strict),
+        "effect" => Some(TokenKind::Effect),
+        "handle" => Some(TokenKind::Handle),
+        "resume" => Some(TokenKind::Resume),
         "true" => Some(TokenKind::True),
         "false" => Some(TokenKind::False),
         _ => None,

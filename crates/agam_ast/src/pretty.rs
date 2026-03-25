@@ -87,6 +87,17 @@ impl PrettyPrinter {
             DeclKind::TypeAlias { name, .. } => {
                 self.line(&format!("type {} = ...", name.name));
             }
+            DeclKind::Effect(e) => {
+                self.line(&format!("effect {}:", e.name.name));
+                self.indent += 1;
+                for op in &e.operations {
+                    self.line(&format!("fn {}(...)", op.name.name));
+                }
+                self.indent -= 1;
+            }
+            DeclKind::Handler(h) => {
+                self.line(&format!("handle {} for {}:", h.name.name, h.effect_name.name));
+            }
         }
     }
 

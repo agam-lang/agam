@@ -37,3 +37,4 @@ pub mod ownership;
 pub mod lifetime;
 pub mod exhaustive;
 pub mod consteval;
+pub mod effects;

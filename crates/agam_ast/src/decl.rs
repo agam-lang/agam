@@ -70,6 +70,12 @@ pub enum DeclKind {
         ty: TypeExpr,
         visibility: Visibility,
     },
+
+    /// Effect declaration: `effect IO { fn read() -> String; fn write(s: String); }`
+    Effect(EffectDecl),
+
+    /// Handler: `handle io_handler for IO { fn read() -> String: resume("hello") }`
+    Handler(HandlerDecl),
 }
 
 /// Visibility modifier.
@@ -231,5 +237,41 @@ pub struct GenericParam {
 pub struct Annotation {
     pub name: Ident,
     pub args: Vec<Expr>,
+    pub span: Span,
+}
+
+/// Effect declaration: `effect IO { fn read() -> String; fn write(s: String); }`
+#[derive(Debug, Clone)]
+pub struct EffectDecl {
+    pub name: Ident,
+    pub operations: Vec<EffectOp>,
+    pub visibility: Visibility,
+    pub span: Span,
+}
+
+/// A single operation within an effect.
+#[derive(Debug, Clone)]
+pub struct EffectOp {
+    pub name: Ident,
+    pub params: Vec<(Ident, TypeExpr)>,
+    pub return_type: Option<TypeExpr>,
+    pub span: Span,
+}
+
+/// Handler declaration: `handle name for EffectName { ... }`
+#[derive(Debug, Clone)]
+pub struct HandlerDecl {
+    pub name: Ident,
+    pub effect_name: Ident,
+    pub clauses: Vec<HandlerClause>,
+    pub span: Span,
+}
+
+/// A single handler clause implementing an effect operation.
+#[derive(Debug, Clone)]
+pub struct HandlerClause {
+    pub op_name: Ident,
+    pub params: Vec<Ident>,
+    pub body: Expr,
     pub span: Span,
 }
