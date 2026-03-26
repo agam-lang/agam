@@ -1,0 +1,23 @@
+//! MIR optimization pipeline.
+
+pub mod constant_fold;
+
+use crate::ir::MirModule;
+
+/// Run the default MIR optimization pipeline in a fixed-point loop.
+pub fn optimize_module(module: &mut MirModule) -> bool {
+    let mut changed_any = false;
+
+    loop {
+        let mut changed = false;
+        changed |= constant_fold::run(module);
+
+        if !changed {
+            break;
+        }
+
+        changed_any = true;
+    }
+
+    changed_any
+}

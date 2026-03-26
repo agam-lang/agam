@@ -316,10 +316,15 @@ fn build_file(path: &PathBuf, output: &PathBuf, opt_level: u8, verbose: bool) ->
 
     // === Phase 4: MIR Lowering ===
     let mut mir_lowering = agam_mir::lower::MirLowering::new();
-    let mir = mir_lowering.lower_module(&hir);
+    let mut mir = mir_lowering.lower_module(&hir);
+
+    let optimized = agam_mir::opt::optimize_module(&mut mir);
 
     if verbose {
         eprintln!("[agamc] Lowered to MIR: {} functions", mir.functions.len());
+        if optimized {
+            eprintln!("[agamc] Applied MIR optimization passes");
+        }
     }
 
     // === Phase 5: C Code Generation ===
