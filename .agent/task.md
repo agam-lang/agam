@@ -105,10 +105,10 @@
 - [x] Dead Code Elimination (remove unused variables and branches before sending to GCC)
 
 ## Phase 10D: Native ML & Dataframe Acceleration API
-- [ ] Implement C-compatible structs for [DataFrame](file:///c:/Projects/agam/crates/agam_std/src/dataframe.rs#72-75) and `NdArray`
-- [ ] Write native C-backend implementations for `agam_filter`, `agam_sort`, and `agam_group_by`
-- [ ] Connect `agam_adam`, `agam_dense_layer`, and `agam_conv2d` stubs to actual optimized C matrix loops
-- [ ] Execute `bench_ml.agam` (Dataframes + Neural Networks) natively and benchmark vs Pandas/PyTorch
+- [x] Implement C-compatible structs for [DataFrame](file:///c:/Projects/agam/crates/agam_std/src/dataframe.rs#72-75) and `NdArray`
+- [x] Write native C-backend implementations for `agam_filter`, `agam_sort`, and `agam_group_by`
+- [x] Connect `agam_adam`, `agam_dense_layer`, and `agam_conv2d` stubs to actual optimized C matrix loops
+- [x] Execute `bench_ml.agam` (Dataframes + Neural Networks) natively and benchmark vs Pandas/PyTorch
 
 ## Priority 1: Compiler Optimization & Native Execution
 

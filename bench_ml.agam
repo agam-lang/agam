@@ -1,0 +1,56 @@
+@lang.advance
+
+// Phase 10D benchmark path for the current C backend.
+// Uses only direct function calls that the existing frontend lowers cleanly.
+
+fn optimize_rosenbrock() -> f64 {
+    print_str("Agam ML: Adam on Rosenbrock");
+    let loss: f64 = adam(-1.0, 2.0, 0.001, 50000, 0.00000001);
+    print(loss);
+    return loss;
+}
+
+fn process_dataframe() -> f64 {
+    print_str("Agam ML: DataFrame filter/sort/group_by");
+    let df = dataframe_build_sin(2000000);
+    let filtered = dataframe_filter_gt(df, 0.5);
+    let sorted = dataframe_sort(filtered);
+    let grouped = dataframe_group_by(sorted, 1024);
+    let mean_score: f64 = dataframe_mean(grouped);
+    print(mean_score);
+    dataframe_free(grouped);
+    dataframe_free(sorted);
+    dataframe_free(filtered);
+    dataframe_free(df);
+    return mean_score;
+}
+
+fn dense_demo() -> f64 {
+    print_str("Agam ML: Dense layer");
+    let input = tensor_fill_rand(256, 128, 0.25);
+    let output = dense_layer(input, 96, 0.75);
+    let score: f64 = tensor_checksum(output);
+    print(score);
+    tensor_free(output);
+    tensor_free(input);
+    return score;
+}
+
+fn conv_demo() -> f64 {
+    print_str("Agam ML: Conv2d");
+    let image = tensor_fill_rand(128, 128, 1.25);
+    let conv = conv2d(image, 5, 1.75);
+    let score: f64 = tensor_checksum(conv);
+    print(score);
+    tensor_free(conv);
+    tensor_free(image);
+    return score;
+}
+
+fn main() -> i32 {
+    optimize_rosenbrock();
+    process_dataframe();
+    dense_demo();
+    conv_demo();
+    return 0;
+}

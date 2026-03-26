@@ -4,7 +4,7 @@
 //! to produce native binaries. This is the simplest path to running
 //! Agam programs natively without requiring LLVM bindings.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use agam_mir::ir::*;
 
@@ -14,6 +14,8 @@ enum CType {
     Float,
     Bool,
     Str,
+    Tensor,
+    DataFrame,
 }
 
 impl CType {
@@ -23,6 +25,8 @@ impl CType {
             CType::Float => "agam_float",
             CType::Bool => "agam_bool",
             CType::Str => "agam_str",
+            CType::Tensor => "AgamTensor*",
+            CType::DataFrame => "AgamDataFrame*",
         }
     }
 
@@ -32,8 +36,14 @@ impl CType {
             CType::Float => "0.0",
             CType::Bool => "0",
             CType::Str => "NULL",
+            CType::Tensor | CType::DataFrame => "NULL",
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct BuiltinSig {
+    return_ty: CType,
 }
 
 struct FunctionLayout {
@@ -100,8 +110,10 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                 Op::BinOp { op, left, right } => infer_binop_type(*op, value_type(&layout, *left), value_type(&layout, *right)),
                 Op::UnOp { op, operand } => infer_unop_type(*op, value_type(&layout, *operand)),
                 Op::Call { callee, .. } => {
-                    if matches!(callee.as_str(), "print" | "println" | "print_int" | "print_str") {
+                    if is_print_builtin(callee) {
                         CType::Int
+                    } else if let Some(sig) = builtin_signature(callee) {
+                        sig.return_ty
                     } else {
                         return_types.get(callee).copied().unwrap_or(CType::Int)
                     }
@@ -162,6 +174,33 @@ fn infer_ctype_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<CType>
     }
 }
 
+fn builtin_signature(name: &str) -> Option<BuiltinSig> {
+    match name {
+        "clock" => Some(BuiltinSig { return_ty: CType::Float }),
+        "adam" => Some(BuiltinSig { return_ty: CType::Float }),
+        "dataframe_build_sin" => Some(BuiltinSig { return_ty: CType::DataFrame }),
+        "dataframe_filter_gt" => Some(BuiltinSig { return_ty: CType::DataFrame }),
+        "dataframe_sort" => Some(BuiltinSig { return_ty: CType::DataFrame }),
+        "dataframe_group_by" => Some(BuiltinSig { return_ty: CType::DataFrame }),
+        "dataframe_mean" => Some(BuiltinSig { return_ty: CType::Float }),
+        "dataframe_free" => Some(BuiltinSig { return_ty: CType::Int }),
+        "tensor_fill_rand" => Some(BuiltinSig { return_ty: CType::Tensor }),
+        "dense_layer" => Some(BuiltinSig { return_ty: CType::Tensor }),
+        "conv2d" => Some(BuiltinSig { return_ty: CType::Tensor }),
+        "tensor_checksum" => Some(BuiltinSig { return_ty: CType::Float }),
+        "tensor_free" => Some(BuiltinSig { return_ty: CType::Int }),
+        _ => None,
+    }
+}
+
+fn is_print_builtin(name: &str) -> bool {
+    matches!(name, "print" | "println" | "print_int" | "print_str")
+}
+
+fn has_runtime_prelude_definition(name: &str) -> bool {
+    is_print_builtin(name) || builtin_signature(name).is_some()
+}
+
 fn infer_binop_type(op: MirBinOp, left: CType, right: CType) -> CType {
     match op {
         MirBinOp::Eq
@@ -173,6 +212,8 @@ fn infer_binop_type(op: MirBinOp, left: CType, right: CType) -> CType {
         | MirBinOp::And
         | MirBinOp::Or => CType::Bool,
         MirBinOp::Add if left == CType::Str || right == CType::Str => CType::Str,
+        _ if left == CType::DataFrame || right == CType::DataFrame => CType::DataFrame,
+        _ if left == CType::Tensor || right == CType::Tensor => CType::Tensor,
         _ if left == CType::Float || right == CType::Float => CType::Float,
         _ => CType::Int,
     }
@@ -189,6 +230,10 @@ fn infer_unop_type(op: MirUnOp, operand: CType) -> CType {
 fn merge_type(left: CType, right: CType) -> CType {
     if left == right {
         left
+    } else if left == CType::DataFrame || right == CType::DataFrame {
+        CType::DataFrame
+    } else if left == CType::Tensor || right == CType::Tensor {
+        CType::Tensor
     } else if left == CType::Str || right == CType::Str {
         CType::Str
     } else if left == CType::Float || right == CType::Float {
@@ -202,6 +247,366 @@ fn merge_type(left: CType, right: CType) -> CType {
 
 fn value_type(layout: &FunctionLayout, value: ValueId) -> CType {
     layout.value_types.get(&value).copied().unwrap_or(CType::Int)
+}
+
+fn emit_common_prelude(out: &mut String) {
+    out.push_str(
+        r#"/* ── Agam Runtime Prelude ──────────────────── */
+agam_int agam_println(agam_str s) { printf("%s\n", s); return 0; }
+agam_int agam_print(agam_str s) { printf("%s", s); return 0; }
+agam_float agam_clock(void) { return (agam_float)clock() / (agam_float)CLOCKS_PER_SEC; }
+
+agam_str agam_str_concat(agam_str a, agam_str b) {
+  size_t a_len = strlen(a);
+  size_t b_len = strlen(b);
+  char* out = (char*)malloc(a_len + b_len + 1);
+  memcpy(out, a, a_len);
+  memcpy(out + a_len, b, b_len + 1);
+  return out;
+}
+
+typedef struct AgamTensor {
+  agam_int rows;
+  agam_int cols;
+  agam_int len;
+  agam_float* data;
+} AgamTensor;
+
+typedef struct AgamDataFrame {
+  agam_int len;
+  agam_int* ids;
+  agam_int* groups;
+  agam_float* scores;
+} AgamDataFrame;
+
+typedef struct AgamRow {
+  agam_int id;
+  agam_int group;
+  agam_float score;
+} AgamRow;
+
+static uint64_t agam_mix64(uint64_t x) {
+  x ^= x >> 33;
+  x *= 0xff51afd7ed558ccdULL;
+  x ^= x >> 33;
+  x *= 0xc4ceb9fe1a85ec53ULL;
+  x ^= x >> 33;
+  return x;
+}
+
+static uint64_t agam_seed_bits(agam_float seed) {
+  union {
+    agam_float f;
+    uint64_t u;
+  } bits;
+  bits.f = seed;
+  return bits.u;
+}
+
+static agam_float agam_hash_unit(agam_int index, agam_float seed, agam_int salt) {
+  uint64_t mixed = agam_mix64((uint64_t)index ^ agam_seed_bits(seed) ^ ((uint64_t)salt << 32));
+  return (agam_float)((mixed >> 11) * (1.0 / 9007199254740992.0));
+}
+
+static agam_float agam_weight_sample(agam_int row, agam_int col, agam_float seed) {
+  return agam_hash_unit(row * 4099 + col * 131, seed, 17) * 2.0 - 1.0;
+}
+
+static agam_float agam_bias_sample(agam_int index, agam_float seed) {
+  return agam_hash_unit(index * 7919, seed, 29) * 0.25 - 0.125;
+}
+
+static AgamTensor* agam_tensor_new(agam_int rows, agam_int cols) {
+  AgamTensor* tensor = (AgamTensor*)malloc(sizeof(AgamTensor));
+  tensor->rows = rows;
+  tensor->cols = cols;
+  tensor->len = rows * cols;
+  tensor->data = tensor->len > 0 ? (agam_float*)malloc(sizeof(agam_float) * (size_t)tensor->len) : NULL;
+  return tensor;
+}
+
+static AgamDataFrame* agam_dataframe_new(agam_int len) {
+  AgamDataFrame* df = (AgamDataFrame*)malloc(sizeof(AgamDataFrame));
+  df->len = len;
+  df->ids = len > 0 ? (agam_int*)malloc(sizeof(agam_int) * (size_t)len) : NULL;
+  df->groups = len > 0 ? (agam_int*)malloc(sizeof(agam_int) * (size_t)len) : NULL;
+  df->scores = len > 0 ? (agam_float*)malloc(sizeof(agam_float) * (size_t)len) : NULL;
+  return df;
+}
+
+static int agam_compare_rows_by_score_desc(const void* left, const void* right) {
+  const AgamRow* a = (const AgamRow*)left;
+  const AgamRow* b = (const AgamRow*)right;
+  if (a->score < b->score) {
+    return 1;
+  }
+  if (a->score > b->score) {
+    return -1;
+  }
+  return 0;
+}
+
+"#,
+    );
+}
+
+fn emit_dataframe_prelude(out: &mut String) {
+    out.push_str(
+        r#"agam_float agam_adam(agam_float x0, agam_float y0, agam_float learning_rate, agam_int max_iter, agam_float tol) {
+  agam_float x = x0;
+  agam_float y = y0;
+  agam_float mx = 0.0;
+  agam_float my = 0.0;
+  agam_float vx = 0.0;
+  agam_float vy = 0.0;
+  const agam_float beta1 = 0.9;
+  const agam_float beta2 = 0.999;
+  const agam_float epsilon = 1e-8;
+
+  for (agam_int t = 1; t <= max_iter; ++t) {
+    agam_float dx = -2.0 * (1.0 - x) - 400.0 * x * (y - x * x);
+    agam_float dy = 200.0 * (y - x * x);
+    agam_float grad_norm = sqrt(dx * dx + dy * dy);
+    if (grad_norm < tol) {
+      break;
+    }
+
+    mx = beta1 * mx + (1.0 - beta1) * dx;
+    my = beta1 * my + (1.0 - beta1) * dy;
+    vx = beta2 * vx + (1.0 - beta2) * dx * dx;
+    vy = beta2 * vy + (1.0 - beta2) * dy * dy;
+
+    agam_float t_f = (agam_float)t;
+    agam_float mx_hat = mx / (1.0 - pow(beta1, t_f));
+    agam_float my_hat = my / (1.0 - pow(beta1, t_f));
+    agam_float vx_hat = vx / (1.0 - pow(beta2, t_f));
+    agam_float vy_hat = vy / (1.0 - pow(beta2, t_f));
+
+    x -= learning_rate * mx_hat / (sqrt(vx_hat) + epsilon);
+    y -= learning_rate * my_hat / (sqrt(vy_hat) + epsilon);
+  }
+
+  {
+    agam_float a = 1.0 - x;
+    agam_float b = y - x * x;
+    return a * a + 100.0 * b * b;
+  }
+}
+
+AgamDataFrame* agam_dataframe_build_sin(agam_int rows) {
+  AgamDataFrame* df = agam_dataframe_new(rows);
+  for (agam_int i = 0; i < rows; ++i) {
+    df->ids[i] = i;
+    df->groups[i] = i % 1024;
+    df->scores[i] = sin((agam_float)i * 0.1);
+  }
+  return df;
+}
+
+AgamDataFrame* agam_dataframe_filter_gt(AgamDataFrame* df, agam_float threshold) {
+  if (!df) {
+    return NULL;
+  }
+
+  agam_int count = 0;
+  for (agam_int i = 0; i < df->len; ++i) {
+    if (df->scores[i] > threshold) {
+      ++count;
+    }
+  }
+
+  AgamDataFrame* filtered = agam_dataframe_new(count);
+  agam_int out_index = 0;
+  for (agam_int i = 0; i < df->len; ++i) {
+    if (df->scores[i] > threshold) {
+      filtered->ids[out_index] = df->ids[i];
+      filtered->groups[out_index] = df->groups[i];
+      filtered->scores[out_index] = df->scores[i];
+      ++out_index;
+    }
+  }
+  return filtered;
+}
+
+AgamDataFrame* agam_dataframe_sort(AgamDataFrame* df) {
+  if (!df) {
+    return NULL;
+  }
+
+  AgamRow* rows = df->len > 0 ? (AgamRow*)malloc(sizeof(AgamRow) * (size_t)df->len) : NULL;
+  for (agam_int i = 0; i < df->len; ++i) {
+    rows[i].id = df->ids[i];
+    rows[i].group = df->groups[i];
+    rows[i].score = df->scores[i];
+  }
+
+  qsort(rows, (size_t)df->len, sizeof(AgamRow), agam_compare_rows_by_score_desc);
+
+  AgamDataFrame* sorted = agam_dataframe_new(df->len);
+  for (agam_int i = 0; i < df->len; ++i) {
+    sorted->ids[i] = rows[i].id;
+    sorted->groups[i] = rows[i].group;
+    sorted->scores[i] = rows[i].score;
+  }
+
+  free(rows);
+  return sorted;
+}
+
+AgamDataFrame* agam_dataframe_group_by(AgamDataFrame* df, agam_int group_count) {
+  if (!df) {
+    return NULL;
+  }
+  if (group_count <= 0) {
+    group_count = 1;
+  }
+
+  agam_float* sums = (agam_float*)calloc((size_t)group_count, sizeof(agam_float));
+  agam_int* counts = (agam_int*)calloc((size_t)group_count, sizeof(agam_int));
+
+  for (agam_int i = 0; i < df->len; ++i) {
+    agam_int bucket = df->groups[i] % group_count;
+    if (bucket < 0) {
+      bucket += group_count;
+    }
+    sums[bucket] += df->scores[i];
+    counts[bucket] += 1;
+  }
+
+  agam_int used = 0;
+  for (agam_int i = 0; i < group_count; ++i) {
+    if (counts[i] > 0) {
+      ++used;
+    }
+  }
+
+  AgamDataFrame* grouped = agam_dataframe_new(used);
+  agam_int out_index = 0;
+  for (agam_int i = 0; i < group_count; ++i) {
+    if (counts[i] > 0) {
+      grouped->ids[out_index] = i;
+      grouped->groups[out_index] = i;
+      grouped->scores[out_index] = sums[i] / (agam_float)counts[i];
+      ++out_index;
+    }
+  }
+
+  free(sums);
+  free(counts);
+  return grouped;
+}
+
+agam_float agam_dataframe_mean(AgamDataFrame* df) {
+  if (!df || df->len == 0) {
+    return 0.0;
+  }
+
+  agam_float sum = 0.0;
+  for (agam_int i = 0; i < df->len; ++i) {
+    sum += df->scores[i];
+  }
+  return sum / (agam_float)df->len;
+}
+
+agam_int agam_dataframe_free(AgamDataFrame* df) {
+  if (!df) {
+    return 0;
+  }
+  free(df->ids);
+  free(df->groups);
+  free(df->scores);
+  free(df);
+  return 0;
+}
+
+"#,
+    );
+}
+
+fn emit_tensor_prelude(out: &mut String) {
+    out.push_str(
+        r#"AgamTensor* agam_tensor_fill_rand(agam_int rows, agam_int cols, agam_float seed) {
+  AgamTensor* tensor = agam_tensor_new(rows, cols);
+  for (agam_int i = 0; i < tensor->len; ++i) {
+    tensor->data[i] = agam_hash_unit(i, seed, 43) * 2.0 - 1.0;
+  }
+  return tensor;
+}
+
+AgamTensor* agam_dense_layer(AgamTensor* input, agam_int out_features, agam_float seed) {
+  if (!input || out_features <= 0) {
+    return NULL;
+  }
+
+  AgamTensor* output = agam_tensor_new(input->rows, out_features);
+  for (agam_int row = 0; row < input->rows; ++row) {
+    for (agam_int col = 0; col < out_features; ++col) {
+      agam_float acc = agam_bias_sample(col, seed);
+      for (agam_int inner = 0; inner < input->cols; ++inner) {
+        agam_float weight = agam_weight_sample(inner, col, seed);
+        acc += input->data[row * input->cols + inner] * weight;
+      }
+      output->data[row * out_features + col] = acc > 0.0 ? acc : 0.0;
+    }
+  }
+  return output;
+}
+
+AgamTensor* agam_conv2d(AgamTensor* input, agam_int kernel_size, agam_float seed) {
+  if (!input || kernel_size <= 0 || input->rows < kernel_size || input->cols < kernel_size) {
+    return NULL;
+  }
+
+  agam_int out_rows = input->rows - kernel_size + 1;
+  agam_int out_cols = input->cols - kernel_size + 1;
+  AgamTensor* output = agam_tensor_new(out_rows, out_cols);
+
+  for (agam_int y = 0; y < out_rows; ++y) {
+    for (agam_int x = 0; x < out_cols; ++x) {
+      agam_float acc = 0.0;
+      for (agam_int ky = 0; ky < kernel_size; ++ky) {
+        for (agam_int kx = 0; kx < kernel_size; ++kx) {
+          agam_float kernel = agam_weight_sample(ky, kx, seed);
+          agam_float value = input->data[(y + ky) * input->cols + (x + kx)];
+          acc += value * kernel;
+        }
+      }
+      output->data[y * out_cols + x] = acc;
+    }
+  }
+  return output;
+}
+
+agam_float agam_tensor_checksum(AgamTensor* tensor) {
+  if (!tensor || tensor->len == 0) {
+    return 0.0;
+  }
+
+  agam_float sum = 0.0;
+  for (agam_int i = 0; i < tensor->len; ++i) {
+    sum += tensor->data[i] * (1.0 + (agam_float)(i & 7));
+  }
+  return sum;
+}
+
+agam_int agam_tensor_free(AgamTensor* tensor) {
+  if (!tensor) {
+    return 0;
+  }
+  free(tensor->data);
+  free(tensor);
+  return 0;
+}
+
+"#,
+    );
+}
+
+fn emit_runtime_prelude(out: &mut String) {
+    emit_common_prelude(out);
+    emit_dataframe_prelude(out);
+    emit_tensor_prelude(out);
+    out.push('\n');
 }
 
 /// Emit a complete MIR module as C source code.
@@ -226,33 +631,18 @@ pub fn emit_c(module: &MirModule) -> String {
     writeln!(output, "typedef const char* agam_str;").unwrap();
     writeln!(output).unwrap();
 
-    // Runtime prelude — stub implementations for standard library functions
-    writeln!(output, "/* ── Agam Runtime Prelude ──────────────────── */").unwrap();
-    writeln!(output, "agam_int agam_println(agam_str s) {{ printf(\"%s\\n\", s); return 0; }}").unwrap();
-    writeln!(output, "agam_int agam_print(agam_str s) {{ printf(\"%s\", s); return 0; }}").unwrap();
-    writeln!(output, "double agam_clock() {{ return (double)clock() / CLOCKS_PER_SEC; }}").unwrap();
-    writeln!(output, "agam_str agam_str_concat(agam_str a, agam_str b) {{").unwrap();
-    writeln!(output, "  size_t a_len = strlen(a);").unwrap();
-    writeln!(output, "  size_t b_len = strlen(b);").unwrap();
-    writeln!(output, "  char* out = (char*)malloc(a_len + b_len + 1);").unwrap();
-    writeln!(output, "  memcpy(out, a, a_len);").unwrap();
-    writeln!(output, "  memcpy(out + a_len, b, b_len + 1);").unwrap();
-    writeln!(output, "  return out;").unwrap();
-    writeln!(output, "}}").unwrap();
-    writeln!(output).unwrap();
+    emit_runtime_prelude(&mut output);
 
     // Collect all unknown function calls and generate stub declarations
-    let mut unknown_funcs: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut unknown_funcs: HashSet<String> = HashSet::new();
     for func in &module.functions {
         let layout = layouts.get(&func.name).expect("missing function layout");
         for block in &func.blocks {
             for instr in &block.instructions {
                 if let Op::Call { callee, args } = &instr.op {
                     let mangled = mangle_name(callee);
-                    if callee != "print" && callee != "println"
+                    if !has_runtime_prelude_definition(callee)
                         && !module.functions.iter().any(|f| mangle_name(&f.name) == mangled)
-                        && mangled != "agam_println" && mangled != "agam_print"
-                        && mangled != "agam_clock"
                     {
                         let ret_ty = value_type(layout, instr.result).name();
                         unknown_funcs.insert(format!("{} {}({});",
@@ -375,7 +765,7 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
             writeln!(out, "  {} {} = {}__v{};", result_ty.name(), v, op_str, operand.0).unwrap();
         }
         Op::Call { callee, args } => {
-            if callee == "print" || callee == "println" || callee == "print_int" || callee == "print_str" {
+            if is_print_builtin(callee) {
                 if args.is_empty() {
                     writeln!(out, "  printf(\"\\n\");").unwrap();
                 } else {
@@ -468,6 +858,12 @@ fn emit_print_value(out: &mut String, value: ValueId, ty: CType) {
         }
         CType::Int => {
             writeln!(out, "  printf(\"%lld\", (long long)__v{});", value.0).unwrap();
+        }
+        CType::Tensor => {
+            writeln!(out, "  printf(\"<tensor:%p>\", (void*)__v{});", value.0).unwrap();
+        }
+        CType::DataFrame => {
+            writeln!(out, "  printf(\"<dataframe:%p>\", (void*)__v{});", value.0).unwrap();
         }
     }
 }
@@ -601,6 +997,52 @@ mod tests {
         let c = compile_to_c("fn add(a: i32) -> i32 { return a + 1; } fn main() { return add(41); }");
         assert!(c.contains("agam_add("));
         assert!(c.contains("return __v"));
+    }
+
+    #[test]
+    fn test_ml_runtime_handles_emit_without_external_stubs() {
+        let c = compile_to_c(
+            "fn main() { \
+                let df = dataframe_build_sin(32); \
+                let filtered = dataframe_filter_gt(df, 0.5); \
+                let grouped = dataframe_group_by(filtered, 8); \
+                let mean = dataframe_mean(grouped); \
+                print(mean); \
+                dataframe_free(grouped); \
+                dataframe_free(filtered); \
+                dataframe_free(df); \
+            }",
+        );
+        assert!(c.contains("typedef struct AgamDataFrame"));
+        assert!(c.contains("AgamDataFrame* __v"));
+        assert!(!c.contains("/* ── External function stubs ── */"));
+    }
+
+    #[test]
+    fn test_tensor_runtime_handles_emit() {
+        let c = compile_to_c(
+            "fn main() { \
+                let input = tensor_fill_rand(8, 8, 0.25); \
+                let dense = dense_layer(input, 4, 0.5); \
+                let conv = conv2d(input, 3, 0.75); \
+                let score = tensor_checksum(dense) + tensor_checksum(conv); \
+                print(score); \
+                tensor_free(conv); \
+                tensor_free(dense); \
+                tensor_free(input); \
+            }",
+        );
+        assert!(c.contains("typedef struct AgamTensor"));
+        assert!(c.contains("AgamTensor* __v"));
+        assert!(c.contains("agam_dense_layer"));
+        assert!(c.contains("agam_conv2d"));
+    }
+
+    #[test]
+    fn test_adam_builtin_returns_float() {
+        let c = compile_to_c("fn main() { let loss = adam(-1.0, 2.0, 0.001, 64, 0.0001); print(loss); }");
+        assert!(c.contains("agam_adam"));
+        assert!(c.contains("agam_float __v"));
     }
 
     #[test]

@@ -173,6 +173,12 @@ Status update:
 
 > Make the `bench_ml.agam` script actually run on the C-backend without throwing "missing stub" errors, and benchmark it against Pandas.
 
+Status update:
+- Completed the C-backend bridge for native ML/dataframe benchmarking by teaching `agam_codegen` about opaque `Tensor` / `DataFrame` handle types and known builtin signatures.
+- Added real C runtime-prelude implementations for `adam`, dataframe build/filter/sort/group-by/mean/free, and tensor fill/dense/conv/checksum/free paths.
+- Added a backend-compatible `bench_ml.agam` benchmark that avoids the unsupported lambda/module-call surface and now builds and runs end-to-end through `agamc build`.
+- Verified the native benchmark from WSL. The Pandas comparison could not be executed in this environment because `numpy` and `pandas` are not installed in WSL.
+
 ### Crates: `agam_std`, `agam_codegen`
 
 #### [MODIFY] [c_emitter.rs](file:///c:/Projects/agam/crates/agam_codegen/src/c_emitter.rs)
