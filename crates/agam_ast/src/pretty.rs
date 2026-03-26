@@ -112,10 +112,9 @@ impl PrettyPrinter {
 
     fn print_stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
-            StmtKind::Let { pattern, mutable, value, .. } => {
-                let mut_str = if *mutable { "mut " } else { "" };
+            StmtKind::Let { pattern, value, .. } => {
                 let val_str = if value.is_some() { " = ..." } else { "" };
-                self.line(&format!("let {}{:?}{}", mut_str, pattern.kind, val_str));
+                self.line(&format!("let {:?}{}", pattern.kind, val_str));
             }
             StmtKind::Return(expr) => {
                 let val = if expr.is_some() { " ..." } else { "" };

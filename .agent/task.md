@@ -129,16 +129,29 @@
 - [x] Ensure continuous tensor blocks slot perfectly into CPU L1 cache
 
 ### Phase 14: Direct LLVM IR or JIT Backend
-- [ ] Transition `agam_codegen` away from C-transpilation to direct LLVM IR emission
-- [ ] Alternatively, build `agam_jit` using Cranelift to compile Agam to machine code on-the-fly
+- [x] Add a first direct LLVM IR backend for the current scalar/string MIR subset
+- [x] Wire `agamc build --backend llvm` and `agamc run --backend llvm`
+- [x] Add runtime-backed `argc()` / `argv()` / `parse_int()` helpers for fair runtime-driven benchmarks
+- [x] Preserve explicit scalar widths and signedness through HIR -> MIR -> LLVM lowering
+- [x] Add configurable LLVM target metadata and conservative ABI/pointer attributes
+- [x] Add conservative sign-flow propagation plus a narrow seeded-`+1` loop-counter proof for safe unsigned compare/div/rem lowering
+- [x] Broaden loop-carried induction/range proof for LLVM hot loops
+- [x] Emit selective safe `nsw` / `nuw` only when proven
+- [x] Add PGO / ThinLTO release modes once LLVM proof quality is trustworthy
+- [x] Build `agam_jit` using Cranelift to compile Agam to machine code on-the-fly
 
 ---
 
 ## Priority 2: Developer Experience & Ecosystem
 
 ### Phase 15: Developer Tooling (LSP & Formatter)
+- [x] Replace the `agamc fmt` placeholder with a real first formatter slice
+- [x] Support `agamc fmt --check` for CI / pre-commit workflows
+- [x] Add `Backend::Auto` as the default build/run resolver
+- [x] Add `agamc build --fast` / `agamc run --fast` to use the best current native path with `-O3`
+- [x] Fix `agamc run` to execute via the source-derived output path
 - [ ] Build `agam_lsp` (Language Server Protocol) for real-time autocomplete, type-checking on hover, and error highlighting in VS Code / Neovim.
-- [ ] Implement `agam_fmt` for consistent syntax styling
+- [ ] Evolve `agam_fmt` from the current conservative whitespace-stable formatter into a full comment-aware structural formatter
 - [ ] Implement `agam_test` for reliable built-in unit testing
 
 ### Phase 16: Interactive REPL & Sandboxed Execution
@@ -200,3 +213,14 @@
 ### Phase 26: Quantum & ZKP Primitives
 - [ ] Native `Qubit` types and Quantum gates (H, X, Y, Z, CNOT).
 - [ ] `#[zkp]` macros to compile mathematical logic straight into zero-knowledge proofs (zk-SNARKs).
+
+### Phase 27: Premium Object System
+- [ ] Finish end-to-end `struct` / `class` / `trait` / `impl` semantics beyond the current parser surface
+- [ ] Add constructors, `self`, visibility rules, and premium method dispatch
+- [ ] Choose and implement Agam's long-term object model for composition, inheritance, and interface ergonomics
+
+### Phase 28: Premium Ergonomics and Syntax Cohesion
+- [ ] Add named and default arguments so high-arity calls stay readable without overload explosion
+- [ ] Lower declaration ceremony further where safety does not depend on the extra syntax
+- [ ] Unify constructor/property/method organization across script-style code and object-style APIs
+- [ ] Define a canonical “easy like Python, organized like systems languages” syntax profile for formatter and parser evolution

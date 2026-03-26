@@ -6,3 +6,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agam_mir = { workspace = true }
+agam_sema = { workspace = true }
+cranelift-codegen = "0.130.0"
+cranelift-frontend = "0.130.0"
+cranelift-jit = "0.130.0"
+cranelift-module = "0.130.0"
+
+[dev-dependencies]
+agam_errors = { workspace = true }
+agam_hir = { workspace = true }
+agam_lexer = { workspace = true }
+agam_parser = { workspace = true }

@@ -1,13 +1,16 @@
 #include <iostream>
 #include <chrono>
+#include <cstdlib>
 
 using namespace std;
 using namespace std::chrono;
 
 long long sum_loop(long long n) {
     long long total = 0;
+    long long state = (n % 7919) + 1;
     for (long long i = 0; i < n; i++) {
-        total += i;
+        state = (state * 57 + i * 13 + 17) % 1000003;
+        total += state % 1024;
     }
     return total;
 }
@@ -54,8 +57,10 @@ long long matrix_multiply(long long size) {
 
 long long integrate_x2(long long steps) {
     long long sum = 0;
+    long long wobble = (steps % 1237) + 3;
     for (long long i = 0; i < steps; i++) {
-        sum += i * i;
+        wobble = (wobble * 73 + 19) % 65521;
+        sum += ((i * i) + wobble) % 4096;
     }
     return sum;
 }
@@ -69,7 +74,18 @@ double run_bench(const char* name, long long (*func)(long long), long long arg) 
     return elapsed.count();
 }
 
-int main() {
+int main(int argc, char** argv) {
+    long long sum_n = 100000000;
+    long long fib_n = 40;
+    long long prime_n = 100000;
+    long long mat_n = 100;
+    long long integrate_n = 10000000;
+    if (argc > 1) sum_n = atoll(argv[1]);
+    if (argc > 2) fib_n = atoll(argv[2]);
+    if (argc > 3) prime_n = atoll(argv[3]);
+    if (argc > 4) mat_n = atoll(argv[4]);
+    if (argc > 5) integrate_n = atoll(argv[5]);
+
     cout << "=================================================================" << endl;
     cout << "  Agam vs Python vs Rust vs C++ — Advanced Benchmark Suite" << endl;
     cout << "  C++ Runtime (GCC -O3)" << endl;
@@ -77,11 +93,11 @@ int main() {
     cout << endl;
 
     double total = 0.0;
-    total += run_bench("Sum(100M)", sum_loop, 100000000);
-    total += run_bench("Fibonacci(40)", fibonacci, 40);
-    total += run_bench("PrimeCount(100K)", count_primes, 100000);
-    total += run_bench("MatMul(100x100)", matrix_multiply, 100);
-    total += run_bench("Integrate(10M)", integrate_x2, 10000000);
+    total += run_bench("Sum", sum_loop, sum_n);
+    total += run_bench("Fibonacci", fibonacci, fib_n);
+    total += run_bench("PrimeCount", count_primes, prime_n);
+    total += run_bench("MatMul", matrix_multiply, mat_n);
+    total += run_bench("Integrate", integrate_x2, integrate_n);
 
     cout << endl;
     cout << "  Total C++ time: " << total << "s" << endl;

@@ -5,13 +5,16 @@ Equivalent Python implementations for direct speed comparison.
 Run: python bench_advanced.py
 """
 import time
+import sys
 
 
 def sum_loop(n: int) -> int:
-    """Benchmark 1: Sum of first N integers using a loop."""
+    """Benchmark 1: Stateful integer accumulation."""
     total = 0
+    state = (n % 7919) + 1
     for i in range(n):
-        total += i
+        state = (state * 57 + i * 13 + 17) % 1_000_003
+        total += state % 1024
     return total
 
 
@@ -52,10 +55,12 @@ def matrix_multiply(size: int) -> int:
 
 
 def integrate_x2(steps: int) -> int:
-    """Benchmark 5: Numerical integration (sum of i^2)."""
+    """Benchmark 5: Polynomial accumulation with runtime wobble."""
     total = 0
+    wobble = (steps % 1237) + 3
     for i in range(steps):
-        total += i * i
+        wobble = (wobble * 73 + 19) % 65_521
+        total += ((i * i) + wobble) % 4096
     return total
 
 
@@ -69,6 +74,12 @@ def run_benchmark(name: str, func, *args):
 
 
 def main():
+    defaults = [100_000_000, 40, 100_000, 100, 10_000_000]
+    values = defaults[:]
+    for i, raw in enumerate(sys.argv[1:6]):
+        values[i] = int(raw)
+    sum_n, fib_n, prime_n, mat_n, integrate_n = values
+
     print("=" * 65)
     print("  Agam vs Python — Advanced Benchmark Suite")
     print("  Python " + f"{__import__('sys').version.split()[0]}")
@@ -77,24 +88,19 @@ def main():
 
     total = 0.0
 
-    # Benchmark 1: Sum loop (100 million iterations)
-    t = run_benchmark("Sum(100M)", sum_loop, 100_000_000)
+    t = run_benchmark(f"Sum({sum_n})", sum_loop, sum_n)
     total += t
 
-    # Benchmark 2: Fibonacci(40)
-    t = run_benchmark("Fibonacci(40)", fibonacci, 40)
+    t = run_benchmark(f"Fibonacci({fib_n})", fibonacci, fib_n)
     total += t
 
-    # Benchmark 3: Prime count below 100,000
-    t = run_benchmark("PrimeCount(100K)", count_primes, 100_000)
+    t = run_benchmark(f"PrimeCount({prime_n})", count_primes, prime_n)
     total += t
 
-    # Benchmark 4: Matrix multiply 100x100
-    t = run_benchmark("MatMul(100x100)", matrix_multiply, 100)
+    t = run_benchmark(f"MatMul({mat_n}x{mat_n})", matrix_multiply, mat_n)
     total += t
 
-    # Benchmark 5: Numerical integration
-    t = run_benchmark("Integrate(10M)", integrate_x2, 10_000_000)
+    t = run_benchmark(f"Integrate({integrate_n})", integrate_x2, integrate_n)
     total += t
 
     print()

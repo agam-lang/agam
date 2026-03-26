@@ -3,23 +3,40 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
+#include <time.h>
 
 typedef int64_t agam_int;
 typedef double agam_float;
 typedef int agam_bool;
 typedef const char* agam_str;
 
+/* ── Agam Runtime Prelude ──────────────────── */
+agam_int agam_println(agam_str s) { printf("%s\n", s); return 0; }
+agam_int agam_print(agam_str s) { printf("%s", s); return 0; }
+double agam_clock() { return (double)clock() / CLOCKS_PER_SEC; }
+
+/* ── External function stubs ── */
+agam_int agam_from_columns(agam_int __a0, agam_int __a1, agam_int __a2);
+agam_int agam_map(agam_int __a0, agam_int __a1);
+agam_int agam_adam(agam_int __a0, agam_int __a1, agam_int __a2, agam_int __a3, agam_int __a4, agam_int __a5);
+agam_int agam_arange(agam_int __a0, agam_int __a1, agam_int __a2);
+agam_int agam_filter(agam_int __a0, agam_int __a1);
+agam_int agam_mean(agam_int __a0, agam_int __a1);
+
 agam_int agam_optimize_rosenbrock();
 agam_int agam_process_dataframe();
 int main(int argc, char** argv);
 
 agam_int agam_optimize_rosenbrock() {
-  /* block_0 */
+block_0:
   agam_str __v0 = "Agam: Optimizing Rosenbrock function using Adam (50,000 iters)...";
-  agam_int __v1 = agam_println(__v0);
+  printf("%lld", (long long)__v0);
+  printf("\n");
+  agam_int __v1 = 0;
   agam_int _local_grad_f = 0;
   agam_int __v2 = 0;
-  /* __v3 = unit */
+  agam_int __v3 = 0; /* unit */
   _local_grad_f = __v3;
   agam_int __v4 = __v3;
   agam_int _local_start = 0;
@@ -27,7 +44,7 @@ agam_int agam_optimize_rosenbrock() {
   agam_float __v6 = 1;
   agam_int __v7 = -__v6;
   agam_float __v8 = 2;
-  /* __v9 = unit */
+  agam_int __v9 = 0; /* unit */
   _local_start = __v9;
   agam_int __v10 = __v9;
   agam_int _local_result = 0;
@@ -43,15 +60,21 @@ agam_int agam_optimize_rosenbrock() {
   agam_int __v19 = __v18;
   agam_str __v20 = "Found minimum: {}";
   agam_int __v21 = _local_result;
-  agam_int __v22 = agam_println(__v20, __v21);
-  /* __v23 = unit */
+  printf("%lld", (long long)__v20);
+  printf(" ");
+  printf("%lld", (long long)__v21);
+  printf("\n");
+  agam_int __v22 = 0;
+  agam_int __v23 = 0; /* unit */
   return (int)__v23;
 }
 
 agam_int agam_process_dataframe() {
-  /* block_1 */
+block_1:
   agam_str __v24 = "Agam: Processing DataFrame (30 million rows)...";
-  agam_int __v25 = agam_println(__v24);
+  printf("%lld", (long long)__v24);
+  printf("\n");
+  agam_int __v25 = 0;
   agam_int _local_rows = 0;
   agam_int __v26 = 0;
   agam_int __v27 = 30000000;
@@ -71,7 +94,7 @@ agam_int agam_process_dataframe() {
   agam_int __v37 = 0;
   agam_int __v38 = _local_rows;
   agam_int __v39 = agam_arange(__v36, __v37, __v38);
-  /* __v40 = unit */
+  agam_int __v40 = 0; /* unit */
   agam_int __v41 = agam_map(__v39, __v40);
   _local_scores = __v41;
   agam_int __v42 = __v41;
@@ -86,7 +109,7 @@ agam_int agam_process_dataframe() {
   agam_int _local_filtered_df = 0;
   agam_int __v49 = 0;
   agam_int __v50 = _local_df;
-  /* __v51 = unit */
+  agam_int __v51 = 0; /* unit */
   agam_int __v52 = agam_filter(__v50, __v51);
   _local_filtered_df = __v52;
   agam_int __v53 = __v52;
@@ -99,17 +122,23 @@ agam_int agam_process_dataframe() {
   agam_int __v58 = __v57;
   agam_str __v59 = "Mean score of filtered dataframe (Agam): {}";
   agam_int __v60 = _local_mean_score;
-  agam_int __v61 = agam_println(__v59, __v60);
-  /* __v62 = unit */
+  printf("%lld", (long long)__v59);
+  printf(" ");
+  printf("%lld", (long long)__v60);
+  printf("\n");
+  agam_int __v61 = 0;
+  agam_int __v62 = 0; /* unit */
   return (int)__v62;
 }
 
 int main(int argc, char** argv) {
-  /* block_2 */
+block_2:
   agam_int __v63 = agam_optimize_rosenbrock();
   agam_int __v64 = agam_process_dataframe();
   agam_int __v65 = 0;
-  /* __v66 = unit */
+  return (int)__v65;
+block_3:
+  agam_int __v66 = 0; /* unit */
   return (int)__v66;
 }
 

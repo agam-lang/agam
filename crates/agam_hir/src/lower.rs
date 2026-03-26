@@ -6,11 +6,14 @@
 //! - Attaching resolved type information.
 //! - Flattening nested declarations.
 
-use agam_ast::*;
+use std::collections::HashMap;
+
 use agam_ast::decl::*;
-use agam_ast::stmt::*;
 use agam_ast::expr::*;
-use agam_sema::types::TypeStore;
+use agam_ast::stmt::*;
+use agam_ast::types::TypeExpr;
+use agam_ast::*;
+use agam_sema::types::{builtin_type_id_for_name, TypeStore};
 
 use crate::nodes::*;
 
@@ -18,6 +21,7 @@ use crate::nodes::*;
 pub struct HirLowering {
     next_id: u32,
     types: TypeStore,
+    scopes: Vec<HashMap<String, agam_sema::symbol::TypeId>>,
 }
 
 impl HirLowering {
@@ -25,6 +29,7 @@ impl HirLowering {
         Self {
             next_id: 0,
             types: TypeStore::new(),
+            scopes: Vec::new(),
         }
     }
 
@@ -34,9 +39,32 @@ impl HirLowering {
         id
     }
 
+    fn push_scope(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
+    fn bind_local(&mut self, name: String, ty: agam_sema::symbol::TypeId) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name, ty);
+        }
+    }
+
+    fn lookup_local(&self, name: &str) -> Option<agam_sema::symbol::TypeId> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
+    }
+
     /// Lower a parsed AST module into HIR.
     pub fn lower_module(&mut self, module: &Module) -> HirModule {
-        let functions = module.declarations.iter()
+        let functions = module
+            .declarations
+            .iter()
             .filter_map(|decl| self.lower_decl(decl))
             .collect();
         HirModule { functions }
@@ -50,47 +78,83 @@ impl HirLowering {
     }
 
     fn lower_function(&mut self, f: &FunctionDecl) -> HirFunction {
-        let params: Vec<HirParam> = f.params.iter().map(|p| {
-            let name = self.pattern_name(&p.pattern).unwrap_or_else(|| "_".into());
-            HirParam {
-                name,
-                ty: self.types.fresh_var(),
-                mutable: false,
-            }
-        }).collect();
+        self.push_scope();
+        let params: Vec<HirParam> = f
+            .params
+            .iter()
+            .map(|p| {
+                let name = self.pattern_name(&p.pattern).unwrap_or_else(|| "_".into());
+                let ty = self.resolve_type_expr(&p.ty);
+                self.bind_local(name.clone(), ty);
+                HirParam {
+                    name,
+                    ty,
+                    mutable: true,
+                }
+            })
+            .collect();
 
         let body = if let Some(b) = &f.body {
             self.lower_block(b)
         } else {
-            HirBlock { stmts: vec![], expr: None }
+            HirBlock {
+                stmts: vec![],
+                expr: None,
+            }
         };
 
-        HirFunction {
+        let lowered = HirFunction {
             id: self.fresh_id(),
             name: f.name.name.clone(),
             params,
-            return_ty: self.types.fresh_var(),
+            return_ty: f
+                .return_type
+                .as_ref()
+                .map(|ty| self.resolve_type_expr(ty))
+                .unwrap_or_else(|| self.types.unit()),
             body,
             is_async: f.is_async,
-        }
+        };
+        self.pop_scope();
+        lowered
     }
 
     fn lower_block(&mut self, block: &Block) -> HirBlock {
+        self.push_scope();
         let stmts = block.stmts.iter().map(|s| self.lower_stmt(s)).collect();
         let expr = block.expr.as_ref().map(|e| Box::new(self.lower_expr(e)));
-        HirBlock { stmts, expr }
+        let lowered = HirBlock { stmts, expr };
+        self.pop_scope();
+        lowered
     }
 
     fn lower_stmt(&mut self, stmt: &Stmt) -> HirStmt {
         match &stmt.kind {
-            StmtKind::Let { pattern, ty: _, value, mutable } => {
+            StmtKind::Let {
+                pattern,
+                ty,
+                value,
+                mutable,
+            } => {
                 let name = self.pattern_name(pattern).unwrap_or_else(|| "_".into());
-                HirStmt::Let {
+                let lowered_value = value.as_ref().map(|v| self.lower_expr(v));
+                let inferred_ty = lowered_value
+                    .as_ref()
+                    .map(|expr| expr.ty)
+                    .unwrap_or_else(|| self.types.fresh_var());
+                let lowered = HirStmt::Let {
                     name,
-                    ty: self.types.fresh_var(),
-                    value: value.as_ref().map(|v| self.lower_expr(v)),
+                    ty: ty
+                        .as_ref()
+                        .map(|te| self.resolve_type_expr(te))
+                        .unwrap_or(inferred_ty),
+                    value: lowered_value,
                     mutable: *mutable,
+                };
+                if let HirStmt::Let { name, ty, .. } = &lowered {
+                    self.bind_local(name.clone(), *ty);
                 }
+                lowered
             }
             StmtKind::Expression(expr) => HirStmt::Expr(self.lower_expr(expr)),
             StmtKind::Return(val) => HirStmt::Return(val.as_ref().map(|v| self.lower_expr(v))),
@@ -102,15 +166,22 @@ impl HirLowering {
                 body: self.lower_block(body),
             },
             // Desugar for-in → while + iterator pattern
-            StmtKind::For { pattern, iterable: _, body } => {
+            StmtKind::For {
+                pattern,
+                iterable,
+                body,
+            } => {
                 let iter_name = format!("__iter_{}", self.next_id);
                 let item_name = self.pattern_name(pattern).unwrap_or_else(|| "_".into());
+                let iter_ty = self.types.fresh_var();
+                let item_ty = self.types.fresh_var();
 
                 // Desugar: let __iter = iterable; while __iter.has_next(): let item = __iter.next(); body
-                let _iter_var = HirExpr {
-                    id: self.fresh_id(),
-                    ty: self.types.fresh_var(),
-                    kind: HirExprKind::Var(iter_name.clone()),
+                let iter_init = HirStmt::Let {
+                    name: iter_name.clone(),
+                    ty: iter_ty,
+                    value: Some(self.lower_expr(iterable)),
+                    mutable: true,
                 };
 
                 let has_next = HirExpr {
@@ -119,7 +190,7 @@ impl HirLowering {
                     kind: HirExprKind::MethodCall {
                         object: Box::new(HirExpr {
                             id: self.fresh_id(),
-                            ty: self.types.fresh_var(),
+                            ty: iter_ty,
                             kind: HirExprKind::Var(iter_name.clone()),
                         }),
                         method: "has_next".into(),
@@ -129,11 +200,11 @@ impl HirLowering {
 
                 let next_call = HirExpr {
                     id: self.fresh_id(),
-                    ty: self.types.fresh_var(),
+                    ty: item_ty,
                     kind: HirExprKind::MethodCall {
                         object: Box::new(HirExpr {
                             id: self.fresh_id(),
-                            ty: self.types.fresh_var(),
+                            ty: iter_ty,
                             kind: HirExprKind::Var(iter_name.clone()),
                         }),
                         method: "next".into(),
@@ -141,31 +212,47 @@ impl HirLowering {
                     },
                 };
 
-                let mut loop_stmts = vec![
-                    HirStmt::Let {
-                        name: item_name,
-                        ty: self.types.fresh_var(),
-                        value: Some(next_call),
-                        mutable: false,
-                    },
-                ];
+                let mut loop_stmts = vec![HirStmt::Let {
+                    name: item_name.clone(),
+                    ty: item_ty,
+                    value: Some(next_call),
+                    mutable: true,
+                }];
+                self.push_scope();
+                self.bind_local(item_name, item_ty);
                 let inner_block = self.lower_block(body);
+                self.pop_scope();
                 loop_stmts.extend(inner_block.stmts);
 
-                HirStmt::While {
-                    condition: has_next,
-                    body: HirBlock { stmts: loop_stmts, expr: inner_block.expr },
-                }
+                HirStmt::Expr(HirExpr {
+                    id: self.fresh_id(),
+                    ty: self.types.unit(),
+                    kind: HirExprKind::Block(HirBlock {
+                        stmts: vec![
+                            iter_init,
+                            HirStmt::While {
+                                condition: has_next,
+                                body: HirBlock {
+                                    stmts: loop_stmts,
+                                    expr: inner_block.expr,
+                                },
+                            },
+                        ],
+                        expr: None,
+                    }),
+                })
             }
-            StmtKind::If { condition, then_branch, else_branch } => {
+            StmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let else_block = else_branch.as_ref().map(|eb| match eb {
                     ElseBranch::Else(block) => self.lower_block(block),
-                    ElseBranch::ElseIf(s) => {
-                        HirBlock {
-                            stmts: vec![self.lower_stmt(s)],
-                            expr: None,
-                        }
-                    }
+                    ElseBranch::ElseIf(s) => HirBlock {
+                        stmts: vec![self.lower_stmt(s)],
+                        expr: None,
+                    },
                 });
                 HirStmt::If {
                     condition: self.lower_expr(condition),
@@ -176,12 +263,17 @@ impl HirLowering {
             StmtKind::Break(v) => HirStmt::Break(v.as_ref().map(|e| self.lower_expr(e))),
             StmtKind::Continue => HirStmt::Continue,
             StmtKind::Const { name, value, .. } => {
-                HirStmt::Let {
+                let value = self.lower_expr(value);
+                let lowered = HirStmt::Let {
                     name: name.name.clone(),
-                    ty: self.types.fresh_var(),
-                    value: Some(self.lower_expr(value)),
+                    ty: value.ty,
+                    value: Some(value),
                     mutable: false,
+                };
+                if let HirStmt::Let { name, ty, .. } = &lowered {
+                    self.bind_local(name.clone(), *ty);
                 }
+                lowered
             }
             _ => HirStmt::Expr(HirExpr {
                 id: self.fresh_id(),
@@ -193,13 +285,11 @@ impl HirLowering {
 
     fn lower_expr(&mut self, expr: &Expr) -> HirExpr {
         let id = self.fresh_id();
-        let ty = self.types.fresh_var();
-
-        let kind = match &expr.kind {
-            ExprKind::IntLiteral(v) => HirExprKind::IntLit(*v),
-            ExprKind::FloatLiteral(v) => HirExprKind::FloatLit(*v),
-            ExprKind::BoolLiteral(v) => HirExprKind::BoolLit(*v),
-            ExprKind::StringLiteral(v) => HirExprKind::StringLit(v.clone()),
+        let (ty, kind) = match &expr.kind {
+            ExprKind::IntLiteral(v) => (self.types.i32(), HirExprKind::IntLit(*v)),
+            ExprKind::FloatLiteral(v) => (self.types.f64(), HirExprKind::FloatLit(*v)),
+            ExprKind::BoolLiteral(v) => (self.types.bool(), HirExprKind::BoolLit(*v)),
+            ExprKind::StringLiteral(v) => (self.types.str(), HirExprKind::StringLit(v.clone())),
 
             // Desugar f-string into string concat
             ExprKind::FStringLiteral { parts } => {
@@ -237,52 +327,103 @@ impl HirLowering {
                 return acc;
             }
 
-            ExprKind::Identifier(ident) => HirExprKind::Var(ident.name.clone()),
+            ExprKind::Identifier(ident) => (
+                self.lookup_local(&ident.name)
+                    .unwrap_or_else(|| self.types.fresh_var()),
+                HirExprKind::Var(ident.name.clone()),
+            ),
             ExprKind::PathExpr(path) => {
-                let full = path.segments.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join("::");
-                HirExprKind::Var(full)
+                let full = path
+                    .segments
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                (
+                    self.lookup_local(&full)
+                        .unwrap_or_else(|| self.types.fresh_var()),
+                    HirExprKind::Var(full),
+                )
             }
 
-            ExprKind::Binary { op, left, right } => HirExprKind::Binary {
-                op: lower_binop(*op),
-                left: Box::new(self.lower_expr(left)),
-                right: Box::new(self.lower_expr(right)),
-            },
-            ExprKind::Unary { op, operand } => HirExprKind::Unary {
-                op: lower_unaryop(*op),
-                operand: Box::new(self.lower_expr(operand)),
-            },
+            ExprKind::Binary { op, left, right } => {
+                let left = self.lower_expr(left);
+                let right = self.lower_expr(right);
+                let hir_op = lower_binop(*op);
+                (
+                    self.resolve_binary_expr_type(hir_op, &left, &right),
+                    HirExprKind::Binary {
+                        op: hir_op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    },
+                )
+            }
+            ExprKind::Unary { op, operand } => {
+                let operand = self.lower_expr(operand);
+                let hir_op = lower_unaryop(*op);
+                (
+                    self.resolve_unary_expr_type(hir_op, &operand),
+                    HirExprKind::Unary {
+                        op: hir_op,
+                        operand: Box::new(operand),
+                    },
+                )
+            }
 
-            ExprKind::Call { callee, args } => HirExprKind::Call {
-                callee: Box::new(self.lower_expr(callee)),
-                args: args.iter().map(|a| self.lower_expr(a)).collect(),
-            },
-            ExprKind::MethodCall { object, method, args } => HirExprKind::MethodCall {
-                object: Box::new(self.lower_expr(object)),
-                method: method.name.clone(),
-                args: args.iter().map(|a| self.lower_expr(a)).collect(),
-            },
+            ExprKind::Call { callee, args } => (
+                self.types.fresh_var(),
+                HirExprKind::Call {
+                    callee: Box::new(self.lower_expr(callee)),
+                    args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                },
+            ),
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+            } => (
+                self.types.fresh_var(),
+                HirExprKind::MethodCall {
+                    object: Box::new(self.lower_expr(object)),
+                    method: method.name.clone(),
+                    args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                },
+            ),
 
-            ExprKind::FieldAccess { object, field } => HirExprKind::FieldAccess {
-                object: Box::new(self.lower_expr(object)),
-                field: field.name.clone(),
-            },
-            ExprKind::Index { object, index } => HirExprKind::Index {
-                object: Box::new(self.lower_expr(object)),
-                index: Box::new(self.lower_expr(index)),
-            },
+            ExprKind::FieldAccess { object, field } => (
+                self.types.fresh_var(),
+                HirExprKind::FieldAccess {
+                    object: Box::new(self.lower_expr(object)),
+                    field: field.name.clone(),
+                },
+            ),
+            ExprKind::Index { object, index } => (
+                self.types.fresh_var(),
+                HirExprKind::Index {
+                    object: Box::new(self.lower_expr(object)),
+                    index: Box::new(self.lower_expr(index)),
+                },
+            ),
 
-            ExprKind::Assign { target, value } => HirExprKind::Assign {
-                target: Box::new(self.lower_expr(target)),
-                value: Box::new(self.lower_expr(value)),
-            },
+            ExprKind::Assign { target, value } => {
+                let target = self.lower_expr(target);
+                let value = self.lower_expr(value);
+                (
+                    target.ty,
+                    HirExprKind::Assign {
+                        target: Box::new(target),
+                        value: Box::new(value),
+                    },
+                )
+            }
             ExprKind::CompoundAssign { op, target, value } => {
                 // Desugar: x += 1 → x = x + 1
                 let target_hir = self.lower_expr(target);
                 let val_hir = self.lower_expr(value);
                 let binop = HirExpr {
                     id: self.fresh_id(),
-                    ty: self.types.fresh_var(),
+                    ty: self.resolve_binary_expr_type(lower_binop(*op), &target_hir, &val_hir),
                     kind: HirExprKind::Binary {
                         op: lower_binop(*op),
                         left: Box::new(HirExpr {
@@ -293,31 +434,111 @@ impl HirLowering {
                         right: Box::new(val_hir),
                     },
                 };
-                HirExprKind::Assign {
-                    target: Box::new(target_hir),
-                    value: Box::new(binop),
-                }
+                (
+                    target_hir.ty,
+                    HirExprKind::Assign {
+                        target: Box::new(target_hir),
+                        value: Box::new(binop),
+                    },
+                )
             }
 
             ExprKind::ArrayLiteral(elems) => {
-                HirExprKind::Array(elems.iter().map(|e| self.lower_expr(e)).collect())
+                (
+                    self.types.fresh_var(),
+                    HirExprKind::Array(elems.iter().map(|e| self.lower_expr(e)).collect()),
+                )
             }
             ExprKind::TupleLiteral(elems) => {
-                HirExprKind::Tuple(elems.iter().map(|e| self.lower_expr(e)).collect())
+                (
+                    self.types.unit(),
+                    HirExprKind::Tuple(elems.iter().map(|e| self.lower_expr(e)).collect()),
+                )
             }
 
-            ExprKind::BlockExpr(block) => HirExprKind::Block(self.lower_block(block)),
+            ExprKind::BlockExpr(block) => {
+                let block = self.lower_block(block);
+                let ty = block
+                    .expr
+                    .as_ref()
+                    .map(|expr| expr.ty)
+                    .unwrap_or_else(|| self.types.unit());
+                (ty, HirExprKind::Block(block))
+            }
 
-            ExprKind::Cast { expr: inner, .. } => HirExprKind::Cast {
-                expr: Box::new(self.lower_expr(inner)),
-                target_ty: self.types.fresh_var(),
-            },
+            ExprKind::Cast {
+                expr: inner,
+                target_type,
+            } => {
+                let target_ty = self.resolve_type_expr(target_type);
+                (
+                    target_ty,
+                    HirExprKind::Cast {
+                        expr: Box::new(self.lower_expr(inner)),
+                        target_ty,
+                    },
+                )
+            }
 
             // Fallback for unhandled expressions
-            _ => HirExprKind::Tuple(vec![]), // Unit value
+            _ => (self.types.unit(), HirExprKind::Tuple(vec![])), // Unit value
         };
 
         HirExpr { id, ty, kind }
+    }
+
+    fn resolve_type_expr(&mut self, ty: &TypeExpr) -> agam_sema::symbol::TypeId {
+        match &ty.kind {
+            agam_ast::types::TypeExprKind::Named(path) => {
+                if let Some(segment) = path.segments.last() {
+                    builtin_type_id_for_name(&self.types, &segment.name)
+                        .unwrap_or_else(|| self.types.fresh_var())
+                } else {
+                    self.types.error()
+                }
+            }
+            agam_ast::types::TypeExprKind::Inferred => self.types.fresh_var(),
+            agam_ast::types::TypeExprKind::Dynamic | agam_ast::types::TypeExprKind::Any => {
+                self.types.any()
+            }
+            agam_ast::types::TypeExprKind::Never => self.types.never(),
+            agam_ast::types::TypeExprKind::Refined { base, .. } => self.resolve_type_expr(base),
+            _ => self.types.fresh_var(),
+        }
+    }
+
+    fn resolve_binary_expr_type(
+        &self,
+        op: HirBinOp,
+        left: &HirExpr,
+        right: &HirExpr,
+    ) -> agam_sema::symbol::TypeId {
+        match op {
+            HirBinOp::Eq
+            | HirBinOp::NotEq
+            | HirBinOp::Lt
+            | HirBinOp::LtEq
+            | HirBinOp::Gt
+            | HirBinOp::GtEq
+            | HirBinOp::And
+            | HirBinOp::Or => self.types.bool(),
+            HirBinOp::Add if left.ty == self.types.str() || right.ty == self.types.str() => {
+                self.types.str()
+            }
+            _ if left.ty == self.types.f64() || right.ty == self.types.f64() => self.types.f64(),
+            _ => left.ty,
+        }
+    }
+
+    fn resolve_unary_expr_type(
+        &self,
+        op: HirUnaryOp,
+        operand: &HirExpr,
+    ) -> agam_sema::symbol::TypeId {
+        match op {
+            HirUnaryOp::Not => self.types.bool(),
+            _ => operand.ty,
+        }
     }
 
     fn pattern_name(&self, pattern: &agam_ast::pattern::Pattern) -> Option<String> {
@@ -375,8 +596,9 @@ fn lower_unaryop(op: UnaryOp) -> HirUnaryOp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agam_lexer::Lexer;
     use agam_errors::span::SourceId;
+    use agam_lexer::Lexer;
+    use agam_sema::types::TypeStore;
 
     fn lower_source(source: &str) -> HirModule {
         let source_id = SourceId(0);
@@ -386,7 +608,9 @@ mod tests {
             let tok = lexer.next_token();
             let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
             tokens.push(tok);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
         let mut parser = agam_parser::Parser::new(tokens);
         let module = parser.parse_module(source_id).expect("parse failed");
@@ -408,7 +632,10 @@ mod tests {
         let f = &hir.functions[0];
         assert!(!f.body.stmts.is_empty());
         match &f.body.stmts[0] {
-            HirStmt::Let { name, .. } => assert_eq!(name, "x"),
+            HirStmt::Let { name, mutable, .. } => {
+                assert_eq!(name, "x");
+                assert!(*mutable, "plain `let` should lower as mutable by default");
+            }
             _ => panic!("expected Let"),
         }
     }
@@ -418,12 +645,12 @@ mod tests {
         let hir = lower_source("fn main(): let x = 1 + 2");
         let f = &hir.functions[0];
         match &f.body.stmts[0] {
-            HirStmt::Let { value: Some(expr), .. } => {
-                match &expr.kind {
-                    HirExprKind::Binary { op, .. } => assert_eq!(*op, HirBinOp::Add),
-                    _ => panic!("expected Binary"),
-                }
-            }
+            HirStmt::Let {
+                value: Some(expr), ..
+            } => match &expr.kind {
+                HirExprKind::Binary { op, .. } => assert_eq!(*op, HirBinOp::Add),
+                _ => panic!("expected Binary"),
+            },
             _ => panic!("expected Let with value"),
         }
     }
@@ -433,12 +660,10 @@ mod tests {
         let hir = lower_source("fn main(): print(42)");
         let f = &hir.functions[0];
         match &f.body.stmts[0] {
-            HirStmt::Expr(expr) => {
-                match &expr.kind {
-                    HirExprKind::Call { args, .. } => assert_eq!(args.len(), 1),
-                    _ => panic!("expected Call"),
-                }
-            }
+            HirStmt::Expr(expr) => match &expr.kind {
+                HirExprKind::Call { args, .. } => assert_eq!(args.len(), 1),
+                _ => panic!("expected Call"),
+            },
             _ => panic!("expected Expr"),
         }
     }
@@ -448,13 +673,81 @@ mod tests {
         let hir = lower_source("fn main(): while true: let x = 1");
         let f = &hir.functions[0];
         match &f.body.stmts[0] {
-            HirStmt::While { condition, .. } => {
-                match &condition.kind {
-                    HirExprKind::BoolLit(true) => {}
-                    _ => panic!("expected BoolLit(true)"),
-                }
-            }
+            HirStmt::While { condition, .. } => match &condition.kind {
+                HirExprKind::BoolLit(true) => {}
+                _ => panic!("expected BoolLit(true)"),
+            },
             _ => panic!("expected While"),
+        }
+    }
+
+    #[test]
+    fn test_lower_for_initializes_iterator_before_loop() {
+        let hir = lower_source("fn main(): for item in values: print(item)");
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Expr(expr) => match &expr.kind {
+                HirExprKind::Block(block) => {
+                    assert_eq!(block.stmts.len(), 2);
+                    match &block.stmts[0] {
+                        HirStmt::Let {
+                            name,
+                            value: Some(iterable),
+                            ..
+                        } => {
+                            assert!(name.starts_with("__iter_"));
+                            match &iterable.kind {
+                                HirExprKind::Var(var) => assert_eq!(var, "values"),
+                                _ => panic!("expected iterator init to use iterable"),
+                            }
+                        }
+                        _ => panic!("expected iterator let binding"),
+                    }
+                    assert!(matches!(&block.stmts[1], HirStmt::While { .. }));
+                }
+                _ => panic!("expected block expression"),
+            },
+            _ => panic!("expected expression statement"),
+        }
+    }
+
+    #[test]
+    fn test_lower_preserves_explicit_scalar_types() {
+        let hir = lower_source("fn add(x: i64) -> i64: let y: i64 = x; return y");
+        let builtins = TypeStore::new();
+        let f = &hir.functions[0];
+        assert_eq!(f.params[0].ty, builtins.i64());
+        assert_eq!(f.return_ty, builtins.i64());
+        match &f.body.stmts[0] {
+            HirStmt::Let { ty, .. } => assert_eq!(*ty, builtins.i64()),
+            _ => panic!("expected let binding"),
+        }
+    }
+
+    #[test]
+    fn test_lower_int_literals_default_to_i32() {
+        let hir = lower_source("fn main(): let x = 42");
+        let builtins = TypeStore::new();
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Let {
+                value: Some(expr), ..
+            } => assert_eq!(expr.ty, builtins.i32()),
+            _ => panic!("expected let binding with initializer"),
+        }
+    }
+
+    #[test]
+    fn test_lower_variable_use_preserves_binding_type() {
+        let hir = lower_source("fn add(x: i64) -> i64: return x + 1");
+        let builtins = TypeStore::new();
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Return(Some(expr)) => match &expr.kind {
+                HirExprKind::Binary { left, .. } => assert_eq!(left.ty, builtins.i64()),
+                _ => panic!("expected binary return expression"),
+            },
+            _ => panic!("expected return"),
         }
     }
 }

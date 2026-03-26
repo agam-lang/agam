@@ -4,9 +4,10 @@
 //! to produce native binaries. This is the simplest path to running
 //! Agam programs natively without requiring LLVM bindings.
 
+use agam_mir::ir::*;
+use agam_sema::types::{FloatSize, Type, builtin_type_by_id};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
-use agam_mir::ir::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CType {
@@ -57,7 +58,12 @@ fn analyze_module(module: &MirModule) -> HashMap<String, FunctionLayout> {
     let mut return_types: HashMap<String, CType> = module
         .functions
         .iter()
-        .map(|func| (func.name.clone(), infer_ctype_from_type_id(func.return_ty).unwrap_or(CType::Int)))
+        .map(|func| {
+            (
+                func.name.clone(),
+                infer_ctype_from_type_id(func.return_ty).unwrap_or(CType::Int),
+            )
+        })
         .collect();
 
     let mut layouts = HashMap::new();
@@ -107,7 +113,9 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                 Op::ConstString(_) => CType::Str,
                 Op::Unit => CType::Int,
                 Op::Copy(value) => value_type(&layout, *value),
-                Op::BinOp { op, left, right } => infer_binop_type(*op, value_type(&layout, *left), value_type(&layout, *right)),
+                Op::BinOp { op, left, right } => {
+                    infer_binop_type(*op, value_type(&layout, *left), value_type(&layout, *right))
+                }
                 Op::UnOp { op, operand } => infer_unop_type(*op, value_type(&layout, *operand)),
                 Op::Call { callee, .. } => {
                     if is_print_builtin(callee) {
@@ -125,7 +133,12 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                     .or_else(|| infer_ctype_from_type_id(instr.ty))
                     .unwrap_or(CType::Int),
                 Op::StoreLocal { name, value } => {
-                    let ty = value_type(&layout, *value);
+                    let ty = layout
+                        .local_types
+                        .get(name)
+                        .copied()
+                        .or_else(|| infer_ctype_from_type_id(instr.ty))
+                        .unwrap_or_else(|| value_type(&layout, *value));
                     layout.local_types.insert(name.clone(), ty);
                     ty
                 }
@@ -158,37 +171,75 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
         }
     }
     if !return_values.is_empty() {
-        layout.return_ty = return_values.into_iter().reduce(merge_type).unwrap_or(layout.return_ty);
+        layout.return_ty = return_values
+            .into_iter()
+            .reduce(merge_type)
+            .unwrap_or(layout.return_ty);
     }
 
     layout
 }
 
 fn infer_ctype_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<CType> {
-    match type_id.0 {
-        1 => Some(CType::Bool),
-        3 => Some(CType::Str),
-        5 => Some(CType::Float),
-        4 => Some(CType::Int),
+    match builtin_type_by_id(type_id)? {
+        Type::Bool => Some(CType::Bool),
+        Type::Str => Some(CType::Str),
+        Type::Float(FloatSize::F32 | FloatSize::F64) => Some(CType::Float),
+        Type::Int(_) | Type::UInt(_) => Some(CType::Int),
         _ => None,
     }
 }
 
 fn builtin_signature(name: &str) -> Option<BuiltinSig> {
     match name {
-        "clock" => Some(BuiltinSig { return_ty: CType::Float }),
-        "adam" => Some(BuiltinSig { return_ty: CType::Float }),
-        "dataframe_build_sin" => Some(BuiltinSig { return_ty: CType::DataFrame }),
-        "dataframe_filter_gt" => Some(BuiltinSig { return_ty: CType::DataFrame }),
-        "dataframe_sort" => Some(BuiltinSig { return_ty: CType::DataFrame }),
-        "dataframe_group_by" => Some(BuiltinSig { return_ty: CType::DataFrame }),
-        "dataframe_mean" => Some(BuiltinSig { return_ty: CType::Float }),
-        "dataframe_free" => Some(BuiltinSig { return_ty: CType::Int }),
-        "tensor_fill_rand" => Some(BuiltinSig { return_ty: CType::Tensor }),
-        "dense_layer" => Some(BuiltinSig { return_ty: CType::Tensor }),
-        "conv2d" => Some(BuiltinSig { return_ty: CType::Tensor }),
-        "tensor_checksum" => Some(BuiltinSig { return_ty: CType::Float }),
-        "tensor_free" => Some(BuiltinSig { return_ty: CType::Int }),
+        "argc" => Some(BuiltinSig {
+            return_ty: CType::Int,
+        }),
+        "argv" => Some(BuiltinSig {
+            return_ty: CType::Str,
+        }),
+        "parse_int" => Some(BuiltinSig {
+            return_ty: CType::Int,
+        }),
+        "clock" => Some(BuiltinSig {
+            return_ty: CType::Float,
+        }),
+        "adam" => Some(BuiltinSig {
+            return_ty: CType::Float,
+        }),
+        "dataframe_build_sin" => Some(BuiltinSig {
+            return_ty: CType::DataFrame,
+        }),
+        "dataframe_filter_gt" => Some(BuiltinSig {
+            return_ty: CType::DataFrame,
+        }),
+        "dataframe_sort" => Some(BuiltinSig {
+            return_ty: CType::DataFrame,
+        }),
+        "dataframe_group_by" => Some(BuiltinSig {
+            return_ty: CType::DataFrame,
+        }),
+        "dataframe_mean" => Some(BuiltinSig {
+            return_ty: CType::Float,
+        }),
+        "dataframe_free" => Some(BuiltinSig {
+            return_ty: CType::Int,
+        }),
+        "tensor_fill_rand" => Some(BuiltinSig {
+            return_ty: CType::Tensor,
+        }),
+        "dense_layer" => Some(BuiltinSig {
+            return_ty: CType::Tensor,
+        }),
+        "conv2d" => Some(BuiltinSig {
+            return_ty: CType::Tensor,
+        }),
+        "tensor_checksum" => Some(BuiltinSig {
+            return_ty: CType::Float,
+        }),
+        "tensor_free" => Some(BuiltinSig {
+            return_ty: CType::Int,
+        }),
         _ => None,
     }
 }
@@ -246,7 +297,11 @@ fn merge_type(left: CType, right: CType) -> CType {
 }
 
 fn value_type(layout: &FunctionLayout, value: ValueId) -> CType {
-    layout.value_types.get(&value).copied().unwrap_or(CType::Int)
+    layout
+        .value_types
+        .get(&value)
+        .copied()
+        .unwrap_or(CType::Int)
 }
 
 fn emit_common_prelude(out: &mut String) {
@@ -255,6 +310,21 @@ fn emit_common_prelude(out: &mut String) {
 agam_int agam_println(agam_str s) { printf("%s\n", s); return 0; }
 agam_int agam_print(agam_str s) { printf("%s", s); return 0; }
 agam_float agam_clock(void) { return (agam_float)clock() / (agam_float)CLOCKS_PER_SEC; }
+static agam_int agam_runtime_argc = 0;
+static char** agam_runtime_argv = NULL;
+agam_int agam_argc(void) { return agam_runtime_argc; }
+agam_str agam_argv(agam_int index) {
+  if (!agam_runtime_argv || index < 0 || index >= agam_runtime_argc) {
+    return "";
+  }
+  return agam_runtime_argv[index];
+}
+agam_int agam_parse_int(agam_str s) {
+  if (!s) {
+    return 0;
+  }
+  return (agam_int)strtoll(s, NULL, 10);
+}
 
 agam_str agam_str_concat(agam_str a, agam_str b) {
   size_t a_len = strlen(a);
@@ -642,15 +712,23 @@ pub fn emit_c(module: &MirModule) -> String {
                 if let Op::Call { callee, args } = &instr.op {
                     let mangled = mangle_name(callee);
                     if !has_runtime_prelude_definition(callee)
-                        && !module.functions.iter().any(|f| mangle_name(&f.name) == mangled)
+                        && !module
+                            .functions
+                            .iter()
+                            .any(|f| mangle_name(&f.name) == mangled)
                     {
                         let ret_ty = value_type(layout, instr.result).name();
-                        unknown_funcs.insert(format!("{} {}({});",
+                        unknown_funcs.insert(format!(
+                            "{} {}({});",
                             ret_ty,
                             mangled,
                             args.iter()
                                 .enumerate()
-                                .map(|(i, arg)| format!("{} __a{}", value_type(layout, *arg).name(), i))
+                                .map(|(i, arg)| format!(
+                                    "{} __a{}",
+                                    value_type(layout, *arg).name(),
+                                    i
+                                ))
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         ));
@@ -673,9 +751,17 @@ pub fn emit_c(module: &MirModule) -> String {
         if func.name == "main" {
             writeln!(output, "int main(int argc, char** argv);").unwrap();
         } else {
-            write!(output, "{} {}(", layout.return_ty.name(), mangle_name(&func.name)).unwrap();
+            write!(
+                output,
+                "{} {}(",
+                layout.return_ty.name(),
+                mangle_name(&func.name)
+            )
+            .unwrap();
             for (i, _) in func.params.iter().enumerate() {
-                if i > 0 { write!(output, ", ").unwrap(); }
+                if i > 0 {
+                    write!(output, ", ").unwrap();
+                }
                 let param_ty = layout.params.get(i).copied().unwrap_or(CType::Int);
                 write!(output, "{} __p{}", param_ty.name(), i).unwrap();
             }
@@ -699,9 +785,17 @@ fn emit_function(out: &mut String, func: &MirFunction, layout: &FunctionLayout) 
     if func.name == "main" {
         writeln!(out, "int main(int argc, char** argv) {{").unwrap();
     } else {
-        write!(out, "{} {}(", layout.return_ty.name(), mangle_name(&func.name)).unwrap();
+        write!(
+            out,
+            "{} {}(",
+            layout.return_ty.name(),
+            mangle_name(&func.name)
+        )
+        .unwrap();
         for (i, _param) in func.params.iter().enumerate() {
-            if i > 0 { write!(out, ", ").unwrap(); }
+            if i > 0 {
+                write!(out, ", ").unwrap();
+            }
             let param_ty = layout.params.get(i).copied().unwrap_or(CType::Int);
             write!(out, "{} __p{}", param_ty.name(), i).unwrap();
         }
@@ -709,9 +803,20 @@ fn emit_function(out: &mut String, func: &MirFunction, layout: &FunctionLayout) 
     }
 
     // Emit parameter → local aliases
+    if func.name == "main" {
+        writeln!(out, "  agam_runtime_argc = (agam_int)argc;").unwrap();
+        writeln!(out, "  agam_runtime_argv = argv;").unwrap();
+    }
     for (i, param) in func.params.iter().enumerate() {
         let param_ty = layout.params.get(i).copied().unwrap_or(CType::Int);
-        writeln!(out, "  {} {} = __p{};", param_ty.name(), mangle_local(&param.name), i).unwrap();
+        writeln!(
+            out,
+            "  {} {} = __p{};",
+            param_ty.name(),
+            mangle_local(&param.name),
+            i
+        )
+        .unwrap();
     }
 
     // Emit all basic blocks
@@ -744,25 +849,71 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
             writeln!(out, "  {} {} = {};", result_ty.name(), v, val).unwrap();
         }
         Op::ConstBool(val) => {
-            writeln!(out, "  {} {} = {};", result_ty.name(), v, if *val { 1 } else { 0 }).unwrap();
+            writeln!(
+                out,
+                "  {} {} = {};",
+                result_ty.name(),
+                v,
+                if *val { 1 } else { 0 }
+            )
+            .unwrap();
         }
         Op::ConstString(val) => {
-            writeln!(out, "  {} {} = \"{}\";", result_ty.name(), v, escape_c_string(val)).unwrap();
+            writeln!(
+                out,
+                "  {} {} = \"{}\";",
+                result_ty.name(),
+                v,
+                escape_c_string(val)
+            )
+            .unwrap();
         }
         Op::Unit => {
-            writeln!(out, "  {} {} = {}; /* unit */", result_ty.name(), v, result_ty.default_value()).unwrap();
+            writeln!(
+                out,
+                "  {} {} = {}; /* unit */",
+                result_ty.name(),
+                v,
+                result_ty.default_value()
+            )
+            .unwrap();
         }
         Op::BinOp { op, left, right } => {
             if *op == MirBinOp::Add && result_ty == CType::Str {
-                writeln!(out, "  {} {} = agam_str_concat((agam_str)__v{}, (agam_str)__v{});", result_ty.name(), v, left.0, right.0).unwrap();
+                writeln!(
+                    out,
+                    "  {} {} = agam_str_concat((agam_str)__v{}, (agam_str)__v{});",
+                    result_ty.name(),
+                    v,
+                    left.0,
+                    right.0
+                )
+                .unwrap();
             } else {
                 let op_str = binop_to_c(*op);
-                writeln!(out, "  {} {} = __v{} {} __v{};", result_ty.name(), v, left.0, op_str, right.0).unwrap();
+                writeln!(
+                    out,
+                    "  {} {} = __v{} {} __v{};",
+                    result_ty.name(),
+                    v,
+                    left.0,
+                    op_str,
+                    right.0
+                )
+                .unwrap();
             }
         }
         Op::UnOp { op, operand } => {
             let op_str = unop_to_c(*op);
-            writeln!(out, "  {} {} = {}__v{};", result_ty.name(), v, op_str, operand.0).unwrap();
+            writeln!(
+                out,
+                "  {} {} = {}__v{};",
+                result_ty.name(),
+                v,
+                op_str,
+                operand.0
+            )
+            .unwrap();
         }
         Op::Call { callee, args } => {
             if is_print_builtin(callee) {
@@ -784,14 +935,29 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
                 writeln!(out, "  {} {} = 0;", result_ty.name(), v).unwrap();
             } else {
                 let arg_strs: Vec<String> = args.iter().map(|a| format!("__v{}", a.0)).collect();
-                writeln!(out, "  {} {} = {}({});", result_ty.name(), v, mangle_name(callee), arg_strs.join(", ")).unwrap();
+                writeln!(
+                    out,
+                    "  {} {} = {}({});",
+                    result_ty.name(),
+                    v,
+                    mangle_name(callee),
+                    arg_strs.join(", ")
+                )
+                .unwrap();
             }
         }
         Op::Copy(value) => {
             writeln!(out, "  {} {} = __v{};", result_ty.name(), v, value.0).unwrap();
         }
         Op::LoadLocal(name) => {
-            writeln!(out, "  {} {} = {};", result_ty.name(), v, mangle_local(name)).unwrap();
+            writeln!(
+                out,
+                "  {} {} = {};",
+                result_ty.name(),
+                v,
+                mangle_local(name)
+            )
+            .unwrap();
         }
         Op::StoreLocal { name, value } => {
             writeln!(out, "  {} = __v{};", mangle_local(name), value.0).unwrap();
@@ -799,23 +965,68 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
         }
         Op::Alloca { name, .. } => {
             let local_ty = layout.local_types.get(name).copied().unwrap_or(CType::Int);
-            writeln!(out, "  {} {} = {};", local_ty.name(), mangle_local(name), local_ty.default_value()).unwrap();
-            writeln!(out, "  {} {} = {};", result_ty.name(), v, result_ty.default_value()).unwrap();
+            writeln!(
+                out,
+                "  {} {} = {};",
+                local_ty.name(),
+                mangle_local(name),
+                local_ty.default_value()
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {} {} = {};",
+                result_ty.name(),
+                v,
+                result_ty.default_value()
+            )
+            .unwrap();
         }
         Op::GetField { object, field } => {
-            writeln!(out, "  {} {} = __v{}; /* .{} */", result_ty.name(), v, object.0, field).unwrap();
+            writeln!(
+                out,
+                "  {} {} = __v{}; /* .{} */",
+                result_ty.name(),
+                v,
+                object.0,
+                field
+            )
+            .unwrap();
         }
         Op::GetIndex { object, index } => {
-            writeln!(out, "  {} {} = __v{}; /* [__v{}] */", result_ty.name(), v, object.0, index.0).unwrap();
+            writeln!(
+                out,
+                "  {} {} = __v{}; /* [__v{}] */",
+                result_ty.name(),
+                v,
+                object.0,
+                index.0
+            )
+            .unwrap();
         }
         Op::Phi(entries) => {
-            writeln!(out, "  {} {} = {}; /* phi */", result_ty.name(), v, result_ty.default_value()).unwrap();
+            writeln!(
+                out,
+                "  {} {} = {}; /* phi */",
+                result_ty.name(),
+                v,
+                result_ty.default_value()
+            )
+            .unwrap();
             for (block, val) in entries {
                 writeln!(out, "  /* phi: block_{} -> __v{} */", block.0, val.0).unwrap();
             }
         }
         Op::Cast { value, .. } => {
-            writeln!(out, "  {} {} = ({})__v{};", result_ty.name(), v, result_ty.name(), value.0).unwrap();
+            writeln!(
+                out,
+                "  {} {} = ({})__v{};",
+                result_ty.name(),
+                v,
+                result_ty.name(),
+                value.0
+            )
+            .unwrap();
         }
     }
 }
@@ -835,9 +1046,17 @@ fn emit_terminator(out: &mut String, term: &Terminator, _layout: &FunctionLayout
         Terminator::Jump(block) => {
             writeln!(out, "  goto block_{};", block.0).unwrap();
         }
-        Terminator::Branch { condition, then_block, else_block } => {
-            writeln!(out, "  if (__v{}) goto block_{}; else goto block_{};",
-                condition.0, then_block.0, else_block.0).unwrap();
+        Terminator::Branch {
+            condition,
+            then_block,
+            else_block,
+        } => {
+            writeln!(
+                out,
+                "  if (__v{}) goto block_{}; else goto block_{};",
+                condition.0, then_block.0, else_block.0
+            )
+            .unwrap();
         }
         Terminator::Unreachable => {
             writeln!(out, "  __builtin_unreachable();").unwrap();
@@ -854,7 +1073,12 @@ fn emit_print_value(out: &mut String, value: ValueId, ty: CType) {
             writeln!(out, "  printf(\"%.17g\", (double)__v{});", value.0).unwrap();
         }
         CType::Bool => {
-            writeln!(out, "  printf(\"%s\", __v{} ? \"true\" : \"false\");", value.0).unwrap();
+            writeln!(
+                out,
+                "  printf(\"%s\", __v{} ? \"true\" : \"false\");",
+                value.0
+            )
+            .unwrap();
         }
         CType::Int => {
             writeln!(out, "  printf(\"%lld\", (long long)__v{});", value.0).unwrap();
@@ -909,18 +1133,18 @@ fn mangle_local(name: &str) -> String {
 
 fn escape_c_string(s: &str) -> String {
     s.replace('\\', "\\\\")
-     .replace('"', "\\\"")
-     .replace('\n', "\\n")
-     .replace('\t', "\\t")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agam_hir::lower::HirLowering;
-    use agam_mir::lower::MirLowering;
-    use agam_lexer::Lexer;
     use agam_errors::span::SourceId;
+    use agam_hir::lower::HirLowering;
+    use agam_lexer::Lexer;
+    use agam_mir::lower::MirLowering;
 
     fn compile_to_c(source: &str) -> String {
         let source_id = SourceId(0);
@@ -930,7 +1154,9 @@ mod tests {
             let tok = lexer.next_token();
             let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
             tokens.push(tok);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
         let mut parser = agam_parser::Parser::new(tokens);
         let module = parser.parse_module(source_id).expect("parse failed");
@@ -948,7 +1174,10 @@ mod tests {
     #[test]
     fn test_emit_main_function() {
         let c = compile_to_c("fn main(): return 42");
-        assert!(c.contains("int main("), "C output should have main function");
+        assert!(
+            c.contains("int main("),
+            "C output should have main function"
+        );
         assert!(c.contains("42"), "C output should have the literal 42");
         assert!(c.contains("return"), "C output should have return");
     }
@@ -969,7 +1198,10 @@ mod tests {
     #[test]
     fn test_emit_print_call() {
         let c = compile_to_c("fn main(): print(42)");
-        assert!(c.contains("printf"), "C output should emit printf for print()");
+        assert!(
+            c.contains("printf"),
+            "C output should emit printf for print()"
+        );
     }
 
     #[test]
@@ -994,7 +1226,8 @@ mod tests {
 
     #[test]
     fn test_non_main_returns_do_not_truncate_to_int() {
-        let c = compile_to_c("fn add(a: i32) -> i32 { return a + 1; } fn main() { return add(41); }");
+        let c =
+            compile_to_c("fn add(a: i32) -> i32 { return a + 1; } fn main() { return add(41); }");
         assert!(c.contains("agam_add("));
         assert!(c.contains("return __v"));
     }
@@ -1040,7 +1273,9 @@ mod tests {
 
     #[test]
     fn test_adam_builtin_returns_float() {
-        let c = compile_to_c("fn main() { let loss = adam(-1.0, 2.0, 0.001, 64, 0.0001); print(loss); }");
+        let c = compile_to_c(
+            "fn main() { let loss = adam(-1.0, 2.0, 0.001, 64, 0.0001); print(loss); }",
+        );
         assert!(c.contains("agam_adam"));
         assert!(c.contains("agam_float __v"));
     }

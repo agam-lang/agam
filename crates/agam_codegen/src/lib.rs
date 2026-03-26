@@ -9,3 +9,4 @@
 //! Future backends: LLVM IR, WASM, custom bytecode.
 
 pub mod c_emitter;
+pub mod llvm_emitter;

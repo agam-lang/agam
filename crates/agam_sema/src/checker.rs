@@ -15,7 +15,7 @@ use agam_errors::Span;
 
 use crate::symbol::TypeId;
 use crate::scope::ScopeStack;
-use crate::types::{Type, TypeStore, IntSize, FloatSize};
+use crate::types::{builtin_type_id_for_name, Type, TypeStore};
 use crate::infer::InferenceEngine;
 use crate::resolver::Resolver;
 use agam_smt::solver::{Z3Solver, SmtSolver, Constraint, SolverResult};
@@ -445,21 +445,8 @@ impl TypeChecker {
         match &te.kind {
             TypeExprKind::Named(path) => {
                 if let Some(seg) = path.segments.last() {
-                    match seg.name.as_str() {
-                        "i8"    => self.types.insert(Type::Int(IntSize::I8)),
-                        "i16"   => self.types.insert(Type::Int(IntSize::I16)),
-                        "i32"   => self.types.i32(),
-                        "i64"   => self.types.insert(Type::Int(IntSize::I64)),
-                        "i128"  => self.types.insert(Type::Int(IntSize::I128)),
-                        "f32"   => self.types.insert(Type::Float(FloatSize::F32)),
-                        "f64"   => self.types.f64(),
-                        "bool"  => self.types.bool(),
-                        "char"  => self.types.char(),
-                        "str" | "String" => self.types.str(),
-                        "void"  => self.types.unit(),
-                        "Any"   => self.types.any(),
-                        _ => self.types.fresh_var(),
-                    }
+                    builtin_type_id_for_name(&self.types, &seg.name)
+                        .unwrap_or_else(|| self.types.fresh_var())
                 } else {
                     self.types.error()
                 }

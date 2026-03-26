@@ -133,15 +133,15 @@ impl Resolver {
 
         // Declare parameters
         for param in &f.params {
-            let ty = self.resolve_type_expr_to_id(&param.ty);
-            if let Some(name) = self.pattern_name(&param.pattern) {
-                let _ = self.scopes.declare(
-                    name,
-                    SymbolKind::Variable { mutable: false, ty },
-                    param.span,
-                );
+                let ty = self.resolve_type_expr_to_id(&param.ty);
+                if let Some(name) = self.pattern_name(&param.pattern) {
+                    let _ = self.scopes.declare(
+                        name,
+                        SymbolKind::Variable { mutable: true, ty },
+                        param.span,
+                    );
+                }
             }
-        }
 
         // Resolve body
         if let Some(body) = &f.body {
@@ -242,7 +242,7 @@ impl Resolver {
                 if let Some(name) = self.pattern_name(pattern) {
                     let _ = self.scopes.declare(
                         name,
-                        SymbolKind::Variable { mutable: false, ty: self.types.fresh_var() },
+                        SymbolKind::Variable { mutable: true, ty: self.types.fresh_var() },
                         stmt.span,
                     );
                 }
@@ -461,43 +461,25 @@ impl Resolver {
 
     /// Map an AST `TypeExpr` → an internal `TypeId`.
     fn resolve_type_expr_to_id(&mut self, te: &TypeExpr) -> TypeId {
-        use crate::types::{Type, IntSize, FloatSize};
+        use crate::types::{builtin_type_id_for_name, Type};
 
         match &te.kind {
             TypeExprKind::Named(path) => {
                 if let Some(seg) = path.segments.last() {
-                    match seg.name.as_str() {
-                        "i8"    => self.types.insert(Type::Int(IntSize::I8)),
-                        "i16"   => self.types.insert(Type::Int(IntSize::I16)),
-                        "i32"   => self.types.insert(Type::Int(IntSize::I32)),
-                        "i64"   => self.types.insert(Type::Int(IntSize::I64)),
-                        "i128"  => self.types.insert(Type::Int(IntSize::I128)),
-                        "isize" => self.types.insert(Type::Int(IntSize::ISize)),
-                        "u8"    => self.types.insert(Type::UInt(IntSize::I8)),
-                        "u16"   => self.types.insert(Type::UInt(IntSize::I16)),
-                        "u32"   => self.types.insert(Type::UInt(IntSize::I32)),
-                        "u64"   => self.types.insert(Type::UInt(IntSize::I64)),
-                        "u128"  => self.types.insert(Type::UInt(IntSize::I128)),
-                        "usize" => self.types.insert(Type::UInt(IntSize::ISize)),
-                        "f32"   => self.types.insert(Type::Float(FloatSize::F32)),
-                        "f64"   => self.types.insert(Type::Float(FloatSize::F64)),
-                        "bool"  => self.types.bool(),
-                        "char"  => self.types.char(),
-                        "str" | "String"  => self.types.str(),
-                        "void"  => self.types.unit(),
-                        "Any"   => self.types.any(),
-                        name => {
-                            // User-defined type — look it up
-                            if let Some(sym_id) = self.scopes.lookup(name) {
-                                self.scopes.mark_used(sym_id);
-                                self.types.insert(Type::Named(sym_id))
-                            } else {
-                                self.errors.push(ResolveError {
-                                    message: format!("unknown type '{}'", name),
-                                    span: te.span,
-                                });
-                                self.types.error()
-                            }
+                    if let Some(type_id) = builtin_type_id_for_name(&self.types, &seg.name) {
+                        type_id
+                    } else {
+                        let name = seg.name.as_str();
+                        // User-defined type — look it up
+                        if let Some(sym_id) = self.scopes.lookup(name) {
+                            self.scopes.mark_used(sym_id);
+                            self.types.insert(Type::Named(sym_id))
+                        } else {
+                            self.errors.push(ResolveError {
+                                message: format!("unknown type '{}'", name),
+                                span: te.span,
+                            });
+                            self.types.error()
                         }
                     }
                 } else {

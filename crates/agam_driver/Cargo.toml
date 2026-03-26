@@ -18,5 +18,7 @@ agam_sema = { workspace = true }
 agam_hir = { workspace = true }
 agam_mir = { workspace = true }
 agam_codegen = { workspace = true }
+agam_jit = { workspace = true }
+agam_fmt = { workspace = true }
 clap = { workspace = true }
 miette = { workspace = true }

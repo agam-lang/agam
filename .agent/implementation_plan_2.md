@@ -235,6 +235,19 @@ Status update:
 ### Phase 14: Direct LLVM IR or JIT Backend
 > *The Concept*: Bypassing intermediate text files (like C code) to emit machine code directly into memory.
 
+Status update:
+- Added a first `agam_codegen::llvm_emitter` backend that lowers the current scalar/string MIR subset directly to textual LLVM IR (`.ll`) without going through the C emitter.
+- Wired `agamc build --backend llvm` and `agamc run --backend llvm`, with graceful fallback to emitting `.ll` only when `clang` is unavailable in the environment.
+- Fixed HIR `for`-loop desugaring to materialize the hidden iterator local before the lowered `while`, which unblocks the LLVM path from emitting undeclared iterator locals.
+- Added backend/unit coverage for the new LLVM emitter and the iterator-lowering regression.
+- Added configurable LLVM target metadata (`AGAM_LLVM_TARGET_TRIPLE`, `AGAM_LLVM_DATA_LAYOUT`) plus conservative ABI/pointer attributes in the textual IR; fair WSL benchmarks show these clean up the IR surface, but the remaining performance gap is dominated by semantic proof quality (`nsw`/range information), not missing module headers.
+- Started the next LLVM-quality phase by centralizing primitive scalar IDs in `agam_sema::types`, preserving explicit scalar annotations through HIR lowering, and teaching the LLVM backend to keep signed/unsigned integer widths and float widths instead of flattening everything into a single generic integer shape.
+- Fixed an additional width leak where declared local scalar types could be overwritten by initializer value types during codegen analysis, and added HIR local-scope type tracking so variable references preserve declared binding widths. The fair WSL benchmark is now down to ~`0.4165s` for Agam LLVM vs ~`0.3954s` for `clang++ -O3` on the current advanced suite.
+- Started conservative LLVM sign-flow propagation for directly proven non-negative signed values, then extended it with a narrow seeded-`+1` loop-counter proof so hot counters like `num`/`d` can stay non-negative through simple while-loops. This successfully flips the `count_primes` modulus path to `urem`, but the fair WSL benchmark remains ~`0.4157s` for Agam LLVM vs ~`0.3946s` for `clang++ -O3`, which confirms the next meaningful optimization step is broader loop-carried induction/range proof rather than more local sign plumbing.
+- Broadened that induction layer across the strict-bound hot loops and now emit selective `nuw` / `nsw` on proven `+1` induction increments only where the loop guard rules out wraparound. Verified end-to-end under WSL `clang` on the runtime-parameterized benchmark path.
+- Added first LLVM release-mode knobs to `agamc build` / `agamc run`: `--lto thin|full`, `--pgo-generate <dir>`, and `--pgo-use <profdata>`. These are intentionally scoped to the LLVM backend for now.
+- Added the first Cranelift-backed `agam_jit` runtime slice and wired `agamc run --backend jit` for the current scalar MIR subset, including locals, loops, direct calls, print builtins, and runtime `argc()` / `argv()` / `parse_int()` helpers.
+
 #### Crates: `agam_codegen`, `agam_jit`
 - **`llvm_emitter.rs`**: Transition the C-transpiler to emit LLVM IR (`.ll`) via the `inkwell` crate.
 - **`agam_jit`**: Build a Cranelift-based JIT compiler to evaluate code on-the-fly at runtime for interactive environments.
@@ -245,9 +258,18 @@ Status update:
 
 ### Phase 15: Developer Tooling (LSP & Formatter)
 #### Crates: `agam_lsp`, `agam_fmt`, `agam_test`
+Status update:
+- Wired a first real `agam_fmt` slice into `agamc fmt` and `agamc fmt --check`. The formatter is intentionally conservative for now: it preserves comments/source structure while normalizing line endings, trailing whitespace, leading tab indentation, blank-line runs, and final newlines.
+- Upgraded `agamc build` / `agamc run` for faster current-phase development by adding `Backend::Auto` as the default resolver and a `--fast` preset that forces `-O3` on the best currently-available native backend.
+- Fixed `agamc run` to execute binaries via the source-derived path instead of assuming the input file lives in the current directory.
+
+Future development that stays in this phase:
 - **`agam_lsp`**: Implement Language Server Protocol (TCP/Stdio) providing real-time autocomplete, hover type-checking, and diagnostics.
-- **`agam_fmt`**: A strict AST auto-formatter ensuring consistent syntax rules.
-- **`agam_test`**: A built-in unit testing module utilizing the compiler driver.
+- **`agam_fmt`**: Evolve the initial whitespace-stable formatter into a comment-aware structural formatter with stable canonical layout rules.
+- **`agam_test`**: Build an Agam-native unit testing module utilizing the compiler driver.
+
+Future compiler work intentionally deferred beyond the current slice:
+- Richer square-bound / derived range proof for LLVM, then smarter PGO / ThinLTO defaults once the proofs are trustworthy.
 
 ### Phase 16: Interactive REPL & Sandboxed Execution
 #### Crates: `agam_notebook`, `agam_jit`
@@ -309,7 +331,7 @@ Agam must be truly ubiquitous—scaling elegantly from bare-metal IoT microcontr
 ### Phase 25: Machine-Code Control & Optimizations
 #### Crates: `agam_parser`, `agam_driver`
 - **Inline Assembly**: Adding `asm! { "mov eax, 1" }` blocks for exact CPU instruction access for kernel and IoT developers.
-- **Profile-Guided Optimization (PGO)**: Add `--pgo-generate` and `--pgo-use` to `agam_driver`. Agam will profile a program's execution to analyze common `if/else` branches, then mathematically recompile the exact binary to minimize branch-prediction misses.
+- **Profile-Guided Optimization (PGO)**: Extend the first `--pgo-generate` / `--pgo-use` driver plumbing into a full guided optimization loop that can automatically collect, merge, and reuse production-quality profiles.
 
 ---
 
@@ -318,3 +340,16 @@ Agam must be truly ubiquitous—scaling elegantly from bare-metal IoT microcontr
 ### Phase 26: Quantum & ZKP Primitives
 - **`Qubit` Types**: Implement native Qubit types and gates.
 - **`#[zkp]` macros**: Compile mathematical logic straight into zero-knowledge proofs (zk-SNARKs).
+
+### Phase 27: Premium Object System
+#### Crates: `agam_parser`, `agam_ast`, `agam_sema`, `agam_hir`, `agam_mir`, `agam_codegen`
+- Finish the existing `struct` / `class` / `trait` / `impl` parser surface into a complete object model.
+- Add constructors, `self` handling, visibility rules, and high-quality method dispatch semantics.
+- Decide and implement Agam's long-term composition / inheritance / interface story so OOP works in a premium, language-native way instead of as partial syntax.
+
+### Phase 28: Premium Ergonomics and Syntax Cohesion
+#### Crates: `agam_parser`, `agam_ast`, `agam_fmt`, `agam_lsp`, `agam_hir`, `agam_sema`
+- Add named arguments and default parameter values so APIs can stay expressive without boilerplate overloads.
+- Keep type information available but optional where it should be, preserving Agam's premium readability instead of forcing ceremony into everyday code.
+- Unify constructor/property/method layout so larger codebases feel organized like Java/C++/Rust while day-to-day scripting still feels lightweight.
+- Feed those ergonomics rules back into `agam_fmt` and `agam_lsp` so the language not only parses the syntax, but actively teaches and preserves the premium style.

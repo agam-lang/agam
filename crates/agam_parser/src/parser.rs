@@ -340,7 +340,10 @@ impl Parser {
 
     fn parse_let_stmt(&mut self) -> Result<StmtKind, ParseError> {
         self.advance(); // let
-        let mutable = self.eat(TokenKind::Mut);
+        // Agam bindings are mutable by default. `let mut` remains accepted as
+        // backwards-compatible syntax sugar.
+        let _legacy_mut = self.eat(TokenKind::Mut);
+        let mutable = true;
         let pattern = self.parse_pattern()?;
         let ty = if self.eat(TokenKind::Colon) { Some(self.parse_type_expr()?) } else { None };
         let value = if self.eat(TokenKind::Eq) { Some(self.parse_expression(0)?) } else { None };
@@ -969,6 +972,25 @@ mod tests {
     fn test_parse_let() {
         let module = parse_src("let x = 42");
         assert!(!module.declarations.is_empty());
+        let DeclKind::Function(f) = &module.declarations[0].kind else {
+            panic!("expected top-level function wrapper");
+        };
+        let StmtKind::Let { mutable, .. } = &f.body.as_ref().expect("body").stmts[0].kind else {
+            panic!("expected let statement");
+        };
+        assert!(*mutable, "plain `let` should be mutable by default");
+    }
+
+    #[test]
+    fn test_parse_legacy_let_mut_still_works() {
+        let module = parse_src("let mut counter = 0");
+        let DeclKind::Function(f) = &module.declarations[0].kind else {
+            panic!("expected top-level function wrapper");
+        };
+        let StmtKind::Let { mutable, .. } = &f.body.as_ref().expect("body").stmts[0].kind else {
+            panic!("expected let statement");
+        };
+        assert!(*mutable, "`let mut` should remain accepted");
     }
 
     #[test]

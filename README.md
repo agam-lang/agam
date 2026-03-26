@@ -22,11 +22,12 @@ This repository builds the entire Agam compiler and runtime from the ground up. 
 Agam's syntax is heavily inspired by Rust's safety and Python's readability. Here are the core features currently implemented in the compiler:
 
 ### 1. Variables and Mutability
-By default, variables are immutable (constant). You must explicitly mark them as `mut` if you want to change them later.
+Bindings are mutable by default so everyday code stays lightweight. Use `const` when you want an explicit immutable value. Legacy `let mut` syntax is still accepted for compatibility, but it is no longer required.
 ```rust
-let name = "Agam";       // Type inferred as String, immutable
+let name = "Agam";       // Type inferred as String, mutable by default
 let x: i32 = 10;         // Explicit type declaration
-let mut counter = 0;     // Mutable variable
+const version = "0.1";   // Explicitly immutable
+let counter = 0;         // Plain bindings can be reassigned
 counter = counter + 1;
 ```
 
@@ -39,7 +40,7 @@ if counter > 10 {
     print_str("Under ten!");
 }
 
-let mut i = 0;
+let i = 0;
 while i < 5 {
     print_int(i);
     i = i + 1;
@@ -50,8 +51,8 @@ while i < 5 {
 Functions use the `fn` keyword and explicitly declare argument and return types.
 ```rust
 fn calculate_sum(limit: i32) -> i32 {
-    let mut total = 0;
-    let mut i = 0;
+    let total = 0;
+    let i = 0;
     while i < limit {
         total = total + i;
         i = i + 1;
@@ -78,8 +79,17 @@ let loss = agam_mse_loss(model, targets);
 ### 5. Compiling and Running
 Use the built-in compiler driver `agam_driver` to build and execute your scripts natively:
 ```bash
-# Compile and run your script with GCC O2 optimizations
-agamc build my_script.agam -O 2
+# Fast current-path build: resolves the best available backend automatically
+agamc build my_script.agam --fast
+
+# Run with the same fast preset
+agamc run my_script.agam --fast
+
+# Keep source formatting clean during development
+agamc fmt --check .
+
+# Or build with an explicit optimization level/backend
+agamc build my_script.agam --backend llvm -O 3
 ./my_script.exe
 ```
 
@@ -179,6 +189,43 @@ An **SMT Solver** (Satisfiability Modulo Theories) is a mathematical engine that
 
 ---
 
+## 🧬 Phase 14 & 15: Direct LLVM Backend and Typed Scalar Lowering
+### What changed?
+Agam no longer has to rely only on the C transpilation path. We now have a direct textual LLVM IR backend for the current scalar/string subset, plus the first stage of width-aware scalar lowering so the backend can preserve explicit source types like `i64` instead of silently widening everything into one generic integer shape.
+
+### What We Built:
+* **Direct LLVM IR backend**: `agamc build --backend llvm` now emits `.ll` directly from MIR. When `clang` is available, that IR can be turned into a native executable without going through generated C.
+* **First Cranelift JIT runtime**: `agamc run --backend jit` now lowers the current scalar MIR subset straight into machine code in memory, which gives Agam an immediate execution path even when you are not emitting a native file on disk.
+* **Runtime-backed CLI helpers**: The LLVM and C backends both expose `argc()`, `argv()`, and `parse_int()` so Agam benchmarks can depend on real runtime inputs instead of compile-time constants.
+* **Configurable LLVM target metadata**: The LLVM emitter supports `AGAM_LLVM_TARGET_TRIPLE` and `AGAM_LLVM_DATA_LAYOUT` so emitted IR can carry explicit module target information when desired.
+* **Conservative ABI and pointer attributes**: The textual LLVM IR now emits a safe subset of attributes such as `noundef`, `nocapture`, `readonly`, and `local_unnamed_addr` where they are semantically justified.
+* **Width-aware scalar lowering started**: Primitive scalar knowledge is now centralized in `agam_sema::types`, explicit scalar annotations survive HIR/MIR lowering, and the LLVM backend preserves signedness/width for built-in integer and float types instead of assuming one catch-all `i64`.
+* **Broader induction proof and selective arithmetic flags**: The LLVM backend now tracks directly proven non-negative signed values, broadens strict seeded `+1` induction reasoning across hot while-loops, and emits `nuw` / `nsw` only on loop-counter increments whose guards make wraparound impossible under Agam's semantics.
+
+### Why this matters
+Agam's goal is premium systems performance **without** giving up the language's own semantics. That means we do **not** chase speed by pretending Agam has C++-style undefined signed overflow. The backend is being upgraded to earn those optimizations honestly: by preserving type width, then proving ranges, then emitting stronger LLVM facts only when they are actually true.
+
+---
+
+## 🧰 Phase 15: Developer Tooling, First Slice
+### What changed?
+The current compiler phases are now more usable for day-to-day development, not just backend experiments.
+
+### What We Built:
+* **Real `agamc fmt` command**: The formatter is no longer a stub. It now normalizes line endings, trailing whitespace, leading tab indentation, blank-line runs, and the final newline while preserving comments and existing source layout.
+* **`fmt --check` workflow**: You can now gate formatting in CI or local pre-commit flows with `agamc fmt --check`.
+* **Auto backend resolution**: `agamc build` and `agamc run` now support an `auto` backend mode and use it by default, preferring LLVM when `clang` is available and otherwise falling back to the C path.
+* **Fast current-path builds**: `agamc build --fast` and `agamc run --fast` now resolve to the best currently-available native backend and force `-O3`, which makes the existing phases much better suited for premium development loops.
+* **Fixed `run` path handling**: `agamc run` now executes binaries using the source file path instead of assuming the source lives in the current directory.
+
+### What stays in future phases
+The deeper compiler work still belongs in future development:
+* Richer square-bound and derived range proof for LLVM.
+* Smarter PGO / ThinLTO defaults once the next proof layer is trustworthy.
+* Comment-aware structural formatting, full LSP features, and an Agam-native test runner.
+
+---
+
 ## 🔮 Future Scopes (Phase 11 and Beyond)
 
 We are constantly expanding the boundaries of compiler tech:
@@ -186,22 +233,62 @@ We are constantly expanding the boundaries of compiler tech:
 2. **Content-Addressable Code**: We will replace fragile package managers (like NPM) by hashing ASTs using BLAKE3. Code is dependency-resolved by its mathematical hash across a decentralized network.
 3. **Quantum Computing**: `Qubit` base types and Gates (H, X, Z) so you can write quantum operations adjacent to classical neural networks.
 4. **Zero-Knowledge Proofs (ZKP)**: `#[zkp]` macros that compile mathematical logic straight into cryptographic circuits (zk-SNARKs) to prove data authenticity on decentralized networks.
+5. **Premium Object System**: Agam already parses `struct`, `class`, `trait`, `impl`, field access, method calls, and struct literals. A dedicated future phase will finish that into a fully checked object model with constructors, `self`, visibility, composition/inheritance strategy, and premium dispatch semantics.
+6. **Premium Ergonomics Layer**: A dedicated follow-up phase will make everyday Agam code feel lower-ceremony and more intentional by adding defaults where they improve flow, named/default arguments, cleaner constructor/property forms, and stronger syntax cohesion across scripts, libraries, and object-style APIs.
 
 ---
 
 ## ⚡ Real-World Benchmarks: Agam vs The World
-As part of **Phase 10B**, we built a comprehensive benchmarking suite containing 5 computational workloads (Looping, Recursion, Number Theory, Matrix Multiplication, Calculus Integration).
+As of **March 26, 2026**, Agam uses a **runtime-parameterized** benchmark suite so the optimizer cannot simply fold the whole workload away. The current fair comparison is run in **WSL** with the same numeric inputs for every implementation:
 
-Here are the results running end-to-end on native hardware compared to Python, Rust, and C++:
+```bash
+100000000 40 100000 100 10000000
+```
 
-| Language | Total Execution Time | Relative Speed | Stack |
-|---|---|---|---|
-| **Python 3.13** | 3.81 seconds | 1.0x (Baseline) | Standard Python Interpreter |
-| **Agam (C Backend)** | **0.06 seconds** | **~63x Faster** | Compiled end-to-end via `agam_codegen` to GCC `-O2` |
-| **Rust** | 0.0039 seconds | ~977x Faster | Rust `agam_std` primitives compiled via `rustc -O` |
-| **C++** | 0.0022 seconds | ~1700x Faster | Standard C++ compiled via `g++ -O3` |
+The Agam benchmark was also upgraded to use explicit `i64` on the large accumulation paths so the comparison reflects the intended semantics instead of relying on accidental backend widening.
 
-*Note: The Agam compiler natively produces machine code capable of massive performance leaps over Python script interpretation, immediately matching or dramatically approaching systems languages without writing any C.*
+### Current fair timings (7-run trimmed average, WSL)
+
+| Runtime | Total Time | Relative to Agam LLVM | Notes |
+|---|---:|---:|---|
+| **Agam LLVM -O3** | **0.4157 s** | **1.00x** | Direct LLVM IR emitted by `agam_codegen`, compiled with `clang -O3` in WSL |
+| **C++ clang++ -O3** | 0.3946 s | 1.05x faster than Agam | Highest native baseline in current runs |
+| **C++ g++ -O3** | 0.3912 s | 1.06x faster than Agam | GCC native baseline |
+
+### What the benchmark means
+* Agam is now in the same performance band as optimized C++ on this fair workload, and the current fair gap is still roughly **5%** against `clang++ -O3`.
+* The latest LLVM work now covers both conservative sign-flow and broader strict-bound induction counters, which means hot loops like `sum_loop`, `fibonacci`, `matrix_multiply`, and `integrate_x2` can carry proven `add nuw nsw` increments while `count_primes` still keeps its safe `urem` lowering.
+* The next major wins now come from **richer derived range proofs**: square-bound guards, stronger loop-carried facts, and then smarter use of the new PGO / ThinLTO knobs once those proofs are trustworthy.
+* This is deliberate. Agam is aiming for native speed while preserving its own language model, not by inheriting C++ undefined behavior as a hidden optimization contract.
+
+### Practical commands
+```bash
+# C backend
+agamc build my_script.agam -O 3
+
+# LLVM backend
+agamc build my_script.agam --backend llvm -O 3
+
+# LLVM backend with ThinLTO
+agamc build my_script.agam --backend llvm -O 3 --lto thin
+
+# LLVM backend with PGO instrumentation or profile use
+agamc build my_script.agam --backend llvm -O 3 --pgo-generate profiles
+agamc build my_script.agam --backend llvm -O 3 --pgo-use default.profdata
+
+# JIT backend for in-memory execution
+agamc run my_script.agam --backend jit
+
+# Optional target metadata for LLVM emission
+AGAM_LLVM_TARGET_TRIPLE=x86_64-pc-linux-gnu \
+AGAM_LLVM_DATA_LAYOUT='e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128' \
+agamc build my_script.agam --backend llvm -O 3
+
+# Premium current-path development flow
+agamc fmt --check .
+agamc build my_script.agam --fast
+agamc run my_script.agam --fast
+```
 
 ---
 *Agam is a journey to teach, build, and push the performance of what a modern systems programming language can achieve for Data Science and Machine Learning.*

@@ -4,11 +4,15 @@
 ///
 /// Run: cargo run --release --bin bench_advanced
 
+use std::env;
+
 fn sum_loop(n: i64) -> i64 {
     let mut total: i64 = 0;
+    let mut state: i64 = (n % 7_919) + 1;
     let mut i: i64 = 0;
     while i < n {
-        total += i;
+        state = (state * 57 + i * 13 + 17) % 1_000_003;
+        total += state % 1_024;
         i += 1;
     }
     total
@@ -60,13 +64,18 @@ fn matrix_multiply(size: i64) -> i64 {
 
 fn integrate_x2(steps: i64) -> i64 {
     let mut sum: i64 = 0;
+    let mut wobble: i64 = (steps % 1_237) + 3;
     for i in 0..steps {
-        sum += i * i;
+        wobble = (wobble * 73 + 19) % 65_521;
+        sum += ((i * i) + wobble) % 4_096;
     }
     sum
 }
 
-fn run_bench(name: &str, f: fn() -> i64) -> f64 {
+fn run_bench<F>(name: &str, f: F) -> f64
+where
+    F: FnOnce() -> i64,
+{
     let start = std::time::Instant::now();
     let result = f();
     let elapsed = start.elapsed().as_secs_f64();
@@ -75,6 +84,12 @@ fn run_bench(name: &str, f: fn() -> i64) -> f64 {
 }
 
 fn main() {
+    let mut values = [100_000_000_i64, 40, 100_000, 100, 10_000_000];
+    for (slot, raw) in values.iter_mut().zip(env::args().skip(1)) {
+        *slot = raw.parse().expect("expected integer benchmark argument");
+    }
+    let [sum_n, fib_n, prime_n, mat_n, integrate_n] = values;
+
     println!("{}", "=".repeat(65));
     println!("  Agam vs Python — Advanced Benchmark Suite");
     println!("  Agam Runtime (Rust native, --release)");
@@ -83,11 +98,11 @@ fn main() {
 
     let mut total = 0.0;
 
-    total += run_bench("Sum(100M)", || sum_loop(100_000_000));
-    total += run_bench("Fibonacci(40)", || fibonacci(40));
-    total += run_bench("PrimeCount(100K)", || count_primes(100_000));
-    total += run_bench("MatMul(100x100)", || matrix_multiply(100));
-    total += run_bench("Integrate(10M)", || integrate_x2(10_000_000));
+    total += run_bench(&format!("Sum({sum_n})"), || sum_loop(sum_n));
+    total += run_bench(&format!("Fibonacci({fib_n})"), || fibonacci(fib_n));
+    total += run_bench(&format!("PrimeCount({prime_n})"), || count_primes(prime_n));
+    total += run_bench(&format!("MatMul({mat_n}x{mat_n})"), || matrix_multiply(mat_n));
+    total += run_bench(&format!("Integrate({integrate_n})"), || integrate_x2(integrate_n));
 
     println!();
     println!("  Total Agam time: {:.4}s", total);
