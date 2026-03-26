@@ -100,7 +100,7 @@
 
 ## Phase 10C: Compilation Optimization Passes (The Speedup Phase)
 - [x] Constant Folding & Propagation (pre-calculate mathematical constants at compile time)
-- [ ] Monomorphization (Specialize generic numbers into specific `int32`/`float64` types instead of boxed `agam_int`)
+- [x] Monomorphization (Specialize generic numbers into specific `int32`/`float64` types instead of boxed `agam_int`)
 - [x] Function Inlining (replace small method calls with their actual body in MIR)
 - [x] Dead Code Elimination (remove unused variables and branches before sending to GCC)
 
