@@ -12,6 +12,11 @@ use std::fmt::Write;
 use agam_mir::ir::*;
 use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 
+const MAX_CALL_CACHE_ARGS: usize = 4;
+const DEFAULT_CALL_CACHE_CAPACITY: usize = 256;
+const DEFAULT_CALL_CACHE_WARMUP: u64 = 32;
+const OPTIMIZED_CALL_CACHE_MIN_REPEATS: u32 = 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct LlvmIntType {
     bits: u16,
@@ -145,13 +150,20 @@ struct GlobalString {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct LlvmEmitOptions {
-    target_triple: Option<String>,
-    data_layout: Option<String>,
+pub struct LlvmEmitOptions {
+    pub target_triple: Option<String>,
+    pub data_layout: Option<String>,
+    pub call_cache: bool,
+    pub call_cache_only: Vec<String>,
+    pub call_cache_exclude: Vec<String>,
+    pub call_cache_optimize: bool,
+    pub call_cache_optimize_only: Vec<String>,
+    pub call_cache_capacity: usize,
+    pub call_cache_warmup: u64,
 }
 
 impl LlvmEmitOptions {
-    fn from_env() -> Self {
+    pub fn from_env() -> Self {
         Self {
             target_triple: env::var("AGAM_LLVM_TARGET_TRIPLE")
                 .ok()
@@ -159,7 +171,31 @@ impl LlvmEmitOptions {
             data_layout: env::var("AGAM_LLVM_DATA_LAYOUT")
                 .ok()
                 .filter(|value| !value.trim().is_empty()),
+            call_cache: false,
+            call_cache_only: Vec::new(),
+            call_cache_exclude: Vec::new(),
+            call_cache_optimize: false,
+            call_cache_optimize_only: Vec::new(),
+            call_cache_capacity: DEFAULT_CALL_CACHE_CAPACITY,
+            call_cache_warmup: DEFAULT_CALL_CACHE_WARMUP,
         }
+    }
+}
+
+#[derive(Clone, Default)]
+struct CallCachePlan {
+    cacheable_functions: Vec<String>,
+    cacheable_set: HashSet<String>,
+    optimized_functions: HashSet<String>,
+}
+
+impl CallCachePlan {
+    fn contains(&self, name: &str) -> bool {
+        self.cacheable_set.contains(name)
+    }
+
+    fn is_optimized(&self, name: &str) -> bool {
+        self.optimized_functions.contains(name)
     }
 }
 
@@ -225,9 +261,16 @@ pub fn emit_llvm(module: &MirModule) -> Result<String, String> {
     emit_llvm_with_options(module, LlvmEmitOptions::from_env())
 }
 
-fn emit_llvm_with_options(module: &MirModule, options: LlvmEmitOptions) -> Result<String, String> {
+pub fn emit_llvm_with_options(
+    module: &MirModule,
+    mut options: LlvmEmitOptions,
+) -> Result<String, String> {
+    if options.call_cache_capacity == 0 {
+        options.call_cache_capacity = 1;
+    }
     let layouts = analyze_module(module);
-    let mut emitter = LlvmEmitter::new(module, layouts, options);
+    let call_cache_plan = analyze_call_cache_plan(module, &layouts, &options);
+    let mut emitter = LlvmEmitter::new(module, layouts, call_cache_plan, options);
     emitter.emit_module(module)
 }
 
@@ -518,6 +561,110 @@ fn analyze_function(
     layout
 }
 
+fn analyze_call_cache_plan(
+    module: &MirModule,
+    layouts: &HashMap<String, FunctionLayout>,
+    options: &LlvmEmitOptions,
+) -> CallCachePlan {
+    if !options.call_cache
+        && !options.call_cache_optimize
+        && options.call_cache_only.is_empty()
+        && options.call_cache_optimize_only.is_empty()
+    {
+        return CallCachePlan::default();
+    }
+
+    let mut include_only: HashSet<&str> = options
+        .call_cache_only
+        .iter()
+        .map(String::as_str)
+        .collect();
+    include_only.extend(options.call_cache_optimize_only.iter().map(String::as_str));
+    let exclude: HashSet<&str> = options
+        .call_cache_exclude
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let mut candidates: HashSet<String> = module
+        .functions
+        .iter()
+        .filter(|func| {
+            func.name != "main"
+                && !exclude.contains(func.name.as_str())
+                && if options.call_cache || options.call_cache_optimize {
+                    true
+                } else {
+                    include_only.contains(func.name.as_str())
+                }
+                && layouts
+                    .get(&func.name)
+                    .map(function_layout_supports_call_cache)
+                    .unwrap_or(false)
+        })
+        .map(|func| func.name.clone())
+        .collect();
+
+    loop {
+        let to_remove: Vec<String> = module
+            .functions
+            .iter()
+            .filter(|func| candidates.contains(&func.name))
+            .filter(|func| function_has_impure_or_uncacheable_calls(func, &candidates))
+            .map(|func| func.name.clone())
+            .collect();
+        if to_remove.is_empty() {
+            break;
+        }
+        for name in to_remove {
+            candidates.remove(&name);
+        }
+    }
+
+    let cacheable_functions: Vec<String> = module
+        .functions
+        .iter()
+        .filter(|func| candidates.contains(&func.name))
+        .map(|func| func.name.clone())
+        .collect();
+    let optimize_only: HashSet<&str> = options
+        .call_cache_optimize_only
+        .iter()
+        .map(String::as_str)
+        .collect();
+
+    CallCachePlan {
+        cacheable_set: cacheable_functions.iter().cloned().collect(),
+        optimized_functions: cacheable_functions
+            .iter()
+            .filter(|name| options.call_cache_optimize || optimize_only.contains(name.as_str()))
+            .cloned()
+            .collect(),
+        cacheable_functions,
+    }
+}
+
+fn function_layout_supports_call_cache(layout: &FunctionLayout) -> bool {
+    layout.params.len() <= MAX_CALL_CACHE_ARGS
+        && supports_call_cache_type(layout.return_ty)
+        && layout.params.iter().copied().all(supports_call_cache_type)
+}
+
+fn function_has_impure_or_uncacheable_calls(
+    function: &MirFunction,
+    cacheable_functions: &HashSet<String>,
+) -> bool {
+    function.blocks.iter().any(|block| {
+        block.instructions.iter().any(|instr| match &instr.op {
+            Op::Call { callee, .. } => {
+                is_print_builtin(callee)
+                    || builtin_signature(callee).is_some()
+                    || !cacheable_functions.contains(callee)
+            }
+            _ => false,
+        })
+    })
+}
+
 fn infer_llvm_type_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<LlvmType> {
     match builtin_type_by_id(type_id)? {
         Type::Bool => Some(LlvmType::Bool),
@@ -527,6 +674,14 @@ fn infer_llvm_type_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<Ll
         Type::Int(size) => Some(LlvmType::Int(LlvmIntType::from_size(size, true))),
         Type::UInt(size) => Some(LlvmType::Int(LlvmIntType::from_size(size, false))),
         _ => None,
+    }
+}
+
+fn supports_call_cache_type(ty: LlvmType) -> bool {
+    match ty {
+        LlvmType::Int(int_ty) => int_ty.bits <= 64,
+        LlvmType::Float(LlvmFloatType::F32 | LlvmFloatType::F64) | LlvmType::Bool => true,
+        LlvmType::Str | LlvmType::OpaquePtr => false,
     }
 }
 
@@ -1023,6 +1178,7 @@ fn common_float_type(left: LlvmType, right: LlvmType) -> Option<LlvmFloatType> {
 struct LlvmEmitter {
     options: LlvmEmitOptions,
     layouts: HashMap<String, FunctionLayout>,
+    call_cache_plan: CallCachePlan,
     function_attrs: HashMap<String, FunctionAttrs>,
     user_functions: HashSet<String>,
     external_decls: BTreeMap<String, String>,
@@ -1036,12 +1192,14 @@ impl LlvmEmitter {
     fn new(
         module: &MirModule,
         layouts: HashMap<String, FunctionLayout>,
+        call_cache_plan: CallCachePlan,
         options: LlvmEmitOptions,
     ) -> Self {
         let function_attrs = analyze_function_attrs(module, &layouts);
         Self {
             options,
             layouts,
+            call_cache_plan,
             function_attrs,
             user_functions: module
                 .functions
@@ -1125,6 +1283,7 @@ impl LlvmEmitter {
                 .unwrap();
             }
         }
+        self.emit_call_cache_globals(&mut output)?;
         writeln!(output).unwrap();
         output.push_str(
             "define noundef i32 @agam_argc() local_unnamed_addr #2 {\n\
@@ -1148,6 +1307,7 @@ impl LlvmEmitter {
              }\n\n",
         );
         output.push_str(&functions);
+        self.emit_call_cache_wrappers(&mut output)?;
         output.push_str(
             "attributes #0 = { nofree nounwind }\n\
              attributes #1 = { nofree nounwind willreturn }\n\
@@ -1155,6 +1315,92 @@ impl LlvmEmitter {
              attributes #3 = { nofree norecurse nosync nounwind willreturn }\n",
         );
         Ok(output)
+    }
+
+    fn emit_call_cache_globals(&self, out: &mut String) -> Result<(), String> {
+        if self.call_cache_plan.cacheable_functions.is_empty() {
+            return Ok(());
+        }
+
+        writeln!(out).unwrap();
+        for name in &self.call_cache_plan.cacheable_functions {
+            let globals = call_cache_global_names(name);
+            writeln!(
+                out,
+                "{} = internal global i64 0, align 8",
+                globals.calls
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global i32 0, align 4",
+                globals.len
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x [{} x i64]] zeroinitializer, align 16",
+                globals.keys, self.options.call_cache_capacity, MAX_CALL_CACHE_ARGS
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x i64] zeroinitializer, align 8",
+                globals.values, self.options.call_cache_capacity
+            )
+            .unwrap();
+            if self.call_cache_plan.is_optimized(name) {
+                writeln!(
+                    out,
+                    "{} = internal global [{} x i32] zeroinitializer, align 4",
+                    globals.scores, self.options.call_cache_capacity
+                )
+                .unwrap();
+                writeln!(
+                    out,
+                    "{} = internal global [{} x i64] zeroinitializer, align 8",
+                    globals.ages, self.options.call_cache_capacity
+                )
+                .unwrap();
+                writeln!(out, "{} = internal global i1 false, align 1", globals.pending_valid)
+                    .unwrap();
+                writeln!(out, "{} = internal global i32 0, align 4", globals.pending_count)
+                    .unwrap();
+                writeln!(
+                    out,
+                    "{} = internal global [{} x i64] zeroinitializer, align 16",
+                    globals.pending_keys, MAX_CALL_CACHE_ARGS
+                )
+                .unwrap();
+            }
+        }
+        Ok(())
+    }
+
+    fn emit_call_cache_wrappers(&self, out: &mut String) -> Result<(), String> {
+        for name in &self.call_cache_plan.cacheable_functions {
+            let layout = self
+                .layouts
+                .get(name)
+                .ok_or_else(|| format!("missing LLVM layout for call-cache wrapper `{name}`"))?;
+            emit_call_cache_wrapper_ir(
+                out,
+                name,
+                layout,
+                self.options.call_cache_capacity,
+                self.options.call_cache_warmup,
+                self.call_cache_plan.is_optimized(name),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn call_target_symbol(&self, callee: &str) -> String {
+        if self.call_cache_plan.contains(callee) {
+            call_cache_wrapper_name(callee)
+        } else {
+            mangle_name(callee)
+        }
     }
 
     fn emit_function(
@@ -1434,7 +1680,7 @@ impl LlvmEmitter {
                         ValueRef::new(LlvmType::default_int(), "0", result_sign),
                     );
                 } else {
-                    let symbol = mangle_name(callee);
+                    let symbol = self.call_target_symbol(callee);
                     let arg_list = coerced_args
                         .iter()
                         .map(|arg| format!("{} {}", arg.ty.ir(), arg.repr))
@@ -2191,6 +2437,788 @@ fn mangle_name(name: &str) -> String {
     }
 }
 
+struct CallCacheGlobalNames {
+    calls: String,
+    len: String,
+    keys: String,
+    values: String,
+    scores: String,
+    ages: String,
+    pending_valid: String,
+    pending_count: String,
+    pending_keys: String,
+}
+
+fn call_cache_wrapper_name(name: &str) -> String {
+    format!("agam_call_cache_{}", sanitize_name(name))
+}
+
+fn call_cache_global_names(name: &str) -> CallCacheGlobalNames {
+    let base = sanitize_name(name);
+    CallCacheGlobalNames {
+        calls: format!("@agam_call_cache_{}_calls", base),
+        len: format!("@agam_call_cache_{}_len", base),
+        keys: format!("@agam_call_cache_{}_keys", base),
+        values: format!("@agam_call_cache_{}_values", base),
+        scores: format!("@agam_call_cache_{}_scores", base),
+        ages: format!("@agam_call_cache_{}_ages", base),
+        pending_valid: format!("@agam_call_cache_{}_pending_valid", base),
+        pending_count: format!("@agam_call_cache_{}_pending_count", base),
+        pending_keys: format!("@agam_call_cache_{}_pending_keys", base),
+    }
+}
+
+fn emit_call_cache_wrapper_ir(
+    out: &mut String,
+    name: &str,
+    layout: &FunctionLayout,
+    capacity: usize,
+    warmup: u64,
+    optimize: bool,
+) -> Result<(), String> {
+    if optimize {
+        emit_optimized_call_cache_wrapper_ir(out, name, layout, capacity, warmup)
+    } else {
+        emit_basic_call_cache_wrapper_ir(out, name, layout, capacity, warmup)
+    }
+}
+
+fn emit_basic_call_cache_wrapper_ir(
+    out: &mut String,
+    name: &str,
+    layout: &FunctionLayout,
+    capacity: usize,
+    warmup: u64,
+) -> Result<(), String> {
+    let wrapper = call_cache_wrapper_name(name);
+    let original = mangle_name(name);
+    let globals = call_cache_global_names(name);
+    let params = layout
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| format!("{} noundef %p{index}", ty.ir()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let call_args = layout
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| format!("{} %p{index}", ty.ir()))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut next_temp = 0usize;
+    writeln!(
+        out,
+        "define noundef {} @{}({}) local_unnamed_addr {{",
+        layout.return_ty.ir(),
+        wrapper,
+        params
+    )
+    .unwrap();
+    writeln!(out, "entry:").unwrap();
+
+    let calls_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {calls_old} = load i64, i64* {}", globals.calls).unwrap();
+    let calls_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {calls_new} = add i64 {calls_old}, 1").unwrap();
+    writeln!(out, "  store i64 {calls_new}, i64* {}", globals.calls).unwrap();
+
+    let mut encoded_args = Vec::with_capacity(layout.params.len());
+    for (index, ty) in layout.params.iter().enumerate() {
+        encoded_args.push(emit_call_cache_encode_value(
+            out,
+            &mut next_temp,
+            *ty,
+            &format!("%p{index}"),
+        )?);
+    }
+
+    let use_cache = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {use_cache} = icmp ule i64 {calls_new}, {warmup}").unwrap();
+    writeln!(out, "  br i1 {use_cache}, label %miss, label %lookup").unwrap();
+
+    writeln!(out, "lookup:").unwrap();
+    let len_loaded = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {len_loaded} = load i32, i32* {}", globals.len).unwrap();
+    writeln!(out, "  br label %scan").unwrap();
+
+    let next_index = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "scan:").unwrap();
+    let scan_index = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {scan_index} = phi i32 [ 0, %lookup ], [ {next_index}, %next ]"
+    )
+    .unwrap();
+    let scan_done = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {scan_done} = icmp eq i32 {scan_index}, {len_loaded}").unwrap();
+    writeln!(out, "  br i1 {scan_done}, label %miss, label %check").unwrap();
+
+    writeln!(out, "check:").unwrap();
+    let scan_index_i64 = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {scan_index_i64} = sext i32 {scan_index} to i64").unwrap();
+    if encoded_args.is_empty() {
+        writeln!(out, "  br label %hit").unwrap();
+    } else {
+        let mut combined_match = String::new();
+        for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+            let arg_ptr = fresh_call_cache_temp(&mut next_temp);
+            writeln!(
+                out,
+                "  {arg_ptr} = getelementptr inbounds [{} x [{} x i64]], [{} x [{} x i64]]* {}, i64 0, i64 {scan_index_i64}, i64 {}",
+                capacity,
+                MAX_CALL_CACHE_ARGS,
+                capacity,
+                MAX_CALL_CACHE_ARGS,
+                globals.keys,
+                arg_index
+            )
+            .unwrap();
+            let arg_loaded = fresh_call_cache_temp(&mut next_temp);
+            writeln!(out, "  {arg_loaded} = load i64, i64* {arg_ptr}").unwrap();
+            let arg_eq = fresh_call_cache_temp(&mut next_temp);
+            writeln!(out, "  {arg_eq} = icmp eq i64 {arg_loaded}, {arg_bits}").unwrap();
+            if combined_match.is_empty() {
+                combined_match = arg_eq;
+            } else {
+                let new_match = fresh_call_cache_temp(&mut next_temp);
+                writeln!(out, "  {new_match} = and i1 {combined_match}, {arg_eq}").unwrap();
+                combined_match = new_match;
+            }
+        }
+        writeln!(out, "  br i1 {combined_match}, label %hit, label %next").unwrap();
+    }
+
+    writeln!(out, "next:").unwrap();
+    writeln!(out, "  {next_index} = add nuw i32 {scan_index}, 1").unwrap();
+    writeln!(out, "  br label %scan").unwrap();
+
+    writeln!(out, "hit:").unwrap();
+    let cached_value_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {cached_value_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {scan_index_i64}",
+        capacity, capacity, globals.values
+    )
+    .unwrap();
+    let cached_bits = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {cached_bits} = load i64, i64* {cached_value_ptr}").unwrap();
+    let cached_value =
+        emit_call_cache_decode_value(out, &mut next_temp, layout.return_ty, &cached_bits)?;
+    writeln!(out, "  ret {} {cached_value}", layout.return_ty.ir()).unwrap();
+
+    writeln!(out, "miss:").unwrap();
+    let miss_value = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {miss_value} = call noundef {} @{}({})",
+        layout.return_ty.ir(),
+        original,
+        call_args
+    )
+    .unwrap();
+    let store_enabled = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_enabled} = icmp ugt i64 {calls_new}, {warmup}").unwrap();
+    writeln!(
+        out,
+        "  br i1 {store_enabled}, label %store_check, label %ret_miss"
+    )
+    .unwrap();
+
+    writeln!(out, "store_check:").unwrap();
+    let store_len = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_len} = load i32, i32* {}", globals.len).unwrap();
+    let has_room = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {has_room} = icmp ult i32 {store_len}, {}",
+        capacity as u32
+    )
+    .unwrap();
+    writeln!(out, "  br i1 {has_room}, label %store, label %ret_miss").unwrap();
+
+    writeln!(out, "store:").unwrap();
+    let store_index_i64 = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_index_i64} = zext i32 {store_len} to i64").unwrap();
+    for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+        let arg_ptr = fresh_call_cache_temp(&mut next_temp);
+        writeln!(
+            out,
+            "  {arg_ptr} = getelementptr inbounds [{} x [{} x i64]], [{} x [{} x i64]]* {}, i64 0, i64 {store_index_i64}, i64 {}",
+            capacity,
+            MAX_CALL_CACHE_ARGS,
+            capacity,
+            MAX_CALL_CACHE_ARGS,
+            globals.keys,
+            arg_index
+        )
+        .unwrap();
+        writeln!(out, "  store i64 {arg_bits}, i64* {arg_ptr}").unwrap();
+    }
+    let result_bits =
+        emit_call_cache_encode_value(out, &mut next_temp, layout.return_ty, &miss_value)?;
+    let store_value_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {store_value_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {store_index_i64}",
+        capacity, capacity, globals.values
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {result_bits}, i64* {store_value_ptr}").unwrap();
+    let next_len = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {next_len} = add nuw i32 {store_len}, 1").unwrap();
+    writeln!(out, "  store i32 {next_len}, i32* {}", globals.len).unwrap();
+    writeln!(out, "  br label %ret_miss").unwrap();
+
+    writeln!(out, "ret_miss:").unwrap();
+    writeln!(out, "  ret {} {miss_value}", layout.return_ty.ir()).unwrap();
+    writeln!(out, "}}\n").unwrap();
+
+    Ok(())
+}
+
+fn emit_optimized_call_cache_wrapper_ir(
+    out: &mut String,
+    name: &str,
+    layout: &FunctionLayout,
+    capacity: usize,
+    warmup: u64,
+) -> Result<(), String> {
+    let wrapper = call_cache_wrapper_name(name);
+    let original = mangle_name(name);
+    let globals = call_cache_global_names(name);
+    let params = layout
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| format!("{} noundef %p{index}", ty.ir()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let call_args = layout
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, ty)| format!("{} %p{index}", ty.ir()))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut next_temp = 0usize;
+    writeln!(
+        out,
+        "define noundef {} @{}({}) local_unnamed_addr {{",
+        layout.return_ty.ir(),
+        wrapper,
+        params
+    )
+    .unwrap();
+    writeln!(out, "entry:").unwrap();
+
+    let calls_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {calls_old} = load i64, i64* {}", globals.calls).unwrap();
+    let calls_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {calls_new} = add i64 {calls_old}, 1").unwrap();
+    writeln!(out, "  store i64 {calls_new}, i64* {}", globals.calls).unwrap();
+
+    let victim_index_slot = fresh_call_cache_temp(&mut next_temp);
+    let best_score_slot = fresh_call_cache_temp(&mut next_temp);
+    let best_age_slot = fresh_call_cache_temp(&mut next_temp);
+    let loop_index_slot = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {victim_index_slot} = alloca i32").unwrap();
+    writeln!(out, "  {best_score_slot} = alloca i32").unwrap();
+    writeln!(out, "  {best_age_slot} = alloca i64").unwrap();
+    writeln!(out, "  {loop_index_slot} = alloca i32").unwrap();
+
+    let mut encoded_args = Vec::with_capacity(layout.params.len());
+    for (index, ty) in layout.params.iter().enumerate() {
+        encoded_args.push(emit_call_cache_encode_value(
+            out,
+            &mut next_temp,
+            *ty,
+            &format!("%p{index}"),
+        )?);
+    }
+
+    let use_cache = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {use_cache} = icmp ule i64 {calls_new}, {warmup}").unwrap();
+    writeln!(out, "  br i1 {use_cache}, label %miss, label %lookup").unwrap();
+
+    writeln!(out, "lookup:").unwrap();
+    let len_loaded = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {len_loaded} = load i32, i32* {}", globals.len).unwrap();
+    writeln!(out, "  br label %scan").unwrap();
+
+    let next_index = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "scan:").unwrap();
+    let scan_index = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {scan_index} = phi i32 [ 0, %lookup ], [ {next_index}, %next ]"
+    )
+    .unwrap();
+    let scan_done = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {scan_done} = icmp eq i32 {scan_index}, {len_loaded}").unwrap();
+    writeln!(out, "  br i1 {scan_done}, label %miss, label %check").unwrap();
+
+    writeln!(out, "check:").unwrap();
+    let scan_index_i64 = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {scan_index_i64} = sext i32 {scan_index} to i64").unwrap();
+    if encoded_args.is_empty() {
+        writeln!(out, "  br label %hit").unwrap();
+    } else {
+        let mut combined_match = String::new();
+        for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+            let arg_ptr = fresh_call_cache_temp(&mut next_temp);
+            writeln!(
+                out,
+                "  {arg_ptr} = getelementptr inbounds [{} x [{} x i64]], [{} x [{} x i64]]* {}, i64 0, i64 {scan_index_i64}, i64 {}",
+                capacity,
+                MAX_CALL_CACHE_ARGS,
+                capacity,
+                MAX_CALL_CACHE_ARGS,
+                globals.keys,
+                arg_index
+            )
+            .unwrap();
+            let arg_loaded = fresh_call_cache_temp(&mut next_temp);
+            writeln!(out, "  {arg_loaded} = load i64, i64* {arg_ptr}").unwrap();
+            let arg_eq = fresh_call_cache_temp(&mut next_temp);
+            writeln!(out, "  {arg_eq} = icmp eq i64 {arg_loaded}, {arg_bits}").unwrap();
+            if combined_match.is_empty() {
+                combined_match = arg_eq;
+            } else {
+                let new_match = fresh_call_cache_temp(&mut next_temp);
+                writeln!(out, "  {new_match} = and i1 {combined_match}, {arg_eq}").unwrap();
+                combined_match = new_match;
+            }
+        }
+        writeln!(out, "  br i1 {combined_match}, label %hit, label %next").unwrap();
+    }
+
+    writeln!(out, "next:").unwrap();
+    writeln!(out, "  {next_index} = add nuw i32 {scan_index}, 1").unwrap();
+    writeln!(out, "  br label %scan").unwrap();
+
+    writeln!(out, "hit:").unwrap();
+    let cached_value_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {cached_value_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {scan_index_i64}",
+        capacity, capacity, globals.values
+    )
+    .unwrap();
+    let cached_bits = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {cached_bits} = load i64, i64* {cached_value_ptr}").unwrap();
+    let hit_score_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {hit_score_ptr} = getelementptr inbounds [{} x i32], [{} x i32]* {}, i64 0, i64 {scan_index_i64}",
+        capacity, capacity, globals.scores
+    )
+    .unwrap();
+    let hit_score_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {hit_score_old} = load i32, i32* {hit_score_ptr}").unwrap();
+    let hit_score_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {hit_score_new} = add i32 {hit_score_old}, 1").unwrap();
+    writeln!(out, "  store i32 {hit_score_new}, i32* {hit_score_ptr}").unwrap();
+    let hit_age_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {hit_age_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {scan_index_i64}",
+        capacity, capacity, globals.ages
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {calls_new}, i64* {hit_age_ptr}").unwrap();
+    let cached_value =
+        emit_call_cache_decode_value(out, &mut next_temp, layout.return_ty, &cached_bits)?;
+    writeln!(out, "  ret {} {cached_value}", layout.return_ty.ir()).unwrap();
+
+    writeln!(out, "miss:").unwrap();
+    let miss_value = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {miss_value} = call noundef {} @{}({})",
+        layout.return_ty.ir(),
+        original,
+        call_args
+    )
+    .unwrap();
+    let store_enabled = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_enabled} = icmp ugt i64 {calls_new}, {warmup}").unwrap();
+    writeln!(
+        out,
+        "  br i1 {store_enabled}, label %admit_check, label %ret_miss"
+    )
+    .unwrap();
+
+    writeln!(out, "admit_check:").unwrap();
+    let pending_valid = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {pending_valid} = load i1, i1* {}", globals.pending_valid).unwrap();
+    if encoded_args.is_empty() {
+        writeln!(out, "  br i1 {pending_valid}, label %admit_hit, label %admit_reset").unwrap();
+    } else {
+        writeln!(out, "  br i1 {pending_valid}, label %admit_compare, label %admit_reset").unwrap();
+
+        writeln!(out, "admit_compare:").unwrap();
+        let mut pending_match = String::new();
+        for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+            let arg_ptr = fresh_call_cache_temp(&mut next_temp);
+            writeln!(
+                out,
+                "  {arg_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+                MAX_CALL_CACHE_ARGS,
+                MAX_CALL_CACHE_ARGS,
+                globals.pending_keys,
+                arg_index
+            )
+            .unwrap();
+            let arg_loaded = fresh_call_cache_temp(&mut next_temp);
+            writeln!(out, "  {arg_loaded} = load i64, i64* {arg_ptr}").unwrap();
+            let arg_eq = fresh_call_cache_temp(&mut next_temp);
+            writeln!(out, "  {arg_eq} = icmp eq i64 {arg_loaded}, {arg_bits}").unwrap();
+            if pending_match.is_empty() {
+                pending_match = arg_eq;
+            } else {
+                let new_match = fresh_call_cache_temp(&mut next_temp);
+                writeln!(out, "  {new_match} = and i1 {pending_match}, {arg_eq}").unwrap();
+                pending_match = new_match;
+            }
+        }
+        writeln!(out, "  br i1 {pending_match}, label %admit_hit, label %admit_reset").unwrap();
+    }
+
+    writeln!(out, "admit_reset:").unwrap();
+    for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+        let arg_ptr = fresh_call_cache_temp(&mut next_temp);
+        writeln!(
+            out,
+            "  {arg_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+            MAX_CALL_CACHE_ARGS,
+            MAX_CALL_CACHE_ARGS,
+            globals.pending_keys,
+            arg_index
+        )
+        .unwrap();
+        writeln!(out, "  store i64 {arg_bits}, i64* {arg_ptr}").unwrap();
+    }
+    writeln!(out, "  store i1 true, i1* {}", globals.pending_valid).unwrap();
+    writeln!(out, "  store i32 1, i32* {}", globals.pending_count).unwrap();
+    writeln!(out, "  br label %ret_miss").unwrap();
+
+    writeln!(out, "admit_hit:").unwrap();
+    let pending_count_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {pending_count_old} = load i32, i32* {}", globals.pending_count).unwrap();
+    let pending_count_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {pending_count_new} = add i32 {pending_count_old}, 1").unwrap();
+    writeln!(out, "  store i32 {pending_count_new}, i32* {}", globals.pending_count).unwrap();
+    let repeated_enough = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {repeated_enough} = icmp uge i32 {pending_count_new}, {}",
+        OPTIMIZED_CALL_CACHE_MIN_REPEATS
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  br i1 {repeated_enough}, label %store_check, label %ret_miss"
+    )
+    .unwrap();
+
+    writeln!(out, "store_check:").unwrap();
+    let store_len = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_len} = load i32, i32* {}", globals.len).unwrap();
+    let has_room = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {has_room} = icmp ult i32 {store_len}, {}",
+        capacity as u32
+    )
+    .unwrap();
+    writeln!(out, "  br i1 {has_room}, label %store_new, label %victim_init").unwrap();
+
+    writeln!(out, "store_new:").unwrap();
+    let store_index_i64 = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_index_i64} = zext i32 {store_len} to i64").unwrap();
+    for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+        let arg_ptr = fresh_call_cache_temp(&mut next_temp);
+        writeln!(
+            out,
+            "  {arg_ptr} = getelementptr inbounds [{} x [{} x i64]], [{} x [{} x i64]]* {}, i64 0, i64 {store_index_i64}, i64 {}",
+            capacity,
+            MAX_CALL_CACHE_ARGS,
+            capacity,
+            MAX_CALL_CACHE_ARGS,
+            globals.keys,
+            arg_index
+        )
+        .unwrap();
+        writeln!(out, "  store i64 {arg_bits}, i64* {arg_ptr}").unwrap();
+    }
+    let result_bits =
+        emit_call_cache_encode_value(out, &mut next_temp, layout.return_ty, &miss_value)?;
+    let store_value_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {store_value_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {store_index_i64}",
+        capacity, capacity, globals.values
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {result_bits}, i64* {store_value_ptr}").unwrap();
+    let store_score_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {store_score_ptr} = getelementptr inbounds [{} x i32], [{} x i32]* {}, i64 0, i64 {store_index_i64}",
+        capacity, capacity, globals.scores
+    )
+    .unwrap();
+    writeln!(out, "  store i32 {pending_count_new}, i32* {store_score_ptr}").unwrap();
+    let store_age_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {store_age_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {store_index_i64}",
+        capacity, capacity, globals.ages
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {calls_new}, i64* {store_age_ptr}").unwrap();
+    let next_len = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {next_len} = add nuw i32 {store_len}, 1").unwrap();
+    writeln!(out, "  store i32 {next_len}, i32* {}", globals.len).unwrap();
+    writeln!(out, "  br label %store_done").unwrap();
+
+    writeln!(out, "victim_init:").unwrap();
+    writeln!(out, "  store i32 0, i32* {victim_index_slot}").unwrap();
+    let zero_score_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {zero_score_ptr} = getelementptr inbounds [{} x i32], [{} x i32]* {}, i64 0, i64 0",
+        capacity, capacity, globals.scores
+    )
+    .unwrap();
+    let zero_score = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {zero_score} = load i32, i32* {zero_score_ptr}").unwrap();
+    writeln!(out, "  store i32 {zero_score}, i32* {best_score_slot}").unwrap();
+    let zero_age_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {zero_age_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 0",
+        capacity, capacity, globals.ages
+    )
+    .unwrap();
+    let zero_age = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {zero_age} = load i64, i64* {zero_age_ptr}").unwrap();
+    writeln!(out, "  store i64 {zero_age}, i64* {best_age_slot}").unwrap();
+    writeln!(out, "  store i32 1, i32* {loop_index_slot}").unwrap();
+    writeln!(out, "  br label %victim_scan").unwrap();
+
+    writeln!(out, "victim_scan:").unwrap();
+    let loop_index = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {loop_index} = load i32, i32* {loop_index_slot}").unwrap();
+    let loop_done = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {loop_done} = icmp eq i32 {loop_index}, {store_len}").unwrap();
+    writeln!(out, "  br i1 {loop_done}, label %victim_decide, label %victim_check").unwrap();
+
+    writeln!(out, "victim_check:").unwrap();
+    let loop_index_i64 = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {loop_index_i64} = zext i32 {loop_index} to i64").unwrap();
+    let loop_score_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {loop_score_ptr} = getelementptr inbounds [{} x i32], [{} x i32]* {}, i64 0, i64 {loop_index_i64}",
+        capacity, capacity, globals.scores
+    )
+    .unwrap();
+    let loop_score = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {loop_score} = load i32, i32* {loop_score_ptr}").unwrap();
+    let best_score = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {best_score} = load i32, i32* {best_score_slot}").unwrap();
+    let worse_score = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {worse_score} = icmp ult i32 {loop_score}, {best_score}").unwrap();
+    let same_score = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {same_score} = icmp eq i32 {loop_score}, {best_score}").unwrap();
+    let loop_age_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {loop_age_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {loop_index_i64}",
+        capacity, capacity, globals.ages
+    )
+    .unwrap();
+    let loop_age = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {loop_age} = load i64, i64* {loop_age_ptr}").unwrap();
+    let best_age = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {best_age} = load i64, i64* {best_age_slot}").unwrap();
+    let older_age = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {older_age} = icmp ult i64 {loop_age}, {best_age}").unwrap();
+    let same_and_older = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {same_and_older} = and i1 {same_score}, {older_age}").unwrap();
+    let replace_victim = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {replace_victim} = or i1 {worse_score}, {same_and_older}").unwrap();
+    writeln!(out, "  br i1 {replace_victim}, label %victim_replace, label %victim_next").unwrap();
+
+    writeln!(out, "victim_replace:").unwrap();
+    writeln!(out, "  store i32 {loop_index}, i32* {victim_index_slot}").unwrap();
+    writeln!(out, "  store i32 {loop_score}, i32* {best_score_slot}").unwrap();
+    writeln!(out, "  store i64 {loop_age}, i64* {best_age_slot}").unwrap();
+    writeln!(out, "  br label %victim_next").unwrap();
+
+    writeln!(out, "victim_next:").unwrap();
+    let loop_index_next = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {loop_index_next} = add nuw i32 {loop_index}, 1").unwrap();
+    writeln!(out, "  store i32 {loop_index_next}, i32* {loop_index_slot}").unwrap();
+    writeln!(out, "  br label %victim_scan").unwrap();
+
+    writeln!(out, "victim_decide:").unwrap();
+    let best_score_final = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {best_score_final} = load i32, i32* {best_score_slot}").unwrap();
+    let better_score = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {better_score} = icmp ugt i32 {pending_count_new}, {best_score_final}").unwrap();
+    let equal_score = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {equal_score} = icmp eq i32 {pending_count_new}, {best_score_final}").unwrap();
+    let best_age_final = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {best_age_final} = load i64, i64* {best_age_slot}").unwrap();
+    let newer_age = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {newer_age} = icmp ugt i64 {calls_new}, {best_age_final}").unwrap();
+    let equal_and_newer = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {equal_and_newer} = and i1 {equal_score}, {newer_age}").unwrap();
+    let admit_replace = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {admit_replace} = or i1 {better_score}, {equal_and_newer}").unwrap();
+    writeln!(out, "  br i1 {admit_replace}, label %store_replace, label %ret_miss").unwrap();
+
+    writeln!(out, "store_replace:").unwrap();
+    let victim_index = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {victim_index} = load i32, i32* {victim_index_slot}").unwrap();
+    let victim_index_i64 = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {victim_index_i64} = zext i32 {victim_index} to i64").unwrap();
+    for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+        let arg_ptr = fresh_call_cache_temp(&mut next_temp);
+        writeln!(
+            out,
+            "  {arg_ptr} = getelementptr inbounds [{} x [{} x i64]], [{} x [{} x i64]]* {}, i64 0, i64 {victim_index_i64}, i64 {}",
+            capacity,
+            MAX_CALL_CACHE_ARGS,
+            capacity,
+            MAX_CALL_CACHE_ARGS,
+            globals.keys,
+            arg_index
+        )
+        .unwrap();
+        writeln!(out, "  store i64 {arg_bits}, i64* {arg_ptr}").unwrap();
+    }
+    let replace_bits =
+        emit_call_cache_encode_value(out, &mut next_temp, layout.return_ty, &miss_value)?;
+    let replace_value_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {replace_value_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {victim_index_i64}",
+        capacity, capacity, globals.values
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {replace_bits}, i64* {replace_value_ptr}").unwrap();
+    let replace_score_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {replace_score_ptr} = getelementptr inbounds [{} x i32], [{} x i32]* {}, i64 0, i64 {victim_index_i64}",
+        capacity, capacity, globals.scores
+    )
+    .unwrap();
+    writeln!(out, "  store i32 {pending_count_new}, i32* {replace_score_ptr}").unwrap();
+    let replace_age_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {replace_age_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {victim_index_i64}",
+        capacity, capacity, globals.ages
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {calls_new}, i64* {replace_age_ptr}").unwrap();
+    writeln!(out, "  br label %store_done").unwrap();
+
+    writeln!(out, "store_done:").unwrap();
+    writeln!(out, "  store i1 false, i1* {}", globals.pending_valid).unwrap();
+    writeln!(out, "  store i32 0, i32* {}", globals.pending_count).unwrap();
+    writeln!(out, "  br label %ret_miss").unwrap();
+
+    writeln!(out, "ret_miss:").unwrap();
+    writeln!(out, "  ret {} {miss_value}", layout.return_ty.ir()).unwrap();
+    writeln!(out, "}}\n").unwrap();
+
+    Ok(())
+}
+
+fn fresh_call_cache_temp(next_temp: &mut usize) -> String {
+    let value = format!("%cc{}", *next_temp);
+    *next_temp += 1;
+    value
+}
+
+fn emit_call_cache_encode_value(
+    out: &mut String,
+    next_temp: &mut usize,
+    ty: LlvmType,
+    value: &str,
+) -> Result<String, String> {
+    match ty {
+        LlvmType::Int(int_ty) if int_ty.bits == 64 => Ok(value.to_string()),
+        LlvmType::Int(int_ty) => {
+            let widened = fresh_call_cache_temp(next_temp);
+            let opcode = if int_ty.signed { "sext" } else { "zext" };
+            writeln!(out, "  {widened} = {opcode} {} {value} to i64", ty.ir()).unwrap();
+            Ok(widened)
+        }
+        LlvmType::Bool => {
+            let widened = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {widened} = zext i1 {value} to i64").unwrap();
+            Ok(widened)
+        }
+        LlvmType::Float(LlvmFloatType::F64) => {
+            let bits = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {bits} = bitcast double {value} to i64").unwrap();
+            Ok(bits)
+        }
+        LlvmType::Float(LlvmFloatType::F32) => {
+            let bits32 = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {bits32} = bitcast float {value} to i32").unwrap();
+            let bits64 = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {bits64} = zext i32 {bits32} to i64").unwrap();
+            Ok(bits64)
+        }
+        _ => Err(format!("unsupported LLVM call-cache type {ty:?}")),
+    }
+}
+
+fn emit_call_cache_decode_value(
+    out: &mut String,
+    next_temp: &mut usize,
+    ty: LlvmType,
+    bits: &str,
+) -> Result<String, String> {
+    match ty {
+        LlvmType::Int(int_ty) if int_ty.bits == 64 => Ok(bits.to_string()),
+        LlvmType::Int(_) => {
+            let truncated = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {truncated} = trunc i64 {bits} to {}", ty.ir()).unwrap();
+            Ok(truncated)
+        }
+        LlvmType::Bool => {
+            let truncated = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {truncated} = trunc i64 {bits} to i1").unwrap();
+            Ok(truncated)
+        }
+        LlvmType::Float(LlvmFloatType::F64) => {
+            let decoded = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {decoded} = bitcast i64 {bits} to double").unwrap();
+            Ok(decoded)
+        }
+        LlvmType::Float(LlvmFloatType::F32) => {
+            let bits32 = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {bits32} = trunc i64 {bits} to i32").unwrap();
+            let decoded = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {decoded} = bitcast i32 {bits32} to float").unwrap();
+            Ok(decoded)
+        }
+        _ => Err(format!("unsupported LLVM call-cache type {ty:?}")),
+    }
+}
+
 fn analyze_function_attrs(
     module: &MirModule,
     layouts: &HashMap<String, FunctionLayout>,
@@ -2415,6 +3443,79 @@ mod tests {
     }
 
     #[test]
+    fn test_emit_call_cache_wrapper_for_pure_function() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn hot(n: i64) -> i64:
+    let total: i64 = 0
+    let i: i64 = 0
+    while i < 16:
+        total = total + n + i
+        i = i + 1
+    return total
+
+fn main() -> i32:
+    if hot(argc()) >= 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache: true,
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(llvm.contains("@agam_call_cache_hot("));
+        assert!(llvm.contains("@agam_call_cache_hot_calls = internal global i64 0"));
+        assert!(llvm.contains("call noundef i64 @agam_call_cache_hot"));
+    }
+
+    #[test]
+    fn test_do_not_emit_call_cache_for_impure_function() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn nowish() -> f64:
+    return clock()
+
+fn main() -> i32:
+    let x: f64 = nowish()
+    if x >= 0.0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache: true,
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(!llvm.contains("@agam_call_cache_nowish("));
+        assert!(!llvm.contains("@agam_call_cache_nowish_calls"));
+        assert!(llvm.contains("call noundef double @agam_nowish()"));
+    }
+
+    #[test]
+    fn test_emit_optimized_call_cache_wrapper_for_pure_function() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn hot(n: i64) -> i64:
+    return n + 1
+
+fn main() -> i32:
+    if hot(argc()) >= 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache_optimize: true,
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(llvm.contains("@agam_call_cache_hot_scores = internal global"));
+        assert!(llvm.contains("@agam_call_cache_hot_pending_count = internal global i32 0"));
+        assert!(llvm.contains("label %admit_check"));
+        assert!(llvm.contains("label %victim_init"));
+    }
+
+    #[test]
     fn test_emit_explicit_i64_function() {
         let llvm =
             compile_to_llvm("fn add(a: i64) -> i64 { return a + 1; } fn main() { return 0; }");
@@ -2442,6 +3543,7 @@ mod tests {
                     "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128"
                         .into(),
                 ),
+                ..LlvmEmitOptions::default()
             },
         );
         assert!(llvm.contains("target triple = \"x86_64-pc-linux-gnu\""));

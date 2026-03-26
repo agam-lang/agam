@@ -12,6 +12,7 @@ cranelift-codegen = "0.130.0"
 cranelift-frontend = "0.130.0"
 cranelift-jit = "0.130.0"
 cranelift-module = "0.130.0"
+cranelift-native = "0.130.0"
 
 [dev-dependencies]
 agam_errors = { workspace = true }

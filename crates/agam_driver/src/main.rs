@@ -12,10 +12,13 @@
 //! - `test`  — Run tests
 
 use clap::{Parser, Subcommand, ValueEnum};
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::process::{self, Stdio};
 
-use agam_errors::{DiagnosticEmitter, SourceFile, SourceId};
+use agam_ast::decl::DeclKind;
+use agam_errors::{Diagnostic, DiagnosticEmitter, Label, SourceFile, SourceId, Span};
+use agam_lexer::{Token, TokenKind};
 
 /// The Agam programming language compiler.
 #[derive(Parser, Debug)]
@@ -46,6 +49,100 @@ enum Backend {
 enum LtoMode {
     Thin,
     Full,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FeatureFlags {
+    call_cache: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SourceFeatureFlags {
+    call_cache: CallCacheSelection,
+    experimental_usages: Vec<ExperimentalFeatureUsage>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct CallCacheSelection {
+    enable_all: bool,
+    optimize_all: bool,
+    include_functions: BTreeSet<String>,
+    optimize_functions: BTreeSet<String>,
+    exclude_functions: BTreeSet<String>,
+}
+
+impl CallCacheSelection {
+    fn is_enabled(&self) -> bool {
+        self.enable_all
+            || self.optimize_all
+            || !self.include_functions.is_empty()
+            || !self.optimize_functions.is_empty()
+    }
+
+    fn merge_cli(&self, cli_enabled: bool) -> Self {
+        let mut merged = self.clone();
+        if cli_enabled {
+            merged.enable_all = true;
+        }
+        merged
+    }
+
+    fn included_functions(&self) -> Vec<String> {
+        self.include_functions
+            .union(&self.optimize_functions)
+            .cloned()
+            .collect()
+    }
+
+    fn excluded_functions(&self) -> Vec<String> {
+        self.exclude_functions.iter().cloned().collect()
+    }
+
+    fn optimized_functions(&self) -> Vec<String> {
+        self.optimize_functions.iter().cloned().collect()
+    }
+
+    fn is_optimized_enabled(&self) -> bool {
+        self.optimize_all || !self.optimize_functions.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum ExperimentalFeature {
+    CallCacheOptimize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ExperimentalFeatureSpec {
+    code: &'static str,
+    annotation: &'static str,
+    warning: &'static str,
+    help: &'static str,
+}
+
+impl ExperimentalFeature {
+    fn spec(self) -> ExperimentalFeatureSpec {
+        match self {
+            ExperimentalFeature::CallCacheOptimize => ExperimentalFeatureSpec {
+                code: "W2001",
+                annotation: "@experimental.call_cache.optimize",
+                warning: "call-cache optimize mode is experimental",
+                help: "keep this opt-in local to hot paths; admission and eviction heuristics may change",
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExperimentalFeatureUsage {
+    feature: ExperimentalFeature,
+    span: Span,
+}
+
+#[derive(Clone)]
+struct ParsedSource {
+    module: agam_ast::Module,
+    source_features: SourceFeatureFlags,
 }
 
 #[derive(Subcommand, Debug)]
@@ -87,6 +184,10 @@ enum Command {
         /// Rebuild with previously collected LLVM profile data
         #[arg(long, value_name = "PROFDATA")]
         pgo_use: Option<PathBuf>,
+
+        /// Enable scalar call-result caching on supported backends
+        #[arg(long = "call-cache", alias = "experimental-call-cache", alias = "experimental-jit-call-cache")]
+        call_cache: bool,
     },
 
     /// Build and immediately execute
@@ -118,6 +219,10 @@ enum Command {
         /// Rebuild with previously collected LLVM profile data
         #[arg(long, value_name = "PROFDATA")]
         pgo_use: Option<PathBuf>,
+
+        /// Enable scalar call-result caching on supported backends
+        #[arg(long = "call-cache", alias = "experimental-call-cache", alias = "experimental-jit-call-cache")]
+        call_cache: bool,
 
         /// Arguments passed to the program
         #[arg(trailing_var_arg = true)]
@@ -169,13 +274,18 @@ fn main() {
             lto,
             pgo_generate,
             pgo_use,
+            call_cache,
         } => {
             let opt_level = effective_opt_level(opt_level, fast);
             let backend = resolve_backend(backend, false);
             let tuning = ReleaseTuning {
+                native_cpu: fast,
                 lto,
                 pgo_generate,
                 pgo_use,
+            };
+            let features = FeatureFlags {
+                call_cache,
             };
             if let Err(e) = validate_release_tuning(backend, &tuning) {
                 eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
@@ -188,7 +298,7 @@ fn main() {
                 }
                 eprintln!("[agamc] Optimization level: O{}", opt_level);
                 if fast {
-                    eprintln!("[agamc] Fast mode enabled");
+                    eprintln!("[agamc] Fast mode enabled (native CPU tuning requested)");
                 }
                 eprintln!("[agamc] Backend: {:?}", backend);
                 if let Some(lto) = tuning.lto {
@@ -200,6 +310,9 @@ fn main() {
                 if let Some(profile) = &tuning.pgo_use {
                     eprintln!("[agamc] PGO use: {}", profile.display());
                 }
+                if features.call_cache {
+                    eprintln!("[agamc] Call cache enabled");
+                }
             }
 
             let out_path = output.unwrap_or_else(|| {
@@ -207,7 +320,15 @@ fn main() {
                 PathBuf::from(format!("{}.exe", stem))
             });
 
-            match build_file(&files[0], &out_path, opt_level, backend, &tuning, cli.verbose) {
+            match build_file(
+                &files[0],
+                &out_path,
+                opt_level,
+                backend,
+                &tuning,
+                features,
+                cli.verbose,
+            ) {
                 Ok(outcome) => {
                     if outcome.native_binary {
                         eprintln!("\x1b[1;32m✓\x1b[0m Built: {}", out_path.display());
@@ -239,14 +360,19 @@ fn main() {
             lto,
             pgo_generate,
             pgo_use,
+            call_cache,
             args,
         } => {
             let opt_level = effective_opt_level(opt_level, fast);
             let backend = resolve_backend(backend, true);
             let tuning = ReleaseTuning {
+                native_cpu: fast,
                 lto,
                 pgo_generate,
                 pgo_use,
+            };
+            let features = FeatureFlags {
+                call_cache,
             };
             if let Err(e) = validate_release_tuning(backend, &tuning) {
                 eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
@@ -259,7 +385,7 @@ fn main() {
                 }
                 eprintln!("[agamc] Optimization level: O{}", opt_level);
                 if fast {
-                    eprintln!("[agamc] Fast mode enabled");
+                    eprintln!("[agamc] Fast mode enabled (native CPU tuning requested)");
                 }
                 eprintln!("[agamc] Backend: {:?}", backend);
                 if let Some(lto) = tuning.lto {
@@ -271,6 +397,9 @@ fn main() {
                 if let Some(profile) = &tuning.pgo_use {
                     eprintln!("[agamc] PGO use: {}", profile.display());
                 }
+                if features.call_cache {
+                    eprintln!("[agamc] Call cache enabled");
+                }
             }
 
             let exe_path = file.with_extension("exe");
@@ -279,7 +408,12 @@ fn main() {
                 let mut runtime_args = Vec::with_capacity(args.len() + 1);
                 runtime_args.push(file.to_string_lossy().to_string());
                 runtime_args.extend(args.clone());
-                match run_with_jit(&file, &runtime_args, cli.verbose) {
+                match run_with_jit(
+                    &file,
+                    &runtime_args,
+                    cli.verbose,
+                    features,
+                ) {
                     Ok(code) => {
                         if code != 0 {
                             process::exit(code);
@@ -293,7 +427,15 @@ fn main() {
                 return;
             }
 
-            match build_file(&file, &exe_path, opt_level, backend, &tuning, cli.verbose) {
+            match build_file(
+                &file,
+                &exe_path,
+                opt_level,
+                backend,
+                &tuning,
+                features,
+                cli.verbose,
+            ) {
                 Ok(outcome) => {
                     if !outcome.native_binary {
                         eprintln!(
@@ -517,87 +659,27 @@ fn collect_agam_files(path: &PathBuf, out: &mut Vec<PathBuf>) -> Result<(), Stri
     Ok(())
 }
 
-/// Read, lex, and parse a source file. Returns Ok(()) if no errors.
-fn compile_file(path: &PathBuf, verbose: bool) -> Result<(), String> {
-    // Read the source file
+fn parse_source_file(path: &PathBuf, verbose: bool) -> Result<ParsedSource, String> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("could not read `{}`: {}", path.display(), e))?;
-
-    if verbose {
-        eprintln!("[agamc] Read {} ({} bytes)", path.display(), source.len());
-    }
-
-    // Create source file for diagnostics
     let source_file = SourceFile::new(
         SourceId(0),
         path.to_string_lossy().to_string(),
         source.clone(),
     );
-
     let mut emitter = DiagnosticEmitter::new();
     emitter.add_source(source_file);
-
-    // === Lexing Phase ===
-    let tokens = agam_lexer::tokenize(&source, SourceId(0));
-
-    if verbose {
-        eprintln!("[agamc] Lexed {} tokens", tokens.len());
-    }
-
-    // === Parsing Phase ===
-    match agam_parser::parse(tokens, SourceId(0)) {
-        Ok(module) => {
-            if verbose {
-                eprintln!(
-                    "[agamc] Parsed {} top-level declarations",
-                    module.declarations.len()
-                );
-            }
-        }
-        Err(errors) => {
-            for err in &errors {
-                eprintln!("\x1b[1;31merror\x1b[0m: {}", err.message);
-            }
-            return Err(format!("{} parse error(s)", errors.len()));
-        }
-    }
-
-    if emitter.has_errors() {
-        emitter.print_summary();
-        Err(format!("{} error(s) found", emitter.error_count()))
-    } else {
-        Ok(())
-    }
-}
-
-/// Full compilation pipeline: Lex → Parse → HIR → MIR → C → gcc → native binary
-struct BuildOutcome {
-    native_binary: bool,
-    generated_path: PathBuf,
-}
-
-#[derive(Debug, Clone, Default)]
-struct ReleaseTuning {
-    lto: Option<LtoMode>,
-    pgo_generate: Option<PathBuf>,
-    pgo_use: Option<PathBuf>,
-}
-
-fn lower_to_optimized_mir(path: &PathBuf, verbose: bool) -> Result<agam_mir::ir::MirModule, String> {
-    let source = std::fs::read_to_string(path)
-        .map_err(|e| format!("could not read `{}`: {}", path.display(), e))?;
 
     if verbose {
         eprintln!("[agamc] Read {} ({} bytes)", path.display(), source.len());
     }
 
-    // === Phase 1: Lexing ===
     let tokens = agam_lexer::tokenize(&source, SourceId(0));
     if verbose {
         eprintln!("[agamc] Lexed {} tokens", tokens.len());
     }
 
-    // === Phase 2: Parsing ===
+    let mut source_features = source_feature_flags_from_tokens(&tokens);
     let module = agam_parser::parse(tokens, SourceId(0)).map_err(|errors| {
         for err in &errors {
             eprintln!("\x1b[1;31merror\x1b[0m: {}", err.message);
@@ -606,18 +688,221 @@ fn lower_to_optimized_mir(path: &PathBuf, verbose: bool) -> Result<agam_mir::ir:
     })?;
 
     if verbose {
-        eprintln!("[agamc] Parsed {} declarations", module.declarations.len());
+        eprintln!(
+            "[agamc] Parsed {} top-level declarations",
+            module.declarations.len()
+        );
     }
 
-    // === Phase 3: HIR Lowering ===
+    merge_function_call_cache_annotations(&module, &mut source_features.call_cache);
+    collect_experimental_function_features(&module, &mut source_features.experimental_usages);
+    emit_experimental_feature_warnings(&mut emitter, &source_features.experimental_usages);
+
+    Ok(ParsedSource {
+        module,
+        source_features,
+    })
+}
+
+fn source_feature_flags_from_tokens(tokens: &[Token]) -> SourceFeatureFlags {
+    let mut features = SourceFeatureFlags::default();
+    let mut index = skip_trivia_tokens(tokens, 0);
+
+    while index < tokens.len() {
+        let Some(annotation) = parse_annotation_name(tokens, index) else {
+            break;
+        };
+        match annotation.name.as_str() {
+            "experimental.call_cache" | "lang.feat.call_cache" => {
+                features.call_cache.enable_all = true
+            }
+            "experimental.no_call_cache" | "lang.feat.no_call_cache" => {
+                features.call_cache.enable_all = false;
+                features.call_cache.optimize_all = false;
+            }
+            "experimental.call_cache.optimize" => {
+                features.call_cache.enable_all = true;
+                features.call_cache.optimize_all = true;
+                features.experimental_usages.push(ExperimentalFeatureUsage {
+                    feature: ExperimentalFeature::CallCacheOptimize,
+                    span: annotation.span,
+                });
+            }
+            "experimental.no_call_cache.optimize" => {
+                features.call_cache.optimize_all = false;
+            }
+            _ => {}
+        }
+        index = skip_trivia_tokens(tokens, annotation.next_index);
+    }
+
+    features
+}
+
+fn merge_function_call_cache_annotations(
+    module: &agam_ast::Module,
+    selection: &mut CallCacheSelection,
+) {
+    for decl in &module.declarations {
+        let DeclKind::Function(function) = &decl.kind else {
+            continue;
+        };
+        for annotation in &function.annotations {
+            match annotation.name.name.as_str() {
+                "experimental.call_cache" | "lang.feat.call_cache" => {
+                    selection
+                        .exclude_functions
+                        .remove(function.name.name.as_str());
+                    selection
+                        .include_functions
+                        .insert(function.name.name.clone());
+                }
+                "experimental.call_cache.optimize" => {
+                    selection
+                        .exclude_functions
+                        .remove(function.name.name.as_str());
+                    selection
+                        .include_functions
+                        .insert(function.name.name.clone());
+                    selection
+                        .optimize_functions
+                        .insert(function.name.name.clone());
+                }
+                "experimental.no_call_cache" | "lang.feat.no_call_cache" => {
+                    selection
+                        .include_functions
+                        .remove(function.name.name.as_str());
+                    selection
+                        .optimize_functions
+                        .remove(function.name.name.as_str());
+                    selection
+                        .exclude_functions
+                        .insert(function.name.name.clone());
+                }
+                "experimental.no_call_cache.optimize" => {
+                    selection
+                        .optimize_functions
+                        .remove(function.name.name.as_str());
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn collect_experimental_function_features(
+    module: &agam_ast::Module,
+    usages: &mut Vec<ExperimentalFeatureUsage>,
+) {
+    for decl in &module.declarations {
+        let DeclKind::Function(function) = &decl.kind else {
+            continue;
+        };
+        for annotation in &function.annotations {
+            match annotation.name.name.as_str() {
+                "experimental.call_cache.optimize" => usages.push(ExperimentalFeatureUsage {
+                    feature: ExperimentalFeature::CallCacheOptimize,
+                    span: annotation.span,
+                }),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn emit_experimental_feature_warnings(
+    emitter: &mut DiagnosticEmitter,
+    usages: &[ExperimentalFeatureUsage],
+) {
+    let mut emitted = HashSet::new();
+    for usage in usages {
+        if !emitted.insert((usage.feature, usage.span)) {
+            continue;
+        }
+        let spec = usage.feature.spec();
+        emitter.emit(
+            Diagnostic::warning(spec.code, spec.warning)
+                .with_label(Label::primary(
+                    usage.span,
+                    format!("`{}` is enabled here", spec.annotation),
+                ))
+                .with_help(spec.help),
+        );
+    }
+}
+
+fn skip_trivia_tokens(tokens: &[Token], mut index: usize) -> usize {
+    while let Some(token) = tokens.get(index) {
+        match token.kind {
+            TokenKind::Newline
+            | TokenKind::LineComment
+            | TokenKind::BlockComment
+            | TokenKind::DocComment => index += 1,
+            _ => break,
+        }
+    }
+    index
+}
+
+struct ParsedAnnotationName {
+    name: String,
+    span: Span,
+    next_index: usize,
+}
+
+fn parse_annotation_name(tokens: &[Token], start: usize) -> Option<ParsedAnnotationName> {
+    if tokens.get(start)?.kind != TokenKind::At {
+        return None;
+    }
+    let mut index = start + 1;
+    let mut parts = Vec::new();
+    let start_span = tokens.get(start)?.span.start;
+    let source_id = tokens.get(start)?.span.source_id;
+    let mut end_span;
+
+    loop {
+        let token = tokens.get(index)?;
+        if token.kind != TokenKind::Identifier {
+            return None;
+        }
+        parts.push(token.lexeme.clone());
+        end_span = token.span.end;
+        index += 1;
+
+        match tokens.get(index).map(|token| token.kind) {
+            Some(TokenKind::Dot) => {
+                index += 1;
+            }
+            _ => break,
+        }
+    }
+
+    Some(ParsedAnnotationName {
+        name: parts.join("."),
+        span: Span::new(source_id, start_span, end_span),
+        next_index: index,
+    })
+}
+
+/// Read, lex, and parse a source file. Returns Ok(()) if no errors.
+fn compile_file(path: &PathBuf, verbose: bool) -> Result<(), String> {
+    let _ = parse_source_file(path, verbose)?;
+    Ok(())
+}
+
+fn lower_to_optimized_mir(
+    path: &PathBuf,
+    verbose: bool,
+) -> Result<(agam_mir::ir::MirModule, SourceFeatureFlags), String> {
+    let parsed = parse_source_file(path, verbose)?;
+
     let mut hir_lowering = agam_hir::lower::HirLowering::new();
-    let hir = hir_lowering.lower_module(&module);
+    let hir = hir_lowering.lower_module(&parsed.module);
 
     if verbose {
         eprintln!("[agamc] Lowered to HIR: {} functions", hir.functions.len());
     }
 
-    // === Phase 4: MIR Lowering ===
     let mut mir_lowering = agam_mir::lower::MirLowering::new();
     let mut mir = mir_lowering.lower_module(&hir);
 
@@ -630,7 +915,25 @@ fn lower_to_optimized_mir(path: &PathBuf, verbose: bool) -> Result<agam_mir::ir:
         }
     }
 
-    Ok(mir)
+    Ok((mir, parsed.source_features))
+}
+
+/// Full compilation pipeline: Lex → Parse → HIR → MIR → C → gcc → native binary
+struct BuildOutcome {
+    native_binary: bool,
+    generated_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ReleaseTuning {
+    native_cpu: bool,
+    lto: Option<LtoMode>,
+    pgo_generate: Option<PathBuf>,
+    pgo_use: Option<PathBuf>,
+}
+
+fn effective_call_cache_selection(cli: FeatureFlags, source: &SourceFeatureFlags) -> CallCacheSelection {
+    source.call_cache.merge_cli(cli.call_cache)
 }
 
 /// Full compilation pipeline: Lex → Parse → HIR → MIR → backend emission → native binary (when toolchain exists)
@@ -640,14 +943,43 @@ fn build_file(
     opt_level: u8,
     backend: Backend,
     tuning: &ReleaseTuning,
+    features: FeatureFlags,
     verbose: bool,
 ) -> Result<BuildOutcome, String> {
-    let mir = lower_to_optimized_mir(path, verbose)?;
+    let (mir, source_features) = lower_to_optimized_mir(path, verbose)?;
+    let call_cache = effective_call_cache_selection(features, &source_features);
+
+    if verbose && call_cache.is_enabled() {
+        if call_cache.enable_all {
+            eprintln!("[agamc] Call cache enabled for all eligible functions");
+        } else {
+            eprintln!(
+                "[agamc] Call cache enabled for {} annotated function(s)",
+                call_cache.included_functions().len()
+            );
+        }
+        if !call_cache.exclude_functions.is_empty() {
+            eprintln!(
+                "[agamc] Call cache excluded for {} function(s)",
+                call_cache.exclude_functions.len()
+            );
+        }
+        if call_cache.is_optimized_enabled() {
+            eprintln!("[agamc] Call cache optimize mode enabled");
+        }
+    }
 
     match backend {
         Backend::Auto => Err("internal error: unresolved auto backend".into()),
-        Backend::C => build_with_c_backend(&mir, output, opt_level, verbose),
-        Backend::Llvm => build_with_llvm_backend(&mir, output, opt_level, tuning, verbose),
+        Backend::C => build_with_c_backend(&mir, output, opt_level, tuning, verbose),
+        Backend::Llvm => build_with_llvm_backend(
+            &mir,
+            output,
+            opt_level,
+            tuning,
+            &call_cache,
+            verbose,
+        ),
         Backend::Jit => Err("`agamc build --backend jit` is not supported because the JIT executes in memory; use `agamc run --backend jit`".into()),
     }
 }
@@ -656,6 +988,7 @@ fn build_with_c_backend(
     mir: &agam_mir::ir::MirModule,
     output: &PathBuf,
     opt_level: u8,
+    tuning: &ReleaseTuning,
     verbose: bool,
 ) -> Result<BuildOutcome, String> {
     let c_code = agam_codegen::c_emitter::emit_c(mir);
@@ -672,17 +1005,26 @@ fn build_with_c_backend(
     }
 
     let opt_flag = format!("-O{}", opt_level);
+    let native_hint = if tuning.native_cpu {
+        " -march=native -mtune=native"
+    } else {
+        ""
+    };
     let compiler = default_c_compiler();
 
-    let result = std::process::Command::new(compiler)
-        .args(&[
-            c_path.to_str().unwrap(),
-            "-o",
-            output.to_str().unwrap(),
-            &opt_flag,
-            "-lm",
-        ])
-        .output();
+    let mut args = vec![
+        c_path.to_string_lossy().into_owned(),
+        "-o".into(),
+        output.to_string_lossy().into_owned(),
+        opt_flag.clone(),
+    ];
+    if tuning.native_cpu {
+        args.push("-march=native".into());
+        args.push("-mtune=native".into());
+    }
+    args.push("-lm".into());
+
+    let result = std::process::Command::new(compiler).args(&args).output();
 
     match result {
         Ok(out) => {
@@ -694,9 +1036,12 @@ fn build_with_c_backend(
                         c_path.display()
                     );
                     eprintln!(
-                        "\x1b[1;32minfo\x1b[0m: compile manually with: gcc {} -o {} -O2 -lm",
+                        "\x1b[1;32minfo\x1b[0m: compile manually with: gcc {} -o {} {}{} -lm",
                         c_path.display(),
                         output.display()
+                        ,
+                        opt_flag,
+                        native_hint
                     );
                     return Ok(BuildOutcome {
                         native_binary: false,
@@ -717,9 +1062,11 @@ fn build_with_c_backend(
                 c_path.display()
             );
             eprintln!(
-                "\x1b[1;32minfo\x1b[0m: compile manually with: gcc {} -o {} -O2 -lm",
+                "\x1b[1;32minfo\x1b[0m: compile manually with: gcc {} -o {} {}{} -lm",
                 c_path.display(),
-                output.display()
+                output.display(),
+                opt_flag,
+                native_hint
             );
             Ok(BuildOutcome {
                 native_binary: false,
@@ -734,9 +1081,25 @@ fn build_with_llvm_backend(
     output: &PathBuf,
     opt_level: u8,
     tuning: &ReleaseTuning,
+    call_cache: &CallCacheSelection,
     verbose: bool,
 ) -> Result<BuildOutcome, String> {
-    let llvm_ir = agam_codegen::llvm_emitter::emit_llvm(mir)?;
+    let native_hint = if tuning.native_cpu {
+        " -march=native -mtune=native"
+    } else {
+        ""
+    };
+    let llvm_ir = agam_codegen::llvm_emitter::emit_llvm_with_options(
+        mir,
+        agam_codegen::llvm_emitter::LlvmEmitOptions {
+            call_cache: call_cache.enable_all,
+            call_cache_only: call_cache.included_functions(),
+            call_cache_exclude: call_cache.excluded_functions(),
+            call_cache_optimize: call_cache.optimize_all,
+            call_cache_optimize_only: call_cache.optimized_functions(),
+            ..agam_codegen::llvm_emitter::LlvmEmitOptions::from_env()
+        },
+    )?;
     let ll_path = output.with_extension("ll");
     std::fs::write(&ll_path, &llvm_ir)
         .map_err(|e| format!("failed to write LLVM IR file: {}", e))?;
@@ -754,19 +1117,20 @@ fn build_with_llvm_backend(
         ll_path.to_string_lossy().into_owned(),
         "-o".into(),
         output.to_string_lossy().into_owned(),
-        opt_flag,
+        opt_flag.clone(),
     ];
     if let Some(lto) = tuning.lto {
         args.push(lto_flag(lto).into());
     }
     if let Some(dir) = &tuning.pgo_generate {
-        args.push(format!(
-            "-fprofile-generate={}",
-            dir.to_string_lossy()
-        ));
+        args.push(format!("-fprofile-generate={}", dir.to_string_lossy()));
     }
     if let Some(profile) = &tuning.pgo_use {
         args.push(format!("-fprofile-use={}", profile.to_string_lossy()));
+    }
+    if tuning.native_cpu {
+        args.push("-march=native".into());
+        args.push("-mtune=native".into());
     }
     args.push("-lm".into());
     let result = std::process::Command::new("clang").args(&args).output();
@@ -781,9 +1145,11 @@ fn build_with_llvm_backend(
                         ll_path.display()
                     );
                     eprintln!(
-                        "\x1b[1;32minfo\x1b[0m: compile manually with: clang {} -o {} -O2 -lm",
+                        "\x1b[1;32minfo\x1b[0m: compile manually with: clang {} -o {} {}{} -lm",
                         ll_path.display(),
-                        output.display()
+                        output.display(),
+                        opt_flag,
+                        native_hint
                     );
                     return Ok(BuildOutcome {
                         native_binary: false,
@@ -803,9 +1169,11 @@ fn build_with_llvm_backend(
                 ll_path.display()
             );
             eprintln!(
-                "\x1b[1;32minfo\x1b[0m: compile manually with: clang {} -o {} -O2 -lm",
+                "\x1b[1;32minfo\x1b[0m: compile manually with: clang {} -o {} {}{} -lm",
                 ll_path.display(),
-                output.display()
+                output.display(),
+                opt_flag,
+                native_hint
             );
             Ok(BuildOutcome {
                 native_binary: false,
@@ -815,12 +1183,65 @@ fn build_with_llvm_backend(
     }
 }
 
-fn run_with_jit(path: &PathBuf, args: &[String], verbose: bool) -> Result<i32, String> {
-    let mir = lower_to_optimized_mir(path, verbose)?;
+fn run_with_jit(
+    path: &PathBuf,
+    args: &[String],
+    verbose: bool,
+    features: FeatureFlags,
+) -> Result<i32, String> {
+    let (mir, source_features) = lower_to_optimized_mir(path, verbose)?;
+    let call_cache = effective_call_cache_selection(features, &source_features);
+
+    if verbose && call_cache.is_enabled() {
+        if call_cache.enable_all {
+            eprintln!("[agamc] Call cache enabled for all eligible functions");
+        } else {
+            eprintln!(
+                "[agamc] Call cache enabled for {} annotated function(s)",
+                call_cache.included_functions().len()
+            );
+        }
+        if call_cache.is_optimized_enabled() {
+            eprintln!("[agamc] Call cache optimize mode enabled");
+        }
+    }
     if verbose {
         eprintln!("[agamc] Executing via Cranelift JIT");
     }
-    agam_jit::run_main(&mir, args)
+    let result = agam_jit::run_main_with_options(
+        &mir,
+        args,
+        agam_jit::JitOptions {
+            call_cache: call_cache.enable_all,
+            call_cache_only: call_cache.included_functions(),
+            call_cache_exclude: call_cache.excluded_functions(),
+            call_cache_optimize: call_cache.optimize_all,
+            call_cache_optimize_only: call_cache.optimized_functions(),
+            ..Default::default()
+        },
+    );
+    if verbose && call_cache.is_enabled() {
+        if let Some(stats) = agam_jit::take_last_call_cache_stats() {
+            eprintln!(
+                "[agamc] JIT call cache: {} hits / {} calls across {} cacheable function(s), {} store(s)",
+                stats.total_hits,
+                stats.total_calls,
+                stats.functions.len(),
+                stats.total_stores
+            );
+            for function in stats
+                .functions
+                .iter()
+                .filter(|function| function.calls > 0 || function.stores > 0)
+            {
+                eprintln!(
+                    "[agamc]   {} -> calls={}, hits={}, stores={}, entries={}",
+                    function.name, function.calls, function.hits, function.stores, function.entries
+                );
+            }
+        }
+    }
+    result
 }
 
 fn validate_release_tuning(backend: Backend, tuning: &ReleaseTuning) -> Result<(), String> {
@@ -845,5 +1266,72 @@ fn lto_flag(mode: LtoMode) -> &'static str {
     match mode {
         LtoMode::Thin => "-flto=thin",
         LtoMode::Full => "-flto=full",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_source_features(source: &str) -> SourceFeatureFlags {
+        let tokens = agam_lexer::tokenize(source, SourceId(0));
+        let mut features = source_feature_flags_from_tokens(&tokens);
+        let module = agam_parser::parse(tokens, SourceId(0)).expect("source should parse");
+        merge_function_call_cache_annotations(&module, &mut features.call_cache);
+        features
+    }
+
+    #[test]
+    fn test_source_call_cache_can_enable_whole_module_and_opt_out_function() {
+        let features = parse_source_features(
+            r#"
+@lang.advance
+@lang.feat.call_cache
+
+fn hot(n: i64) -> i64 { return n + 1; }
+
+@lang.feat.no_call_cache
+fn cold(n: i64) -> i64 { return n * 2; }
+"#,
+        );
+
+        assert!(features.call_cache.enable_all);
+        assert!(features.call_cache.exclude_functions.contains("cold"));
+        assert!(!features.call_cache.include_functions.contains("cold"));
+    }
+
+    #[test]
+    fn test_source_call_cache_can_target_specific_function_without_global_enable() {
+        let features = parse_source_features(
+            r#"
+@lang.advance
+fn main() -> i32 { if hot(1) > 0 { return 0; } return 1; }
+
+@lang.feat.call_cache
+fn hot(n: i64) -> i64 { return n + 1; }
+"#,
+        );
+
+        assert!(!features.call_cache.enable_all);
+        assert!(features.call_cache.include_functions.contains("hot"));
+        assert!(features.call_cache.exclude_functions.is_empty());
+    }
+
+    #[test]
+    fn test_source_call_cache_optimize_marks_experimental_usage() {
+        let features = parse_source_features(
+            r#"
+@lang.advance
+@experimental.call_cache.optimize
+
+@experimental.call_cache.optimize
+fn hot(n: i64) -> i64 { return n + 1; }
+"#,
+        );
+
+        assert!(features.call_cache.enable_all);
+        assert!(features.call_cache.optimize_all);
+        assert!(features.call_cache.optimize_functions.contains("hot"));
+        assert_eq!(features.experimental_usages.len(), 2);
     }
 }

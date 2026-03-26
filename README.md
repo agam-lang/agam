@@ -7,6 +7,8 @@
 
 ## 📖 Introduction: Why Build a New Language?
 
+For AI-agent workflow rules, operating constraints, and phase-completion policy, read [`.agent/agent.md`](./.agent/agent.md) before making repository changes.
+
 In software development today, we face a **"two-language problem"**:
 1. **Python** is incredibly easy to read and perfect for experimenting (Data Science, AI), but it runs slowly because it is interpreted.
 2. **C++ or Rust** run at blazing native hardware speeds and manage memory safely, but they have steep learning curves and strict rules that slow down rapid prototyping.
@@ -224,6 +226,29 @@ The deeper compiler work still belongs in future development:
 * Smarter PGO / ThinLTO defaults once the next proof layer is trustworthy.
 * Comment-aware structural formatting, full LSP features, and an Agam-native test runner.
 
+### Essential next development phases
+These are the highest-value performance and development features to build next:
+
+1. **Phase 16: Portable Agam package + tiered runtime**
+   * Define a platform-independent Agam package format.
+   * Load that package through the runtime and JIT hot code on the target machine.
+   * Keep native AOT backends as optional per-platform release targets.
+2. **Phase 17: Persistent native code cache**
+   * Add an on-disk cache keyed by Agam package hash, backend version, OS, CPU features, and runtime ABI.
+   * Reuse previously compiled hot code to remove repeated startup compilation costs.
+3. **Phase 18: Whole-program purity and effect metadata**
+   * Promote call-cache decisions from manual hints to verified compiler facts.
+   * Use the same effect metadata to unlock safer inlining, CSE, LICM, and auto-memoization.
+4. **Phase 19: Value profiling + adaptive specialization**
+   * Record hot argument shapes and constant-like values at runtime.
+   * Clone and specialize hot functions only when the measured payoff is real.
+5. **Phase 20: Escape analysis + stack promotion**
+   * Move short-lived allocations out of the heap.
+   * Feed stronger alias and lifetime facts into LLVM and the JIT.
+6. **Phase 21: Incremental daemon + parallel compilation**
+   * Keep parsed, typed, and lowered state warm across edits.
+   * Parallelize frontend and backend work to make premium development loops feel immediate.
+
 ---
 
 ## 🔮 Future Scopes (Phase 11 and Beyond)
@@ -279,12 +304,40 @@ agamc build my_script.agam --backend llvm -O 3 --pgo-use default.profdata
 # JIT backend for in-memory execution
 agamc run my_script.agam --backend jit
 
+# Scalar call-result cache for repeated pure scalar calls
+agamc run my_script.agam --backend jit --call-cache
+agamc build my_script.agam --backend llvm -O 3 --call-cache
+
+# Source-level call cache controls (default off)
+# File-wide basic caching: place this in the file preamble before declarations.
+@lang.feat.call_cache
+
+# Function-local basic caching: cache only this function, or opt a function back out.
+@lang.feat.call_cache
+fn hot(x: i64) -> i64 { ... }
+
+@lang.feat.no_call_cache
+fn not_worth_caching(x: i64) -> i64 { ... }
+
+# Experimental optimize mode: adaptive admission + bounded hot-entry replacement.
+# The compiler warns when this annotation is used.
+@experimental.call_cache.optimize
+
+@experimental.call_cache.optimize
+fn very_hot(x: i64) -> i64 { ... }
+
+# Storage model:
+# - JIT basic mode keeps direct cached entries only.
+# - JIT optimize mode uses bounded hot-entry replacement plus a fixed-size pending-candidate buffer.
+# - LLVM optimize mode uses bounded arrays plus a single repeated-input admission candidate.
+# - None of these modes grow without an explicit cache capacity limit.
+
 # Optional target metadata for LLVM emission
 AGAM_LLVM_TARGET_TRIPLE=x86_64-pc-linux-gnu \
 AGAM_LLVM_DATA_LAYOUT='e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128' \
 agamc build my_script.agam --backend llvm -O 3
 
-# Premium current-path development flow
+# Premium current-path development flow (`--fast` = `-O3` + host-native CPU tuning)
 agamc fmt --check .
 agamc build my_script.agam --fast
 agamc run my_script.agam --fast

@@ -154,6 +154,36 @@
 - [ ] Evolve `agam_fmt` from the current conservative whitespace-stable formatter into a full comment-aware structural formatter
 - [ ] Implement `agam_test` for reliable built-in unit testing
 
+### Phase 15A: Portable Agam Package + Tiered Runtime
+- [ ] Define a platform-independent Agam package format carrying verified IR, metadata, and source mapping.
+- [ ] Load portable packages through `agam_runtime` and tier hot execution into `agam_jit`.
+- [ ] Keep LLVM/C native builds as optional per-target AOT release outputs.
+
+### Phase 15B: Persistent Native Code Cache
+- [ ] Add an on-disk native cache keyed by package hash, backend version, runtime ABI, OS, architecture, and CPU features.
+- [ ] Reuse validated machine code across runs to reduce repeated startup compilation cost.
+- [ ] Keep cache eviction bounded, version-aware, and safe against stale artifacts.
+
+### Phase 15C: Whole-Program Purity and Effect Metadata
+- [ ] Track purity, effects, aliasing, and observable state as verified compiler facts instead of only manual hints.
+- [ ] Use that metadata to unlock safer inlining, CSE, LICM, and auto-memoization.
+- [ ] Emit precise diagnostics when cache/specialization features are rejected for impurity.
+
+### Phase 15D: Value Profiling + Adaptive Specialization
+- [ ] Record hot argument shapes, common scalar values, and profitable branch distributions at runtime.
+- [ ] Clone and specialize only the functions with measured payoff.
+- [ ] Keep specialization guarded and reversible so cold paths remain portable and correct.
+
+### Phase 15E: Escape Analysis + Stack Promotion
+- [ ] Detect non-escaping aggregates and closures for stack placement or scalar replacement.
+- [ ] Feed stronger alias and lifetime facts into LLVM and JIT backends.
+- [ ] Reduce ARC and heap traffic on short-lived hot-path values.
+
+### Phase 15F: Incremental Daemon + Parallel Compilation
+- [ ] Keep parsed, typed, and lowered state warm across edits in a persistent daemon.
+- [ ] Parallelize independent frontend and backend work with deterministic diagnostics.
+- [ ] Add fine-grained invalidation so large-workspace development loops stay fast.
+
 ### Phase 16: Interactive REPL & Sandboxed Execution
 - [ ] Build `agam_notebook` / `agam_jit` to create a Read-Eval-Print Loop (REPL) for instant tensor evaluation without full build steps.
 - [ ] Build a Headless API Sandbox server endpoint to accept Agam strings, JIT evaluate, and return strict JSON `stdout/stderr`.

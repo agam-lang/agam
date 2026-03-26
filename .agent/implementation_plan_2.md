@@ -271,6 +271,45 @@ Future development that stays in this phase:
 Future compiler work intentionally deferred beyond the current slice:
 - Richer square-bound / derived range proof for LLVM, then smarter PGO / ThinLTO defaults once the proofs are trustworthy.
 
+### Immediate Follow-On Performance Phases (15A-15F)
+These phases are the next execution order when the goal is Java-like portability through an Agam runtime while also closing the final native-performance gap.
+
+#### Phase 15A: Portable Agam Package + Tiered Runtime
+#### Crates: `agam_pkg`, `agam_driver`, `agam_runtime`, `agam_jit`, `agam_mir`
+- Define a platform-independent Agam package format that carries verified IR, metadata, and source mapping.
+- Load the package through `agam_runtime` and tier hot execution into the JIT on the target machine.
+- Preserve LLVM/C-style AOT builds as optional per-target release outputs instead of the portability baseline.
+
+#### Phase 15B: Persistent Native Code Cache
+#### Crates: `agam_runtime`, `agam_driver`, `agam_jit`, `agam_codegen`, `agam_profile`
+- Add an on-disk native code cache keyed by package hash, backend version, runtime ABI, OS, architecture, and CPU feature set.
+- Reuse validated machine code between runs to cut warm startup and repeated benchmark costs.
+- Keep cache eviction bounded and version-aware so old code cannot poison new compiler/runtime builds.
+
+#### Phase 15C: Whole-Program Purity and Effect Metadata
+#### Crates: `agam_sema`, `agam_hir`, `agam_mir`, `agam_codegen`, `agam_jit`
+- Promote manual cache hints into verified compiler facts by tracking purity, effects, aliasing, and observable state.
+- Reuse that metadata to unlock safer inlining, CSE, LICM, and auto-memoization.
+- Keep diagnostics span-precise when a feature is rejected for impurity or hidden side effects.
+
+#### Phase 15D: Value Profiling + Adaptive Specialization
+#### Crates: `agam_profile`, `agam_runtime`, `agam_jit`, `agam_codegen`
+- Record hot argument shapes, common scalar values, and profitable branch distributions at runtime.
+- Clone and specialize only the functions whose measured profile justifies the extra code size.
+- Keep specialization guarded and reversible so cold paths remain portable and correct.
+
+#### Phase 15E: Escape Analysis + Stack Promotion
+#### Crates: `agam_sema`, `agam_hir`, `agam_mir`, `agam_codegen`, `agam_jit`
+- Identify non-escaping aggregates and closures so they can stay on the stack or be scalar-replaced.
+- Feed stronger alias and lifetime facts into LLVM and the JIT backends.
+- Reduce ARC and heap traffic on short-lived hot-path values.
+
+#### Phase 15F: Incremental Daemon + Parallel Compilation
+#### Crates: `agam_driver`, `agam_lsp`, `agam_parser`, `agam_sema`, `agam_mir`, `agam_profile`
+- Keep parsed, typed, and lowered state warm across edits in a persistent daemon.
+- Parallelize independent frontend and backend work while preserving deterministic diagnostics.
+- Use fine-grained invalidation so premium development loops stay fast on large workspaces.
+
 ### Phase 16: Interactive REPL & Sandboxed Execution
 #### Crates: `agam_notebook`, `agam_jit`
 - **REPL Interface**: Allows rapid data-science experimentation with line-by-line tensor evaluations without full build steps.
