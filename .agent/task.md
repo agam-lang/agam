@@ -113,10 +113,10 @@
 ## Priority 1: Compiler Optimization & Native Execution
 
 ### Phase 11: Intermediate Representation (MIR) Optimization
-- [ ] Implement `agam_opt` module for MIR optimization passes
-- [ ] Implement Constant Folding
-- [ ] Implement Dead Code Elimination (DCE)
-- [ ] Implement Loop Unrolling ($T_{unrolled} \approx \frac{T_{original}}{k} + C$)
+- [x] Implement `agam_mir::opt` module for MIR optimization passes
+- [x] Implement Constant Folding
+- [x] Implement Dead Code Elimination (DCE)
+- [x] Implement Loop Unrolling ($T_{unrolled} \approx \frac{T_{original}}{k} + C$)
 
 ### Phase 12: Hardware Intrinsic Dispatch (SIMD)
 - [ ] Expand `agam_runtime::simd` module

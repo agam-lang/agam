@@ -195,6 +195,12 @@ Status update:
 > *The Concept*: Before converting to machine code, the compiler simplifies the abstract syntax tree into an intermediate format.
 > *The Coding Improvement*: Implement compiler passes in the `agam_mir` crate for Dead Code Elimination (DCE), Constant Folding, and Loop Unrolling to drastically reduce instructions. 
 
+Status update:
+- The MIR optimizer now lives in `agam_mir::opt` and is fully wired into `agamc build` before C emission.
+- Constant folding, local constant propagation, dead-code elimination, and conservative leaf-function inlining were already completed during Phase 10C and now serve as the base of Phase 11.
+- Added `loop_unroll.rs` for conservative fixed-trip counted-loop unrolling on the current MIR shape (`preheader -> cond -> body -> cond`) when the trip count is statically provable and small.
+- The optimization pipeline now runs `inline -> constant_fold -> loop_unroll -> constant_fold -> dce` to a fixed point.
+
 #### Crates: `agam_mir`
 - **`opt/dce.rs`**: Traverse CFG and remove unreachable basic blocks / unused allocas.
 - **`opt/constant_fold.rs`**: Evaluate literal math loops at compile time.
