@@ -124,9 +124,9 @@
 - [x] Natively vectorize tensor arrays without relying on secondary C translation
 
 ### Phase 13: Cache Alignment & Memory Locality
-- [ ] Implement `#[align(L1_Cache)]` macro logic
-- [ ] Update memory allocator (`agam_runtime::arc`) to pad allocations to 64-byte boundaries
-- [ ] Ensure continuous tensor blocks slot perfectly into CPU L1 cache
+- [x] Implement `#[align(L1_Cache)]` macro logic
+- [x] Update memory allocator (`agam_runtime::arc`) to pad allocations to 64-byte boundaries
+- [x] Ensure continuous tensor blocks slot perfectly into CPU L1 cache
 
 ### Phase 14: Direct LLVM IR or JIT Backend
 - [ ] Transition `agam_codegen` away from C-transpilation to direct LLVM IR emission

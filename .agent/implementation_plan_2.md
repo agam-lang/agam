@@ -222,6 +222,12 @@ Status update:
 ### Phase 13: Cache Alignment & Memory Locality
 > *The Concept*: Unaligned memory causes cache misses, freezing the processor.
 
+Status update:
+- Refactored `agam_runtime::arc` away from two disjoint `Box` allocations into a single contiguous `ArcInner<T>` allocation containing both the value and the ARC header.
+- Wired the allocator to honor runtime `AlignmentHint`s, with `AgamArc::new()` defaulting to cache-line alignment and `AgamArc::new_aligned()` supporting `CacheLine`, `L1Cache`, `SimdWidth`, or custom alignments.
+- Added tests proving that ARC-managed values land on the requested alignment boundary, including the 64-byte cache-line default and SIMD-width alignment.
+- This gives the runtime allocator the concrete alignment/padding hook needed for the `#[align(L1_Cache)]` family of annotations.
+
 #### Crates: `agam_runtime`
 - **`arc.rs`**: Implement the `#[align(L1_Cache)]` macro logic inside the memory allocator.
 - Pad memory allocations to exactly 64-byte boundaries, ensuring continuous tensor blocks slot perfectly into the L1 cache.
