@@ -156,6 +156,7 @@ Building on the completed Phases 1–5 (Lexer → Parser → AST → Semantic An
 
 Status update:
 - Completed checkpoint 10C.1: added a MIR optimization pipeline entrypoint, implemented `constant_fold.rs`, and wired the optimizer into `agamc build` before C emission.
+- Completed checkpoint 10C.2: added conservative small-function MIR inlining, dead-code elimination for unreachable blocks and unused locals, and a MIR `Copy` op to preserve SSA results after inlining.
 
 #### [NEW] `crates/agam_mir/src/opt/` — IR Optimization Passes
 - **`constant_fold.rs`**: Evaluate `let x = 5 * 10;` into `let x = 50;` at compile time.

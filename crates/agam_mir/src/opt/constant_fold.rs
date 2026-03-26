@@ -50,6 +50,15 @@ pub fn run(module: &mut MirModule) -> bool {
                     Op::Unit => {
                         value_consts.insert(instr.result, Constant::Unit);
                     }
+                    Op::Copy(value) => {
+                        if let Some(constant) = value_consts.get(value).cloned() {
+                            instr.op = constant.to_op();
+                            value_consts.insert(instr.result, constant);
+                            changed = true;
+                        } else {
+                            value_consts.remove(&instr.result);
+                        }
+                    }
                     Op::LoadLocal(name) => {
                         if let Some(constant) = local_consts.get(name).cloned() {
                             instr.op = constant.to_op();

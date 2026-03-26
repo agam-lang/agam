@@ -11,7 +11,7 @@ pub struct ValueId(pub u32);
 pub struct BlockId(pub u32);
 
 /// A complete MIR function.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MirFunction {
     pub name: String,
     pub params: Vec<MirParam>,
@@ -22,7 +22,7 @@ pub struct MirFunction {
 }
 
 /// A function parameter.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MirParam {
     pub name: String,
     pub value: ValueId,
@@ -30,7 +30,7 @@ pub struct MirParam {
 }
 
 /// A basic block: a sequence of instructions ending with a terminator.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BasicBlock {
     pub id: BlockId,
     pub instructions: Vec<Instruction>,
@@ -38,7 +38,7 @@ pub struct BasicBlock {
 }
 
 /// An SSA instruction within a basic block.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Instruction {
     /// The value this instruction produces.
     pub result: ValueId,
@@ -49,7 +49,7 @@ pub struct Instruction {
 }
 
 /// MIR operations.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Op {
     /// Integer constant.
     ConstInt(i64),
@@ -69,6 +69,8 @@ pub enum Op {
 
     /// Function call.
     Call { callee: String, args: Vec<ValueId> },
+    /// Copy an existing SSA value.
+    Copy(ValueId),
 
     /// Load a local variable.
     LoadLocal(String),
@@ -106,7 +108,7 @@ pub enum MirUnOp {
 }
 
 /// A block terminator — how control leaves a basic block.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Terminator {
     /// Return from function with a value.
     Return(ValueId),
@@ -125,7 +127,7 @@ pub enum Terminator {
 }
 
 /// A complete MIR module.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MirModule {
     pub functions: Vec<MirFunction>,
 }

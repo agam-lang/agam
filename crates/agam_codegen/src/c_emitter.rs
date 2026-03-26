@@ -179,6 +179,9 @@ fn emit_instruction(out: &mut String, instr: &Instruction) {
                 writeln!(out, "  agam_int {} = {}({});", v, mangle_name(callee), arg_strs.join(", ")).unwrap();
             }
         }
+        Op::Copy(value) => {
+            writeln!(out, "  agam_int {} = __v{};", v, value.0).unwrap();
+        }
         Op::LoadLocal(name) => {
             writeln!(out, "  agam_int {} = {};", v, mangle_local(name)).unwrap();
         }

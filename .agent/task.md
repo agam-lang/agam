@@ -101,8 +101,8 @@
 ## Phase 10C: Compilation Optimization Passes (The Speedup Phase)
 - [x] Constant Folding & Propagation (pre-calculate mathematical constants at compile time)
 - [ ] Monomorphization (Specialize generic numbers into specific `int32`/`float64` types instead of boxed `agam_int`)
-- [ ] Function Inlining (replace small method calls with their actual body in MIR)
-- [ ] Dead Code Elimination (remove unused variables and branches before sending to GCC)
+- [x] Function Inlining (replace small method calls with their actual body in MIR)
+- [x] Dead Code Elimination (remove unused variables and branches before sending to GCC)
 
 ## Phase 10D: Native ML & Dataframe Acceleration API
 - [ ] Implement C-compatible structs for [DataFrame](file:///c:/Projects/agam/crates/agam_std/src/dataframe.rs#72-75) and `NdArray`
