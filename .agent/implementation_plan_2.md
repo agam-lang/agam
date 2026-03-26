@@ -209,6 +209,12 @@ Status update:
 ### Phase 12: Hardware Intrinsic Dispatch (SIMD)
 > *The Concept*: Single Instruction, Multiple Data (SIMD) allows processing multiple tensor elements in one CPU clock cycle.
 
+Status update:
+- Extended `agam_runtime::simd` from auto-vectorizable scalar loops into runtime-dispatched intrinsic kernels for x86 (`SSE2`, `AVX`, `AVX-512`) and AArch64 (`NEON`) on the core numeric operations: add, sub, mul, scale, dot, FMA, and the tiled matmul micro-kernel.
+- Kept scalar fallbacks and runtime hardware selection via `hwinfo().simd.best_tier()` so the same codepath remains portable across machines.
+- Wired `agam_std::tensor` hot paths (`add`, `sub`, `mul`, `scale`, `dot`, `matmul`) into `SimdOps`, and routed `agam_std::ndarray::norm` plus ML similarity/distance helpers through the SIMD runtime as well.
+- Verified the runtime and stdlib SIMD path with the existing test suites after adding the new dispatch and tensor integration.
+
 #### Crates: `agam_runtime`, `agam_codegen`
 - **`simd.rs`**: Expand Runtime to map the compiler's `#[dispatch(SIMD)]` tags directly to AVX-512 or ARM NEON intrinsics.
 - Ensures the processor mathematically vectorizes arrays natively rather than relying on a C compiler's secondary translation.

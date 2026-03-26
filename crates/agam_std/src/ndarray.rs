@@ -9,6 +9,8 @@
 //!
 //! All operations use contiguous f64 arrays for cache-friendly access.
 
+use agam_runtime::simd::SimdOps;
+
 use crate::tensor::Tensor;
 
 /// Create a 1D tensor with evenly spaced values: [start, start+step, ..., stop).
@@ -129,7 +131,7 @@ pub fn outer(a: &Tensor, b: &Tensor) -> Tensor {
 
 /// Norm (L2 / Euclidean).
 pub fn norm(t: &Tensor) -> f64 {
-    t.data.iter().map(|x| x * x).sum::<f64>().sqrt()
+    SimdOps::norm_l2(&t.data)
 }
 
 /// Normalize to unit norm.

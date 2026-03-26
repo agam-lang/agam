@@ -175,6 +175,9 @@ dependencies = [
 [[package]]
 name = "agam_std"
 version = "0.1.0"
+dependencies = [
+ "agam_runtime",
+]
 
 [[package]]
 name = "agam_test"

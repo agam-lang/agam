@@ -5,6 +5,8 @@
 //!
 //! This is the foundation for Agam's native AI/ML capabilities.
 
+use agam_runtime::simd::SimdOps;
+
 /// An N-dimensional tensor stored in row-major contiguous memory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tensor {
@@ -77,33 +79,37 @@ impl Tensor {
     /// Element-wise addition. Shapes must match.
     pub fn add(&self, other: &Tensor) -> Tensor {
         assert_eq!(self.shape, other.shape, "shapes must match for add");
-        let data: Vec<f64> = self.data.iter().zip(&other.data).map(|(a, b)| a + b).collect();
+        let mut data = vec![0.0; self.numel()];
+        SimdOps::add(&self.data, &other.data, &mut data);
         Tensor { shape: self.shape.clone(), data }
     }
 
     /// Element-wise subtraction. Shapes must match.
     pub fn sub(&self, other: &Tensor) -> Tensor {
         assert_eq!(self.shape, other.shape, "shapes must match for sub");
-        let data: Vec<f64> = self.data.iter().zip(&other.data).map(|(a, b)| a - b).collect();
+        let mut data = vec![0.0; self.numel()];
+        SimdOps::sub(&self.data, &other.data, &mut data);
         Tensor { shape: self.shape.clone(), data }
     }
 
     /// Element-wise multiplication (Hadamard). Shapes must match.
     pub fn mul(&self, other: &Tensor) -> Tensor {
         assert_eq!(self.shape, other.shape, "shapes must match for mul");
-        let data: Vec<f64> = self.data.iter().zip(&other.data).map(|(a, b)| a * b).collect();
+        let mut data = vec![0.0; self.numel()];
+        SimdOps::mul(&self.data, &other.data, &mut data);
         Tensor { shape: self.shape.clone(), data }
     }
 
     /// Scalar multiplication.
     pub fn scale(&self, s: f64) -> Tensor {
-        let data: Vec<f64> = self.data.iter().map(|x| x * s).collect();
+        let mut data = vec![0.0; self.numel()];
+        SimdOps::scale(&self.data, s, &mut data);
         Tensor { shape: self.shape.clone(), data }
     }
 
     /// Sum all elements.
     pub fn sum(&self) -> f64 {
-        self.data.iter().sum()
+        SimdOps::sum(&self.data)
     }
 
     /// Mean of all elements.
@@ -116,7 +122,7 @@ impl Tensor {
         assert_eq!(self.ndim(), 1, "dot requires 1D tensors");
         assert_eq!(other.ndim(), 1, "dot requires 1D tensors");
         assert_eq!(self.shape[0], other.shape[0], "lengths must match");
-        self.data.iter().zip(&other.data).map(|(a, b)| a * b).sum()
+        SimdOps::dot(&self.data, &other.data)
     }
 
     /// Matrix multiplication for 2D tensors.
@@ -130,15 +136,7 @@ impl Tensor {
         let n = other.shape[1];
 
         let mut result = Tensor::zeros(&[m, n]);
-        for i in 0..m {
-            for j in 0..n {
-                let mut sum = 0.0;
-                for p in 0..k {
-                    sum += self.data[i * k + p] * other.data[p * n + j];
-                }
-                result.data[i * n + j] = sum;
-            }
-        }
+        SimdOps::matmul_tiled(&self.data, &other.data, &mut result.data, m, k, n);
         result
     }
 

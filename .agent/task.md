@@ -119,9 +119,9 @@
 - [x] Implement Loop Unrolling ($T_{unrolled} \approx \frac{T_{original}}{k} + C$)
 
 ### Phase 12: Hardware Intrinsic Dispatch (SIMD)
-- [ ] Expand `agam_runtime::simd` module
-- [ ] Map `#[dispatch(SIMD)]` annotations directly to AVX-512 and ARM NEON intrinsics
-- [ ] Natively vectorize tensor arrays without relying on secondary C translation
+- [x] Expand `agam_runtime::simd` module
+- [x] Map `#[dispatch(SIMD)]` annotations directly to AVX-512 and ARM NEON intrinsics
+- [x] Natively vectorize tensor arrays without relying on secondary C translation
 
 ### Phase 13: Cache Alignment & Memory Locality
 - [ ] Implement `#[align(L1_Cache)]` macro logic

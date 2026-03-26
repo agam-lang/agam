@@ -9,6 +9,8 @@
 //!
 //! All operations are on contiguous f64 arrays for maximum cache throughput.
 
+use agam_runtime::simd::SimdOps;
+
 use crate::tensor::Tensor;
 
 // ────────────────────────────────────────────────
@@ -225,15 +227,15 @@ pub fn z_score_normalize(t: &Tensor) -> Tensor {
 
 /// Cosine similarity between two vectors.
 pub fn cosine_similarity(a: &Tensor, b: &Tensor) -> f64 {
-    let dot: f64 = a.data.iter().zip(&b.data).map(|(x, y)| x * y).sum();
-    let na: f64 = a.data.iter().map(|x| x * x).sum::<f64>().sqrt();
-    let nb: f64 = b.data.iter().map(|x| x * x).sum::<f64>().sqrt();
+    let dot = SimdOps::dot(&a.data, &b.data);
+    let na = SimdOps::norm_l2(&a.data);
+    let nb = SimdOps::norm_l2(&b.data);
     dot / (na * nb)
 }
 
 /// Euclidean distance between two tensors.
 pub fn euclidean_distance(a: &Tensor, b: &Tensor) -> f64 {
-    a.data.iter().zip(&b.data).map(|(x, y)| (x - y) * (x - y)).sum::<f64>().sqrt()
+    SimdOps::distance(&a.data, &b.data)
 }
 
 /// K-nearest neighbors classification (brute force).
