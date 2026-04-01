@@ -228,7 +228,7 @@ impl LlvmFunctionSpecialization {
 
 #[derive(Clone, Default)]
 struct SpecializationRegistry {
-    by_function: HashMap<String, LlvmFunctionSpecialization>,
+    by_function: HashMap<String, Vec<LlvmFunctionSpecialization>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1286,16 +1286,18 @@ impl LlvmEmitter {
             let body = self.emit_function(func, &layout, &emitted_name, None)?;
             functions.push_str(&body);
             functions.push('\n');
-            if let Some(specialization) = self.specializations.by_function.get(&func.name).cloned()
+            if let Some(specializations) = self.specializations.by_function.get(&func.name).cloned()
             {
-                let clone_body = self.emit_function(
-                    func,
-                    &layout,
-                    &specialization.clone_name,
-                    Some(&specialization),
-                )?;
-                functions.push_str(&clone_body);
-                functions.push('\n');
+                for specialization in specializations {
+                    let clone_body = self.emit_function(
+                        func,
+                        &layout,
+                        &specialization.clone_name,
+                        Some(&specialization),
+                    )?;
+                    functions.push_str(&clone_body);
+                    functions.push('\n');
+                }
             }
         }
         self.prepare_call_cache_profile_export();
@@ -1711,7 +1713,11 @@ impl LlvmEmitter {
                 self.options.call_cache_capacity,
                 self.options.call_cache_warmup,
                 self.call_cache_plan.is_optimized(name),
-                self.specializations.by_function.get(name),
+                self.specializations
+                    .by_function
+                    .get(name)
+                    .map(|specializations| specializations.as_slice())
+                    .unwrap_or(&[]),
             )?;
         }
         Ok(())
@@ -2864,12 +2870,12 @@ fn emit_call_cache_wrapper_ir(
     capacity: usize,
     warmup: u64,
     optimize: bool,
-    specialization: Option<&LlvmFunctionSpecialization>,
+    specializations: &[LlvmFunctionSpecialization],
 ) -> Result<(), String> {
     if optimize {
-        emit_optimized_call_cache_wrapper_ir(out, name, layout, capacity, warmup, specialization)
+        emit_optimized_call_cache_wrapper_ir(out, name, layout, capacity, warmup, specializations)
     } else {
-        emit_basic_call_cache_wrapper_ir(out, name, layout, capacity, warmup, specialization)
+        emit_basic_call_cache_wrapper_ir(out, name, layout, capacity, warmup, specializations)
     }
 }
 
@@ -3314,9 +3320,9 @@ fn emit_specialized_call_or_fallback(
     call_args: &str,
     encoded_args: &[String],
     globals: &CallCacheGlobalNames,
-    specialization: Option<&LlvmFunctionSpecialization>,
+    specializations: &[LlvmFunctionSpecialization],
 ) -> Result<String, String> {
-    let Some(specialization) = specialization else {
+    if specializations.is_empty() {
         let miss_value = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
@@ -3327,14 +3333,19 @@ fn emit_specialized_call_or_fallback(
         )
         .unwrap();
         return Ok(miss_value);
-    };
+    }
 
-    let stable_values: Vec<_> = specialization
-        .stable_values
+    let applicable_specializations: Vec<_> = specializations
         .iter()
-        .filter(|value| encoded_args.get(value.index).is_some())
+        .filter(|specialization| {
+            !specialization.stable_values.is_empty()
+                && specialization
+                    .stable_values
+                    .iter()
+                    .all(|value| encoded_args.get(value.index).is_some())
+        })
         .collect();
-    if stable_values.is_empty() {
+    if applicable_specializations.is_empty() {
         let miss_value = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
@@ -3347,46 +3358,60 @@ fn emit_specialized_call_or_fallback(
         return Ok(miss_value);
     }
 
-    let mut guard = String::new();
-    for stable in stable_values {
-        let expected = llvm_i64_literal(stable.raw_bits);
-        let arg_eq = fresh_call_cache_temp(next_temp);
-        writeln!(
-            out,
-            "  {arg_eq} = icmp eq i64 {}, {}",
-            encoded_args[stable.index], expected
-        )
-        .unwrap();
-        if guard.is_empty() {
-            guard = arg_eq;
-        } else {
-            let combined = fresh_call_cache_temp(next_temp);
-            writeln!(out, "  {combined} = and i1 {guard}, {arg_eq}").unwrap();
-            guard = combined;
-        }
-    }
-
-    let specialized_label = fresh_call_cache_label(next_temp, "spec_call");
     let generic_label = fresh_call_cache_label(next_temp, "generic_call");
     let cont_label = fresh_call_cache_label(next_temp, "specialized_cont");
-    writeln!(
-        out,
-        "  br i1 {guard}, label %{specialized_label}, label %{generic_label}"
-    )
-    .unwrap();
+    let mut incoming_values = Vec::new();
 
-    writeln!(out, "{specialized_label}:").unwrap();
-    emit_increment_i64_global(out, next_temp, &globals.profile_specialization_hits);
-    let specialized_value = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialized_value} = call noundef {} @{}({})",
-        layout.return_ty.ir(),
-        specialization.clone_name,
-        call_args
-    )
-    .unwrap();
-    writeln!(out, "  br label %{cont_label}").unwrap();
+    for (index, specialization) in applicable_specializations.iter().enumerate() {
+        let mut guard = String::new();
+        for stable in &specialization.stable_values {
+            let expected = llvm_i64_literal(stable.raw_bits);
+            let arg_eq = fresh_call_cache_temp(next_temp);
+            writeln!(
+                out,
+                "  {arg_eq} = icmp eq i64 {}, {}",
+                encoded_args[stable.index], expected
+            )
+            .unwrap();
+            if guard.is_empty() {
+                guard = arg_eq;
+            } else {
+                let combined = fresh_call_cache_temp(next_temp);
+                writeln!(out, "  {combined} = and i1 {guard}, {arg_eq}").unwrap();
+                guard = combined;
+            }
+        }
+
+        let specialized_label = fresh_call_cache_label(next_temp, "spec_call");
+        let fail_label = if index + 1 < applicable_specializations.len() {
+            fresh_call_cache_label(next_temp, "spec_next")
+        } else {
+            generic_label.clone()
+        };
+        writeln!(
+            out,
+            "  br i1 {guard}, label %{specialized_label}, label %{fail_label}"
+        )
+        .unwrap();
+
+        writeln!(out, "{specialized_label}:").unwrap();
+        emit_increment_i64_global(out, next_temp, &globals.profile_specialization_hits);
+        let specialized_value = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialized_value} = call noundef {} @{}({})",
+            layout.return_ty.ir(),
+            specialization.clone_name,
+            call_args
+        )
+        .unwrap();
+        writeln!(out, "  br label %{cont_label}").unwrap();
+        incoming_values.push((specialized_value, specialized_label));
+
+        if fail_label != generic_label {
+            writeln!(out, "{fail_label}:").unwrap();
+        }
+    }
 
     writeln!(out, "{generic_label}:").unwrap();
     emit_increment_i64_global(out, next_temp, &globals.profile_specialization_fallbacks);
@@ -3403,10 +3428,16 @@ fn emit_specialized_call_or_fallback(
 
     writeln!(out, "{cont_label}:").unwrap();
     let miss_value = fresh_call_cache_temp(next_temp);
+    let mut phi_incoming = incoming_values
+        .into_iter()
+        .map(|(value, label)| format!("[ {value}, %{label} ]"))
+        .collect::<Vec<_>>();
+    phi_incoming.push(format!("[ {generic_value}, %{generic_label} ]"));
     writeln!(
         out,
-        "  {miss_value} = phi {} [ {specialized_value}, %{specialized_label} ], [ {generic_value}, %{generic_label} ]",
-        layout.return_ty.ir()
+        "  {miss_value} = phi {} {}",
+        layout.return_ty.ir(),
+        phi_incoming.join(", ")
     )
     .unwrap();
     Ok(miss_value)
@@ -3563,7 +3594,7 @@ fn emit_basic_call_cache_wrapper_ir(
     layout: &FunctionLayout,
     capacity: usize,
     warmup: u64,
-    specialization: Option<&LlvmFunctionSpecialization>,
+    specializations: &[LlvmFunctionSpecialization],
 ) -> Result<(), String> {
     let wrapper = call_cache_wrapper_name(name);
     let original = mangle_name(name);
@@ -3712,7 +3743,7 @@ fn emit_basic_call_cache_wrapper_ir(
         &call_args,
         &encoded_args,
         &globals,
-        specialization,
+        specializations,
     )?;
     let store_enabled = fresh_call_cache_temp(&mut next_temp);
     writeln!(
@@ -3807,7 +3838,7 @@ fn emit_optimized_call_cache_wrapper_ir(
     layout: &FunctionLayout,
     capacity: usize,
     warmup: u64,
-    specialization: Option<&LlvmFunctionSpecialization>,
+    specializations: &[LlvmFunctionSpecialization],
 ) -> Result<(), String> {
     let wrapper = call_cache_wrapper_name(name);
     let original = mangle_name(name);
@@ -3979,7 +4010,7 @@ fn emit_optimized_call_cache_wrapper_ir(
         &call_args,
         &encoded_args,
         &globals,
-        specialization,
+        specializations,
     )?;
     let store_enabled = fresh_call_cache_temp(&mut next_temp);
     writeln!(
@@ -4575,13 +4606,38 @@ fn build_specialization_registry(
         }
 
         let stable_values: Vec<_> = stable_values.into_values().collect();
-        by_function.insert(
-            plan.name.clone(),
-            LlvmFunctionSpecialization {
+        by_function
+            .entry(plan.name.clone())
+            .or_insert_with(Vec::new)
+            .push(LlvmFunctionSpecialization {
                 clone_name: llvm_specialization_clone_name(&plan.name, &stable_values),
                 stable_values,
-            },
-        );
+            });
+    }
+
+    for specializations in by_function.values_mut() {
+        specializations.sort_by(|left, right| {
+            right
+                .stable_values
+                .len()
+                .cmp(&left.stable_values.len())
+                .then_with(|| {
+                    right
+                        .stable_values
+                        .iter()
+                        .map(|value| value.matches)
+                        .sum::<u64>()
+                        .cmp(
+                            &left
+                                .stable_values
+                                .iter()
+                                .map(|value| value.matches)
+                                .sum::<u64>(),
+                        )
+                })
+                .then_with(|| left.clone_name.cmp(&right.clone_name))
+        });
+        specializations.dedup_by(|left, right| left.stable_values == right.stable_values);
     }
 
     SpecializationRegistry { by_function }
@@ -5055,6 +5111,71 @@ fn main() -> i32:
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
         assert!(
             llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
+        );
+    }
+
+    #[test]
+    fn test_emit_multiple_guarded_specialization_clones_for_same_function() {
+        let specific_values = vec![
+            StableScalarValueProfile {
+                index: 0,
+                raw_bits: 7,
+                matches: 24,
+            },
+            StableScalarValueProfile {
+                index: 1,
+                raw_bits: 9,
+                matches: 20,
+            },
+        ];
+        let broad_values = vec![StableScalarValueProfile {
+            index: 0,
+            raw_bits: 7,
+            matches: 16,
+        }];
+        let specific_clone = llvm_specialization_clone_name("hot", &specific_values);
+        let broad_clone = llvm_specialization_clone_name("hot", &broad_values);
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn hot(a: i64, b: i64) -> i64:
+    return a + b
+
+fn main() -> i32:
+    if hot(7, 9) > 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache_optimize_only: vec!["hot".into()],
+                call_cache_specializations: vec![
+                    CallCacheSpecializationPlan {
+                        name: "hot".into(),
+                        stable_values: broad_values.clone(),
+                    },
+                    CallCacheSpecializationPlan {
+                        name: "hot".into(),
+                        stable_values: specific_values.clone(),
+                    },
+                ],
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert_eq!(
+            llvm.match_indices("define noundef i64 @__agam_spec_hot_")
+                .count(),
+            2
+        );
+        assert!(llvm.contains(&format!("call noundef i64 @{specific_clone}(")));
+        assert!(llvm.contains(&format!("call noundef i64 @{broad_clone}(")));
+        let specific_pos = llvm
+            .find(&format!("call noundef i64 @{specific_clone}("))
+            .expect("missing specific clone call");
+        let broad_pos = llvm
+            .find(&format!("call noundef i64 @{broad_clone}("))
+            .expect("missing broad clone call");
+        assert!(
+            specific_pos < broad_pos,
+            "expected the more specific clone to be checked before the broader clone"
         );
     }
 

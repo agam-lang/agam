@@ -256,7 +256,7 @@ impl CallCachePlan {
 
 #[derive(Clone, Debug, Default)]
 struct SpecializationRegistry {
-    by_function: HashMap<String, JitFunctionSpecialization>,
+    by_function: HashMap<String, Vec<JitFunctionSpecialization>>,
 }
 
 #[derive(Clone, Debug)]
@@ -671,13 +671,11 @@ impl AgamJit {
                 .cloned()
                 .ok_or_else(|| format!("missing JIT layout for `{}`", func.name))?;
             self.declare_named_function(&func.name, &layout)?;
-            if let Some(clone_name) = self
-                .specializations
-                .by_function
-                .get(&func.name)
-                .map(|specialization| specialization.clone_name.clone())
+            if let Some(specializations) = self.specializations.by_function.get(&func.name).cloned()
             {
-                self.declare_named_function(&clone_name, &layout)?;
+                for specialization in specializations {
+                    self.declare_named_function(&specialization.clone_name, &layout)?;
+                }
             }
         }
         Ok(())
@@ -713,9 +711,11 @@ impl AgamJit {
     fn define_functions(&mut self, module: &MirModule) -> Result<(), String> {
         for func in &module.functions {
             self.define_function(func, &func.name, None)?;
-            if let Some(specialization) = self.specializations.by_function.get(&func.name).cloned()
+            if let Some(specializations) = self.specializations.by_function.get(&func.name).cloned()
             {
-                self.define_function(func, &specialization.clone_name, Some(&specialization))?;
+                for specialization in specializations {
+                    self.define_function(func, &specialization.clone_name, Some(&specialization))?;
+                }
             }
         }
         Ok(())
@@ -1232,15 +1232,7 @@ impl AgamJit {
         mem_flags: cranelift_codegen::ir::MemFlags,
     ) -> Result<Value, String> {
         let pointer_type = self.module.target_config().pointer_type();
-        let Some(specialization) = self.specializations.by_function.get(callee).cloned() else {
-            return Ok(self.emit_direct_call_result(
-                builder,
-                generic_func_ref,
-                lowered_args,
-                result_ty,
-            ));
-        };
-        let Some(specialized_id) = self.func_ids.get(&specialization.clone_name).copied() else {
+        let Some(specializations) = self.specializations.by_function.get(callee).cloned() else {
             return Ok(self.emit_direct_call_result(
                 builder,
                 generic_func_ref,
@@ -1257,9 +1249,29 @@ impl AgamJit {
             ));
         };
 
-        let specialized_func_ref = self
-            .module
-            .declare_func_in_func(specialized_id, builder.func);
+        let applicable_specializations: Vec<_> = specializations
+            .into_iter()
+            .filter_map(|specialization| {
+                let specialized_id = self.func_ids.get(&specialization.clone_name).copied()?;
+                if specialization.stable_values.is_empty()
+                    || !specialization.stable_values.iter().all(|stable| {
+                        stable.index < lowered_args.len() && stable.index < param_tys.len()
+                    })
+                {
+                    return None;
+                }
+                Some((specialization, specialized_id))
+            })
+            .collect();
+        if applicable_specializations.is_empty() {
+            return Ok(self.emit_direct_call_result(
+                builder,
+                generic_func_ref,
+                lowered_args,
+                result_ty,
+            ));
+        }
+
         let specialization_hit_id = self.runtime_func_id(
             RT_SPECIALIZATION_HIT,
             &[JitType::Int {
@@ -1283,58 +1295,70 @@ impl AgamJit {
             .module
             .declare_func_in_func(specialization_fallback_id, builder.func);
         let slot_value = builder.ins().iconst(types::I32, slot as i64);
-        let mut guard = None;
-        for stable in &specialization.stable_values {
-            let Some(arg) = lowered_args.get(stable.index).copied() else {
-                return Ok(self.emit_direct_call_result(
-                    builder,
-                    generic_func_ref,
-                    lowered_args,
-                    result_ty,
-                ));
-            };
-            let Some(param_ty) = param_tys.get(stable.index).copied() else {
-                return Ok(self.emit_direct_call_result(
-                    builder,
-                    generic_func_ref,
-                    lowered_args,
-                    result_ty,
-                ));
-            };
-            let bits = value_to_call_cache_bits(builder, arg, param_ty, mem_flags)?;
-            let expected = builder.ins().iconst(types::I64, stable.raw_bits as i64);
-            let matches = builder.ins().icmp(IntCC::Equal, bits, expected);
-            guard = Some(match guard {
-                Some(current) => builder.ins().band(current, matches),
-                None => matches,
-            });
-        }
-
-        let Some(guard) = guard else {
-            return Ok(self.emit_direct_call_result(
-                builder,
-                generic_func_ref,
-                lowered_args,
-                result_ty,
-            ));
-        };
-
         let specialized_block = builder.create_block();
         let generic_block = builder.create_block();
         let cont_block = builder.create_block();
         builder.append_block_param(cont_block, result_ty.clif_type(pointer_type));
-        builder
-            .ins()
-            .brif(guard, specialized_block, &[], generic_block, &[]);
-        builder.seal_block(specialized_block);
-        builder.seal_block(generic_block);
+        let mut next_guard_block = None;
 
-        builder.switch_to_block(specialized_block);
-        builder.ins().call(specialization_hit_ref, &[slot_value]);
-        let specialized_value =
-            self.emit_direct_call_result(builder, specialized_func_ref, lowered_args, result_ty);
-        let specialized_args = [cranelift_codegen::ir::BlockArg::Value(specialized_value)];
-        builder.ins().jump(cont_block, &specialized_args);
+        for (index, (specialization, specialized_id)) in
+            applicable_specializations.iter().enumerate()
+        {
+            if let Some(guard_block) = next_guard_block.take() {
+                builder.switch_to_block(guard_block);
+            }
+
+            let specialized_func_ref = self
+                .module
+                .declare_func_in_func(*specialized_id, builder.func);
+            let specialized_block = if index == 0 {
+                specialized_block
+            } else {
+                builder.create_block()
+            };
+            let fail_block = if index + 1 < applicable_specializations.len() {
+                let guard_block = builder.create_block();
+                next_guard_block = Some(guard_block);
+                guard_block
+            } else {
+                generic_block
+            };
+
+            let mut guard = None;
+            for stable in &specialization.stable_values {
+                let arg = lowered_args[stable.index];
+                let param_ty = param_tys[stable.index];
+                let bits = value_to_call_cache_bits(builder, arg, param_ty, mem_flags)?;
+                let expected = builder.ins().iconst(types::I64, stable.raw_bits as i64);
+                let matches = builder.ins().icmp(IntCC::Equal, bits, expected);
+                guard = Some(match guard {
+                    Some(current) => builder.ins().band(current, matches),
+                    None => matches,
+                });
+            }
+            let guard = guard.expect("applicable specialization must have a guard");
+
+            builder
+                .ins()
+                .brif(guard, specialized_block, &[], fail_block, &[]);
+            builder.seal_block(specialized_block);
+            if fail_block == generic_block {
+                builder.seal_block(generic_block);
+            } else {
+                builder.seal_block(fail_block);
+            }
+
+            builder.switch_to_block(specialized_block);
+            builder.ins().call(specialization_hit_ref, &[slot_value]);
+            let specialized_value = self.emit_direct_call_result(
+                builder,
+                specialized_func_ref,
+                lowered_args,
+                result_ty,
+            );
+            let specialized_args = [cranelift_codegen::ir::BlockArg::Value(specialized_value)];
+            builder.ins().jump(cont_block, &specialized_args);
+        }
 
         builder.switch_to_block(generic_block);
         builder
@@ -1864,13 +1888,38 @@ fn build_specialization_registry(
         }
 
         let stable_values: Vec<_> = stable_values.into_values().collect();
-        by_function.insert(
-            plan.name.clone(),
-            JitFunctionSpecialization {
+        by_function
+            .entry(plan.name.clone())
+            .or_insert_with(Vec::new)
+            .push(JitFunctionSpecialization {
                 clone_name: specialization_clone_name(&plan.name, &stable_values),
                 stable_values,
-            },
-        );
+            });
+    }
+
+    for specializations in by_function.values_mut() {
+        specializations.sort_by(|left, right| {
+            right
+                .stable_values
+                .len()
+                .cmp(&left.stable_values.len())
+                .then_with(|| {
+                    right
+                        .stable_values
+                        .iter()
+                        .map(|value| value.matches)
+                        .sum::<u64>()
+                        .cmp(
+                            &left
+                                .stable_values
+                                .iter()
+                                .map(|value| value.matches)
+                                .sum::<u64>(),
+                        )
+                })
+                .then_with(|| left.clone_name.cmp(&right.clone_name))
+        });
+        specializations.dedup_by(|left, right| left.stable_values == right.stable_values);
     }
 
     SpecializationRegistry { by_function }
@@ -3512,6 +3561,132 @@ fn main() -> i32:
             "expected a compiled specialized clone, got {:?}",
             compiled.function_ptrs.keys().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_jit_compiles_multiple_specialization_clones_for_same_function() {
+        let source = r#"
+fn hot(a: i64, b: i64) -> i64:
+    return (a * 3) + b
+
+fn main() -> i32:
+    if hot(7, 9) == 30:
+        return 0
+    return 1
+"#;
+        let mir = lower_source_to_mir(source);
+        let specific_clone = specialization_clone_name(
+            "hot",
+            &[
+                StableScalarValueProfile {
+                    index: 0,
+                    raw_bits: 7,
+                    matches: 24,
+                },
+                StableScalarValueProfile {
+                    index: 1,
+                    raw_bits: 9,
+                    matches: 20,
+                },
+            ],
+        );
+        let broad_clone = specialization_clone_name(
+            "hot",
+            &[StableScalarValueProfile {
+                index: 0,
+                raw_bits: 7,
+                matches: 16,
+            }],
+        );
+        let compiled = CompiledJitModule::compile(
+            &mir,
+            JitOptions {
+                call_cache_optimize_only: vec!["hot".into()],
+                call_cache_specializations: vec![
+                    CallCacheSpecializationPlan {
+                        name: "hot".into(),
+                        stable_values: vec![StableScalarValueProfile {
+                            index: 0,
+                            raw_bits: 7,
+                            matches: 16,
+                        }],
+                    },
+                    CallCacheSpecializationPlan {
+                        name: "hot".into(),
+                        stable_values: vec![
+                            StableScalarValueProfile {
+                                index: 0,
+                                raw_bits: 7,
+                                matches: 24,
+                            },
+                            StableScalarValueProfile {
+                                index: 1,
+                                raw_bits: 9,
+                                matches: 20,
+                            },
+                        ],
+                    },
+                ],
+                ..Default::default()
+            },
+        )
+        .expect("jit compile failed");
+
+        assert!(compiled.function_ptrs.contains_key(&specific_clone));
+        assert!(compiled.function_ptrs.contains_key(&broad_clone));
+    }
+
+    #[test]
+    fn test_jit_specialization_registry_prefers_more_specific_plans_first() {
+        let mir = lower_source_to_mir(
+            r#"
+fn hot(a: i64, b: i64) -> i64:
+    return a + b
+
+fn main() -> i32:
+    if hot(7, 9) > 0:
+        return 0
+    return 1
+"#,
+        );
+        let layouts = analyze_module(&mir);
+        let registry = build_specialization_registry(
+            &mir,
+            &layouts,
+            &[
+                CallCacheSpecializationPlan {
+                    name: "hot".into(),
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 7,
+                        matches: 12,
+                    }],
+                },
+                CallCacheSpecializationPlan {
+                    name: "hot".into(),
+                    stable_values: vec![
+                        StableScalarValueProfile {
+                            index: 0,
+                            raw_bits: 7,
+                            matches: 18,
+                        },
+                        StableScalarValueProfile {
+                            index: 1,
+                            raw_bits: 9,
+                            matches: 18,
+                        },
+                    ],
+                },
+            ],
+        );
+
+        let hot = registry
+            .by_function
+            .get("hot")
+            .expect("missing specializations for hot");
+        assert_eq!(hot.len(), 2);
+        assert_eq!(hot[0].stable_values.len(), 2);
+        assert_eq!(hot[1].stable_values.len(), 1);
     }
 
     #[test]
