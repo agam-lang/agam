@@ -1,13 +1,21 @@
 //! Cranelift-backed JIT execution for the current Phase 14 scalar MIR subset.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char};
+use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use agam_mir::analysis::{
+    CallCacheAnalysis, CallCacheMode as MirCallCacheMode, CallCacheRejectReason, CallCacheRequest,
+};
 use agam_mir::ir::*;
+use agam_profile::{
+    CallCacheFunctionProfile, CallCacheSpecializationHint, CallCacheSpecializationPlan,
+    StableScalarValueProfile, specialization_hint,
+};
 use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::immediates::{Ieee32, Ieee64};
@@ -93,6 +101,7 @@ pub struct JitOptions {
     pub call_cache_exclude: Vec<String>,
     pub call_cache_optimize: bool,
     pub call_cache_optimize_only: Vec<String>,
+    pub call_cache_specializations: Vec<CallCacheSpecializationPlan>,
     pub call_cache_capacity: usize,
     pub call_cache_warmup: u64,
 }
@@ -105,9 +114,111 @@ impl Default for JitOptions {
             call_cache_exclude: Vec::new(),
             call_cache_optimize: false,
             call_cache_optimize_only: Vec::new(),
+            call_cache_specializations: Vec::new(),
             call_cache_capacity: DEFAULT_CALL_CACHE_CAPACITY,
             call_cache_warmup: DEFAULT_CALL_CACHE_WARMUP,
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum JitValue {
+    Unit,
+    Bool(bool),
+    Int(i128),
+    UInt(u128),
+    Float32(f32),
+    Float64(f64),
+    Pointer(usize),
+}
+
+pub struct CompiledJitModule {
+    jit: AgamJit,
+    function_ptrs: HashMap<String, *const u8>,
+    options: JitOptions,
+}
+
+impl CompiledJitModule {
+    pub fn compile(module: &MirModule, options: JitOptions) -> Result<Self, String> {
+        let layouts = analyze_module(module);
+        let call_cache_analysis = build_call_cache_analysis(module, &layouts, &options);
+        let call_cache_plan = call_cache_plan_from_analysis(&call_cache_analysis);
+        let specializations =
+            build_specialization_registry(module, &layouts, &options.call_cache_specializations);
+
+        let mut flag_builder = settings::builder();
+        flag_builder
+            .set("opt_level", "speed")
+            .map_err(|e| format!("failed to set Cranelift opt level: {e}"))?;
+        flag_builder
+            .set("use_colocated_libcalls", "false")
+            .map_err(|e| format!("failed to configure Cranelift libcalls: {e}"))?;
+        flag_builder
+            .set("is_pic", "false")
+            .map_err(|e| format!("failed to configure Cranelift PIC mode: {e}"))?;
+        let isa_builder = cranelift_native::builder()
+            .map_err(|e| format!("unsupported host ISA for JIT: {e}"))?;
+        let isa = isa_builder
+            .finish(settings::Flags::new(flag_builder))
+            .map_err(|e| format!("failed to build Cranelift host ISA: {e}"))?;
+        let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
+        register_runtime_symbols(&mut builder);
+
+        let mut jit = AgamJit {
+            module: JITModule::new(builder),
+            layouts,
+            func_ids: HashMap::new(),
+            imported_funcs: HashMap::new(),
+            string_data: HashMap::new(),
+            next_string_id: 0,
+            call_cache_plan,
+            specializations,
+        };
+
+        jit.declare_functions(module)?;
+        jit.declare_strings(module)?;
+        jit.define_functions(module)?;
+        jit.module
+            .finalize_definitions()
+            .map_err(|e| format!("failed to finalize JIT definitions: {e}"))?;
+
+        let function_ptrs = jit
+            .func_ids
+            .iter()
+            .map(|(name, id)| (name.clone(), jit.module.get_finalized_function(*id)))
+            .collect();
+
+        Ok(Self {
+            jit,
+            function_ptrs,
+            options,
+        })
+    }
+
+    pub fn run_function(&self, function_name: &str, args: &[String]) -> Result<JitValue, String> {
+        let layout = self
+            .jit
+            .layouts
+            .get(function_name)
+            .cloned()
+            .ok_or_else(|| format!("missing `{function_name}` function for JIT execution"))?;
+
+        if !layout.params.is_empty() {
+            return Err(format!(
+                "`agamc test` currently requires `{function_name}` without parameters"
+            ));
+        }
+
+        let func_ptr = *self
+            .function_ptrs
+            .get(function_name)
+            .ok_or_else(|| format!("missing JIT handle for `{function_name}`"))?;
+
+        with_runtime_args(args, || {
+            with_call_cache(&self.jit.call_cache_plan, &self.options, || unsafe {
+                call_zero_arg_function(func_ptr, layout)
+            })
+        })
     }
 }
 
@@ -127,6 +238,7 @@ pub struct JitFunctionCallCacheStats {
     pub hits: u64,
     pub stores: u64,
     pub entries: usize,
+    pub profile: CallCacheFunctionProfile,
 }
 
 #[derive(Clone, Default)]
@@ -139,6 +251,26 @@ struct CallCachePlan {
 impl CallCachePlan {
     fn slot_for(&self, name: &str) -> Option<i32> {
         self.function_slots.get(name).copied()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct SpecializationRegistry {
+    by_function: HashMap<String, JitFunctionSpecialization>,
+}
+
+#[derive(Clone, Debug)]
+struct JitFunctionSpecialization {
+    clone_name: String,
+    stable_values: Vec<StableScalarValueProfile>,
+}
+
+impl JitFunctionSpecialization {
+    fn stable_bits_for(&self, index: usize) -> Option<u64> {
+        self.stable_values
+            .iter()
+            .find(|value| value.index == index)
+            .map(|value| value.raw_bits)
     }
 }
 
@@ -170,6 +302,14 @@ struct CallCacheFunctionState {
     stores: u64,
     entries: HashMap<CallCacheKey, CallCacheEntry>,
     pending_candidates: [Option<PendingCallCacheCandidate>; MAX_PENDING_CALL_CACHE_CANDIDATES],
+    observed_keys: HashMap<CallCacheKey, ObservedCallCacheKey>,
+    arg_profiles: Vec<ScalarArgumentProfile>,
+    reuse_distance_total: u64,
+    reuse_distance_samples: u64,
+    max_reuse_distance: u64,
+    hottest_key: Option<(CallCacheKey, u64)>,
+    specialization_guard_hits: u64,
+    specialization_guard_fallbacks: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -177,6 +317,7 @@ struct CallCacheEntry {
     value: u64,
     hits: u32,
     last_touch: u64,
+    payoff_score: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -186,7 +327,166 @@ struct PendingCallCacheCandidate {
     last_touch: u64,
 }
 
+#[derive(Clone, Copy)]
+struct ObservedCallCacheKey {
+    hits: u64,
+    last_seen: u64,
+    last_reuse_distance: Option<u64>,
+}
+
+#[derive(Default)]
+struct ScalarArgumentProfile {
+    counts: HashMap<u64, u64>,
+}
+
 impl CallCacheFunctionState {
+    fn observe_call(&mut self, key: CallCacheKey, tick: u64) {
+        for (index, arg) in key.args[..key.len as usize].iter().copied().enumerate() {
+            if let Some(profile) = self.arg_profiles.get_mut(index) {
+                profile.observe(arg);
+            }
+        }
+
+        if let Some(observed) = self.observed_keys.get_mut(&key) {
+            observed.hits = observed.hits.saturating_add(1);
+            let reuse_distance = tick.saturating_sub(observed.last_seen);
+            observed.last_reuse_distance = Some(reuse_distance);
+            self.reuse_distance_total = self.reuse_distance_total.saturating_add(reuse_distance);
+            self.reuse_distance_samples = self.reuse_distance_samples.saturating_add(1);
+            self.max_reuse_distance = self.max_reuse_distance.max(reuse_distance);
+            observed.last_seen = tick;
+            let hits = observed.hits;
+            if self
+                .hottest_key
+                .map(|(_, hottest_hits)| hits > hottest_hits)
+                .unwrap_or(true)
+            {
+                self.hottest_key = Some((key, hits));
+            }
+            return;
+        }
+
+        self.evict_observed_key_if_needed();
+        self.observed_keys.insert(
+            key,
+            ObservedCallCacheKey {
+                hits: 1,
+                last_seen: tick,
+                last_reuse_distance: None,
+            },
+        );
+        if self.hottest_key.is_none() {
+            self.hottest_key = Some((key, 1));
+        }
+    }
+
+    fn evict_observed_key_if_needed(&mut self) {
+        if self.observed_keys.len() < MAX_PROFILED_CALL_CACHE_KEYS {
+            return;
+        }
+        let Some(victim_key) = self
+            .observed_keys
+            .iter()
+            .min_by_key(|(_, observed)| (observed.hits, observed.last_seen))
+            .map(|(key, _)| *key)
+        else {
+            return;
+        };
+        self.observed_keys.remove(&victim_key);
+        if self
+            .hottest_key
+            .map(|(key, _)| key == victim_key)
+            .unwrap_or(false)
+        {
+            self.hottest_key = self
+                .observed_keys
+                .iter()
+                .max_by_key(|(_, observed)| observed.hits)
+                .map(|(key, observed)| (*key, observed.hits));
+        }
+    }
+
+    fn observation_for_key(
+        &self,
+        key: &CallCacheKey,
+        capacity: usize,
+    ) -> agam_profile::AdaptiveAdmissionObservation {
+        let candidate = self
+            .observed_keys
+            .get(key)
+            .copied()
+            .unwrap_or(ObservedCallCacheKey {
+                hits: 1,
+                last_seen: 0,
+                last_reuse_distance: None,
+            });
+        let stable_argument_slots = self
+            .arg_profiles
+            .iter()
+            .filter(|profile| {
+                profile
+                    .hottest_value()
+                    .map(|(_, hits)| self.calls >= 8 && hits.saturating_mul(4) >= self.calls * 3)
+                    .unwrap_or(false)
+            })
+            .count();
+
+        agam_profile::AdaptiveAdmissionObservation {
+            total_calls: self.calls,
+            total_hits: self.hits,
+            unique_keys: self.observed_keys.len(),
+            cached_entries: self.entries.len(),
+            capacity,
+            candidate_hits: candidate.hits,
+            candidate_reuse_distance: candidate.last_reuse_distance,
+            hottest_key_hits: self.hottest_key.map(|(_, hits)| hits).unwrap_or(0),
+            stable_argument_slots,
+            optimize_mode: self.mode == CallCacheMode::Optimize,
+        }
+    }
+
+    fn profile_snapshot(&self) -> CallCacheFunctionProfile {
+        let avg_reuse_distance = if self.reuse_distance_samples > 0 {
+            Some(self.reuse_distance_total / self.reuse_distance_samples)
+        } else {
+            None
+        };
+        let stable_values: Vec<StableScalarValueProfile> = self
+            .arg_profiles
+            .iter()
+            .enumerate()
+            .filter_map(|(index, profile)| {
+                let (raw_bits, hits) = profile.hottest_value()?;
+                if self.calls >= 8 && hits.saturating_mul(4) >= self.calls * 3 {
+                    Some(StableScalarValueProfile {
+                        index,
+                        raw_bits,
+                        matches: hits,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut profile = CallCacheFunctionProfile {
+            unique_keys: self.observed_keys.len(),
+            hottest_key_hits: self.hottest_key.map(|(_, hits)| hits).unwrap_or(0),
+            avg_reuse_distance,
+            max_reuse_distance: if self.reuse_distance_samples > 0 {
+                Some(self.max_reuse_distance)
+            } else {
+                None
+            },
+            stable_values,
+            specialization_guard_hits: self.specialization_guard_hits,
+            specialization_guard_fallbacks: self.specialization_guard_fallbacks,
+            specialization_hint: CallCacheSpecializationHint::None,
+        };
+        profile.specialization_hint = specialization_hint(self.calls, &profile);
+        profile
+    }
+
     fn remove_pending_candidate(&mut self, key: &CallCacheKey) {
         for slot in &mut self.pending_candidates {
             let matches = slot
@@ -211,7 +511,11 @@ impl CallCacheFunctionState {
             }
         }
 
-        if let Some(slot) = self.pending_candidates.iter_mut().find(|slot| slot.is_none()) {
+        if let Some(slot) = self
+            .pending_candidates
+            .iter_mut()
+            .find(|slot| slot.is_none())
+        {
             *slot = Some(PendingCallCacheCandidate {
                 key,
                 hits: 1,
@@ -252,6 +556,34 @@ impl CallCacheFunctionState {
     }
 }
 
+impl ScalarArgumentProfile {
+    fn observe(&mut self, value: u64) {
+        if let Some(count) = self.counts.get_mut(&value) {
+            *count = count.saturating_add(1);
+            return;
+        }
+        if self.counts.len() >= MAX_PROFILED_SCALAR_VALUES {
+            let Some(victim) = self
+                .counts
+                .iter()
+                .min_by_key(|(_, hits)| **hits)
+                .map(|(value, _)| *value)
+            else {
+                return;
+            };
+            self.counts.remove(&victim);
+        }
+        self.counts.insert(value, 1);
+    }
+
+    fn hottest_value(&self) -> Option<(u64, u64)> {
+        self.counts
+            .iter()
+            .max_by_key(|(_, hits)| **hits)
+            .map(|(value, hits)| (*value, *hits))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct CallCacheKey {
     len: u8,
@@ -277,14 +609,35 @@ const RT_PARSE_INT: &str = "__agam_jit_parse_int";
 const RT_CLOCK: &str = "__agam_jit_clock";
 const RT_MEMO_LOOKUP: &str = "__agam_jit_memo_lookup";
 const RT_MEMO_STORE: &str = "__agam_jit_memo_store";
+const RT_SPECIALIZATION_HIT: &str = "__agam_jit_specialization_hit";
+const RT_SPECIALIZATION_FALLBACK: &str = "__agam_jit_specialization_fallback";
 const MAX_CALL_CACHE_ARGS: usize = 4;
 const DEFAULT_CALL_CACHE_CAPACITY: usize = 256;
 const DEFAULT_CALL_CACHE_WARMUP: u64 = 32;
 const OPTIMIZED_CALL_CACHE_MIN_REPEATS: u16 = 2;
 const MAX_PENDING_CALL_CACHE_CANDIDATES: usize = 8;
+const MAX_PROFILED_CALL_CACHE_KEYS: usize = 64;
+const MAX_PROFILED_SCALAR_VALUES: usize = 16;
 
 pub fn run_main(module: &MirModule, args: &[String]) -> Result<i32, String> {
     run_main_with_options(module, args, JitOptions::default())
+}
+
+pub fn run_function(
+    module: &MirModule,
+    function_name: &str,
+    args: &[String],
+) -> Result<JitValue, String> {
+    run_function_with_options(module, function_name, args, JitOptions::default())
+}
+
+pub fn run_function_with_options(
+    module: &MirModule,
+    function_name: &str,
+    args: &[String],
+    options: JitOptions,
+) -> Result<JitValue, String> {
+    CompiledJitModule::compile(module, options)?.run_function(function_name, args)
 }
 
 pub fn run_main_with_options(
@@ -292,63 +645,8 @@ pub fn run_main_with_options(
     args: &[String],
     options: JitOptions,
 ) -> Result<i32, String> {
-    let layouts = analyze_module(module);
-    let call_cache_plan = analyze_call_cache_plan(module, &layouts, &options);
-    let main_layout = layouts
-        .get("main")
-        .cloned()
-        .ok_or_else(|| "missing `main` function for JIT execution".to_string())?;
-
-    if !main_layout.params.is_empty() {
-        return Err("`agamc run --backend jit` currently requires `main` without parameters; use `argc()` / `argv()` inside Agam instead".into());
-    }
-
-    let mut flag_builder = settings::builder();
-    flag_builder
-        .set("opt_level", "speed")
-        .map_err(|e| format!("failed to set Cranelift opt level: {e}"))?;
-    flag_builder
-        .set("use_colocated_libcalls", "false")
-        .map_err(|e| format!("failed to configure Cranelift libcalls: {e}"))?;
-    flag_builder
-        .set("is_pic", "false")
-        .map_err(|e| format!("failed to configure Cranelift PIC mode: {e}"))?;
-    let isa_builder =
-        cranelift_native::builder().map_err(|e| format!("unsupported host ISA for JIT: {e}"))?;
-    let isa = isa_builder
-        .finish(settings::Flags::new(flag_builder))
-        .map_err(|e| format!("failed to build Cranelift host ISA: {e}"))?;
-    let mut builder = JITBuilder::with_isa(isa, default_libcall_names());
-    register_runtime_symbols(&mut builder);
-
-    let mut jit = AgamJit {
-        module: JITModule::new(builder),
-        layouts,
-        func_ids: HashMap::new(),
-        imported_funcs: HashMap::new(),
-        string_data: HashMap::new(),
-        next_string_id: 0,
-        call_cache_plan,
-    };
-
-    jit.declare_functions(module)?;
-    jit.declare_strings(module)?;
-    jit.define_functions(module)?;
-    jit.module
-        .finalize_definitions()
-        .map_err(|e| format!("failed to finalize JIT definitions: {e}"))?;
-
-    let main_func = *jit
-        .func_ids
-        .get("main")
-        .ok_or_else(|| "missing JIT handle for `main`".to_string())?;
-    let main_ptr = jit.module.get_finalized_function(main_func);
-
-    with_runtime_args(args, || {
-        with_call_cache(&jit.call_cache_plan, &options, || unsafe {
-            call_main(main_ptr, main_layout)
-        })
-    })
+    let value = run_function_with_options(module, "main", args, options)?;
+    jit_value_to_exit_code(value)
 }
 
 struct AgamJit {
@@ -359,6 +657,7 @@ struct AgamJit {
     string_data: HashMap<String, DataId>,
     next_string_id: usize,
     call_cache_plan: CallCachePlan,
+    specializations: SpecializationRegistry,
 }
 
 impl AgamJit {
@@ -367,14 +666,32 @@ impl AgamJit {
             let layout = self
                 .layouts
                 .get(&func.name)
+                .cloned()
                 .ok_or_else(|| format!("missing JIT layout for `{}`", func.name))?;
-            let signature = self.signature_for(layout);
-            let func_id = self
-                .module
-                .declare_function(&func.name, Linkage::Local, &signature)
-                .map_err(|e| format!("failed to declare JIT function `{}`: {e}", func.name))?;
-            self.func_ids.insert(func.name.clone(), func_id);
+            self.declare_named_function(&func.name, &layout)?;
+            if let Some(clone_name) = self
+                .specializations
+                .by_function
+                .get(&func.name)
+                .map(|specialization| specialization.clone_name.clone())
+            {
+                self.declare_named_function(&clone_name, &layout)?;
+            }
         }
+        Ok(())
+    }
+
+    fn declare_named_function(
+        &mut self,
+        emitted_name: &str,
+        layout: &FunctionLayout,
+    ) -> Result<(), String> {
+        let signature = self.signature_for(layout);
+        let func_id = self
+            .module
+            .declare_function(emitted_name, Linkage::Local, &signature)
+            .map_err(|e| format!("failed to declare JIT function `{emitted_name}`: {e}"))?;
+        self.func_ids.insert(emitted_name.to_string(), func_id);
         Ok(())
     }
 
@@ -393,12 +710,21 @@ impl AgamJit {
 
     fn define_functions(&mut self, module: &MirModule) -> Result<(), String> {
         for func in &module.functions {
-            self.define_function(func)?;
+            self.define_function(func, &func.name, None)?;
+            if let Some(specialization) = self.specializations.by_function.get(&func.name).cloned()
+            {
+                self.define_function(func, &specialization.clone_name, Some(&specialization))?;
+            }
         }
         Ok(())
     }
 
-    fn define_function(&mut self, func: &MirFunction) -> Result<(), String> {
+    fn define_function(
+        &mut self,
+        func: &MirFunction,
+        emitted_name: &str,
+        specialization: Option<&JitFunctionSpecialization>,
+    ) -> Result<(), String> {
         let layout = self
             .layouts
             .get(&func.name)
@@ -406,8 +732,8 @@ impl AgamJit {
             .ok_or_else(|| format!("missing JIT layout for `{}`", func.name))?;
         let func_id = *self
             .func_ids
-            .get(&func.name)
-            .ok_or_else(|| format!("missing JIT id for `{}`", func.name))?;
+            .get(emitted_name)
+            .ok_or_else(|| format!("missing JIT id for `{emitted_name}`"))?;
 
         let mut ctx = self.module.make_context();
         ctx.func.signature = self.signature_for(&layout);
@@ -445,17 +771,34 @@ impl AgamJit {
                 .iter()
                 .map(|param| param.name.as_str())
                 .collect();
+            let mut bound_param_values = Vec::with_capacity(func.params.len());
             for (index, param) in func.params.iter().enumerate() {
                 let var = *local_vars.get(&param.name).ok_or_else(|| {
                     format!("missing local variable for parameter `{}`", param.name)
                 })?;
-                let value = *param_block_values.get(index).ok_or_else(|| {
+                let entry_value = *param_block_values.get(index).ok_or_else(|| {
                     format!(
                         "missing entry block parameter {} while compiling `{}`",
-                        index, func.name
+                        index, emitted_name
                     )
                 })?;
+                let value = if let Some(raw_bits) =
+                    specialization.and_then(|spec| spec.stable_bits_for(index))
+                {
+                    constant_value_from_call_cache_bits(
+                        &mut builder,
+                        layout.params.get(index).copied().unwrap_or(JitType::Int {
+                            bits: 32,
+                            signed: true,
+                        }),
+                        raw_bits,
+                        mem_flags,
+                    )?
+                } else {
+                    entry_value
+                };
                 builder.def_var(var, value);
+                bound_param_values.push(value);
             }
             for (name, ty) in &layout.local_types {
                 if param_names.contains(name.as_str()) {
@@ -470,7 +813,7 @@ impl AgamJit {
 
             let mut values = HashMap::new();
             for (index, param) in func.params.iter().enumerate() {
-                values.insert(param.value, param_block_values[index]);
+                values.insert(param.value, bound_param_values[index]);
             }
 
             for block in &func.blocks {
@@ -514,7 +857,7 @@ impl AgamJit {
             .map_err(|e| {
                 format!(
                     "failed to define JIT function `{}`: {e}\ncranelift ir:\n{}",
-                    func.name,
+                    emitted_name,
                     ctx.func.display()
                 )
             })?;
@@ -668,14 +1011,23 @@ impl AgamJit {
                             result_ty,
                             mem_flags,
                         )
+                    } else if let Some(param_tys) = user_param_tys.as_deref() {
+                        self.emit_specialized_or_generic_call(
+                            builder,
+                            callee,
+                            func_ref,
+                            &lowered_args,
+                            param_tys,
+                            result_ty,
+                            mem_flags,
+                        )
                     } else {
-                        let call = builder.ins().call(func_ref, &lowered_args);
-                        let results = builder.inst_results(call);
-                        if results.is_empty() {
-                            Ok(default_value(builder, result_ty, pointer_type))
-                        } else {
-                            Ok(results[0])
-                        }
+                        Ok(self.emit_direct_call_result(
+                            builder,
+                            func_ref,
+                            &lowered_args,
+                            result_ty,
+                        ))
                     }
                 }
             }
@@ -844,10 +1196,156 @@ impl AgamJit {
         Ok(())
     }
 
+    fn emit_direct_call_result(
+        &self,
+        builder: &mut FunctionBuilder<'_>,
+        func_ref: cranelift_codegen::ir::FuncRef,
+        lowered_args: &[Value],
+        result_ty: JitType,
+    ) -> Value {
+        let pointer_type = self.module.target_config().pointer_type();
+        let call = builder.ins().call(func_ref, lowered_args);
+        let results = builder.inst_results(call);
+        if results.is_empty() {
+            default_value(builder, result_ty, pointer_type)
+        } else {
+            results[0]
+        }
+    }
+
     fn should_emit_cached_call(&self, callee: &str, arg_count: usize, result_ty: JitType) -> bool {
         self.call_cache_plan.slot_for(callee).is_some()
             && arg_count <= MAX_CALL_CACHE_ARGS
             && supports_call_cache_type(result_ty)
+    }
+
+    fn emit_specialized_or_generic_call(
+        &mut self,
+        builder: &mut FunctionBuilder<'_>,
+        callee: &str,
+        generic_func_ref: cranelift_codegen::ir::FuncRef,
+        lowered_args: &[Value],
+        param_tys: &[JitType],
+        result_ty: JitType,
+        mem_flags: cranelift_codegen::ir::MemFlags,
+    ) -> Result<Value, String> {
+        let pointer_type = self.module.target_config().pointer_type();
+        let Some(specialization) = self.specializations.by_function.get(callee).cloned() else {
+            return Ok(self.emit_direct_call_result(
+                builder,
+                generic_func_ref,
+                lowered_args,
+                result_ty,
+            ));
+        };
+        let Some(specialized_id) = self.func_ids.get(&specialization.clone_name).copied() else {
+            return Ok(self.emit_direct_call_result(
+                builder,
+                generic_func_ref,
+                lowered_args,
+                result_ty,
+            ));
+        };
+        let Some(slot) = self.call_cache_plan.slot_for(callee) else {
+            return Ok(self.emit_direct_call_result(
+                builder,
+                generic_func_ref,
+                lowered_args,
+                result_ty,
+            ));
+        };
+
+        let specialized_func_ref = self
+            .module
+            .declare_func_in_func(specialized_id, builder.func);
+        let specialization_hit_id = self.runtime_func_id(
+            RT_SPECIALIZATION_HIT,
+            &[JitType::Int {
+                bits: 32,
+                signed: true,
+            }],
+            None,
+        )?;
+        let specialization_hit_ref = self
+            .module
+            .declare_func_in_func(specialization_hit_id, builder.func);
+        let specialization_fallback_id = self.runtime_func_id(
+            RT_SPECIALIZATION_FALLBACK,
+            &[JitType::Int {
+                bits: 32,
+                signed: true,
+            }],
+            None,
+        )?;
+        let specialization_fallback_ref = self
+            .module
+            .declare_func_in_func(specialization_fallback_id, builder.func);
+        let slot_value = builder.ins().iconst(types::I32, slot as i64);
+        let mut guard = None;
+        for stable in &specialization.stable_values {
+            let Some(arg) = lowered_args.get(stable.index).copied() else {
+                return Ok(self.emit_direct_call_result(
+                    builder,
+                    generic_func_ref,
+                    lowered_args,
+                    result_ty,
+                ));
+            };
+            let Some(param_ty) = param_tys.get(stable.index).copied() else {
+                return Ok(self.emit_direct_call_result(
+                    builder,
+                    generic_func_ref,
+                    lowered_args,
+                    result_ty,
+                ));
+            };
+            let bits = value_to_call_cache_bits(builder, arg, param_ty, mem_flags)?;
+            let expected = builder.ins().iconst(types::I64, stable.raw_bits as i64);
+            let matches = builder.ins().icmp(IntCC::Equal, bits, expected);
+            guard = Some(match guard {
+                Some(current) => builder.ins().band(current, matches),
+                None => matches,
+            });
+        }
+
+        let Some(guard) = guard else {
+            return Ok(self.emit_direct_call_result(
+                builder,
+                generic_func_ref,
+                lowered_args,
+                result_ty,
+            ));
+        };
+
+        let specialized_block = builder.create_block();
+        let generic_block = builder.create_block();
+        let cont_block = builder.create_block();
+        builder.append_block_param(cont_block, result_ty.clif_type(pointer_type));
+        builder
+            .ins()
+            .brif(guard, specialized_block, &[], generic_block, &[]);
+        builder.seal_block(specialized_block);
+        builder.seal_block(generic_block);
+
+        builder.switch_to_block(specialized_block);
+        builder.ins().call(specialization_hit_ref, &[slot_value]);
+        let specialized_value =
+            self.emit_direct_call_result(builder, specialized_func_ref, lowered_args, result_ty);
+        let specialized_args = [cranelift_codegen::ir::BlockArg::Value(specialized_value)];
+        builder.ins().jump(cont_block, &specialized_args);
+
+        builder.switch_to_block(generic_block);
+        builder
+            .ins()
+            .call(specialization_fallback_ref, &[slot_value]);
+        let generic_value =
+            self.emit_direct_call_result(builder, generic_func_ref, lowered_args, result_ty);
+        let generic_args = [cranelift_codegen::ir::BlockArg::Value(generic_value)];
+        builder.ins().jump(cont_block, &generic_args);
+
+        builder.switch_to_block(cont_block);
+        builder.seal_block(cont_block);
+        Ok(builder.block_params(cont_block)[0])
     }
 
     fn emit_cached_call(
@@ -945,11 +1443,15 @@ impl AgamJit {
         builder.ins().jump(cont_block, &cached_args);
 
         builder.switch_to_block(miss_block);
-        let call = builder.ins().call(func_ref, lowered_args);
-        let miss_value = *builder
-            .inst_results(call)
-            .first()
-            .ok_or_else(|| format!("cached call `{callee}` unexpectedly returned no value"))?;
+        let miss_value = self.emit_specialized_or_generic_call(
+            builder,
+            callee,
+            func_ref,
+            lowered_args,
+            param_tys,
+            result_ty,
+            mem_flags,
+        )?;
         let result_bits = value_to_call_cache_bits(builder, miss_value, result_ty, mem_flags)?;
         builder
             .ins()
@@ -1098,103 +1600,123 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
     builder.symbol(RT_CLOCK, rt_clock as *const u8);
     builder.symbol(RT_MEMO_LOOKUP, rt_memo_lookup as *const u8);
     builder.symbol(RT_MEMO_STORE, rt_memo_store as *const u8);
+    builder.symbol(RT_SPECIALIZATION_HIT, rt_specialization_hit as *const u8);
+    builder.symbol(
+        RT_SPECIALIZATION_FALLBACK,
+        rt_specialization_fallback as *const u8,
+    );
 }
 
-unsafe fn call_main(main_ptr: *const u8, main_layout: FunctionLayout) -> Result<i32, String> {
-    Ok(match main_layout.return_ty {
+fn jit_value_to_exit_code(value: JitValue) -> Result<i32, String> {
+    Ok(match value {
+        JitValue::Unit => 0,
+        JitValue::Bool(value) => i32::from(value),
+        JitValue::Int(value) => value as i32,
+        JitValue::UInt(value) => value as i32,
+        JitValue::Float32(value) => value as i32,
+        JitValue::Float64(value) => value as i32,
+        JitValue::Pointer(value) => value as i32,
+    })
+}
+
+unsafe fn call_zero_arg_function(
+    function_ptr: *const u8,
+    function_layout: FunctionLayout,
+) -> Result<JitValue, String> {
+    Ok(match function_layout.return_ty {
         JitType::Unit => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn()>(main_ptr) };
+            let func = unsafe { mem::transmute::<_, extern "C" fn()>(function_ptr) };
             func();
-            0
+            JitValue::Unit
         }
         JitType::Float32 => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> f32>(main_ptr) };
-            func() as i32
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> f32>(function_ptr) };
+            JitValue::Float32(func())
         }
         JitType::Float64 => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> f64>(main_ptr) };
-            func() as i32
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> f64>(function_ptr) };
+            JitValue::Float64(func())
         }
         JitType::Str | JitType::OpaquePtr => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> usize>(main_ptr) };
-            func() as i32
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> usize>(function_ptr) };
+            JitValue::Pointer(func())
         }
         JitType::Bool => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u8>(main_ptr) };
-            i32::from(func() != 0)
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u8>(function_ptr) };
+            JitValue::Bool(func() != 0)
         }
         JitType::Int {
             bits: 8,
             signed: true,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i8>(main_ptr) };
-            i32::from(func())
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i8>(function_ptr) };
+            JitValue::Int(i128::from(func()))
         }
         JitType::Int {
             bits: 8,
             signed: false,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u8>(main_ptr) };
-            i32::from(func())
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u8>(function_ptr) };
+            JitValue::UInt(u128::from(func()))
         }
         JitType::Int {
             bits: 16,
             signed: true,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i16>(main_ptr) };
-            i32::from(func())
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i16>(function_ptr) };
+            JitValue::Int(i128::from(func()))
         }
         JitType::Int {
             bits: 16,
             signed: false,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u16>(main_ptr) };
-            i32::from(func())
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u16>(function_ptr) };
+            JitValue::UInt(u128::from(func()))
         }
         JitType::Int {
             bits: 32,
             signed: true,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i32>(main_ptr) };
-            func()
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i32>(function_ptr) };
+            JitValue::Int(i128::from(func()))
         }
         JitType::Int {
             bits: 32,
             signed: false,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u32>(main_ptr) };
-            func() as i32
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u32>(function_ptr) };
+            JitValue::UInt(u128::from(func()))
         }
         JitType::Int {
             bits: 64,
             signed: true,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(main_ptr) };
-            func() as i32
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i64>(function_ptr) };
+            JitValue::Int(i128::from(func()))
         }
         JitType::Int {
             bits: 64,
             signed: false,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u64>(main_ptr) };
-            func() as i32
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u64>(function_ptr) };
+            JitValue::UInt(u128::from(func()))
         }
         JitType::Int {
             bits: 128,
             signed: true,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i128>(main_ptr) };
-            func() as i32
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> i128>(function_ptr) };
+            JitValue::Int(func())
         }
         JitType::Int {
             bits: 128,
             signed: false,
         } => {
-            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u128>(main_ptr) };
-            func() as i32
+            let func = unsafe { mem::transmute::<_, extern "C" fn() -> u128>(function_ptr) };
+            JitValue::UInt(func())
         }
         JitType::Int { bits, .. } => {
-            return Err(format!("unsupported JIT main return width: {bits}"));
+            return Err(format!("unsupported JIT return width: {bits}"));
         }
     })
 }
@@ -1221,84 +1743,68 @@ fn analyze_module(module: &MirModule) -> HashMap<String, FunctionLayout> {
         .collect()
 }
 
-fn analyze_call_cache_plan(
+pub fn analyze_call_cache(module: &MirModule, options: &JitOptions) -> CallCacheAnalysis {
+    let layouts = analyze_module(module);
+    build_call_cache_analysis(module, &layouts, options)
+}
+
+fn build_call_cache_analysis(
     module: &MirModule,
     layouts: &HashMap<String, FunctionLayout>,
     options: &JitOptions,
-) -> CallCachePlan {
-    if !options.call_cache
-        && !options.call_cache_optimize
-        && options.call_cache_only.is_empty()
-        && options.call_cache_optimize_only.is_empty()
-    {
-        return CallCachePlan::default();
-    }
+) -> CallCacheAnalysis {
+    let support_reasons = module
+        .functions
+        .iter()
+        .map(|function| {
+            let reasons = layouts
+                .get(&function.name)
+                .map(jit_call_cache_support_reasons)
+                .unwrap_or_else(|| {
+                    vec![CallCacheRejectReason::UnsupportedReturnType {
+                        description: "function layout analysis failed".into(),
+                    }]
+                });
+            (function.name.clone(), reasons)
+        })
+        .collect();
+    agam_mir::analysis::analyze_call_cache(
+        module,
+        &call_cache_request_from_options(options),
+        &support_reasons,
+    )
+}
 
-    let mut include_only: HashSet<&str> = options
+fn call_cache_request_from_options(options: &JitOptions) -> CallCacheRequest {
+    let mut include_only = options
         .call_cache_only
         .iter()
-        .map(String::as_str)
-        .collect();
-    include_only.extend(options.call_cache_optimize_only.iter().map(String::as_str));
-    let exclude: HashSet<&str> = options
-        .call_cache_exclude
-        .iter()
-        .map(String::as_str)
-        .collect();
-    let mut candidates: HashSet<String> = module
-        .functions
-        .iter()
-        .filter(|func| {
-            func.name != "main"
-                && !exclude.contains(func.name.as_str())
-                && if options.call_cache || options.call_cache_optimize {
-                    true
-                } else {
-                    include_only.contains(func.name.as_str())
-                }
-                && layouts
-                    .get(&func.name)
-                    .map(function_layout_supports_call_cache)
-                    .unwrap_or(false)
-        })
-        .map(|func| func.name.clone())
-        .collect();
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    include_only.extend(options.call_cache_optimize_only.iter().cloned());
 
-    loop {
-        let to_remove: Vec<String> = module
-            .functions
-            .iter()
-            .filter(|func| candidates.contains(&func.name))
-            .filter(|func| function_has_impure_or_uncacheable_calls(func, &candidates))
-            .map(|func| func.name.clone())
-            .collect();
-        if to_remove.is_empty() {
-            break;
-        }
-        for name in to_remove {
-            candidates.remove(&name);
-        }
+    CallCacheRequest {
+        enable_all: options.call_cache || options.call_cache_optimize,
+        optimize_all: options.call_cache_optimize,
+        include_only,
+        optimize_only: options.call_cache_optimize_only.iter().cloned().collect(),
+        exclude: options.call_cache_exclude.iter().cloned().collect(),
     }
+}
 
-    let function_names: Vec<String> = module
+fn call_cache_plan_from_analysis(analysis: &CallCacheAnalysis) -> CallCachePlan {
+    let function_names: Vec<String> = analysis
         .functions
         .iter()
-        .filter(|func| candidates.contains(&func.name))
-        .map(|func| func.name.clone())
+        .filter_map(|function| function.mode.map(|_| function.name.clone()))
         .collect();
-    let optimize_only: HashSet<&str> = options
-        .call_cache_optimize_only
+    let function_modes = analysis
+        .functions
         .iter()
-        .map(String::as_str)
-        .collect();
-    let function_modes = function_names
-        .iter()
-        .map(|name| {
-            if options.call_cache_optimize || optimize_only.contains(name.as_str()) {
-                CallCacheMode::Optimize
-            } else {
-                CallCacheMode::Basic
-            }
+        .filter_map(|function| match function.mode {
+            Some(MirCallCacheMode::Basic) => Some(CallCacheMode::Basic),
+            Some(MirCallCacheMode::Optimize) => Some(CallCacheMode::Optimize),
+            None => None,
         })
         .collect();
     let function_slots = function_names
@@ -1314,27 +1820,121 @@ fn analyze_call_cache_plan(
     }
 }
 
-fn function_layout_supports_call_cache(layout: &FunctionLayout) -> bool {
-    !matches!(layout.return_ty, JitType::Unit)
-        && layout.params.len() <= MAX_CALL_CACHE_ARGS
-        && supports_call_cache_type(layout.return_ty)
-        && layout.params.iter().copied().all(supports_call_cache_type)
+fn build_specialization_registry(
+    module: &MirModule,
+    layouts: &HashMap<String, FunctionLayout>,
+    plans: &[CallCacheSpecializationPlan],
+) -> SpecializationRegistry {
+    let function_names: HashSet<&str> = module
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+    let mut by_function = HashMap::new();
+
+    for plan in plans {
+        if !function_names.contains(plan.name.as_str()) {
+            continue;
+        }
+        let Some(layout) = layouts.get(&plan.name) else {
+            continue;
+        };
+
+        let mut stable_values: BTreeMap<usize, StableScalarValueProfile> = BTreeMap::new();
+        for value in &plan.stable_values {
+            let Some(param_ty) = layout.params.get(value.index).copied() else {
+                continue;
+            };
+            if !supports_call_cache_type(param_ty) {
+                continue;
+            }
+            let replace = stable_values
+                .get(&value.index)
+                .map(|current| value.matches > current.matches)
+                .unwrap_or(true);
+            if replace {
+                stable_values.insert(value.index, value.clone());
+            }
+        }
+
+        if stable_values.is_empty() {
+            continue;
+        }
+
+        let stable_values: Vec<_> = stable_values.into_values().collect();
+        by_function.insert(
+            plan.name.clone(),
+            JitFunctionSpecialization {
+                clone_name: specialization_clone_name(&plan.name, &stable_values),
+                stable_values,
+            },
+        );
+    }
+
+    SpecializationRegistry { by_function }
 }
 
-fn function_has_impure_or_uncacheable_calls(
-    function: &MirFunction,
-    cacheable_functions: &HashSet<String>,
-) -> bool {
-    function.blocks.iter().any(|block| {
-        block.instructions.iter().any(|instr| match &instr.op {
-            Op::Call { callee, .. } => {
-                is_print_builtin(callee)
-                    || builtin_signature(callee).is_some()
-                    || !cacheable_functions.contains(callee)
-            }
-            _ => false,
-        })
-    })
+fn specialization_clone_name(function: &str, stable_values: &[StableScalarValueProfile]) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    function.hash(&mut hasher);
+    for value in stable_values {
+        value.index.hash(&mut hasher);
+        value.raw_bits.hash(&mut hasher);
+    }
+    format!(
+        "__agam_spec_{}_{}",
+        sanitize_symbol(function),
+        hasher.finish()
+    )
+}
+
+fn sanitize_symbol(name: &str) -> String {
+    name.chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect()
+}
+
+fn jit_call_cache_support_reasons(layout: &FunctionLayout) -> Vec<CallCacheRejectReason> {
+    let mut reasons = Vec::new();
+
+    if layout.params.len() > MAX_CALL_CACHE_ARGS {
+        reasons.push(CallCacheRejectReason::TooManyArguments {
+            actual: layout.params.len(),
+            max_supported: MAX_CALL_CACHE_ARGS,
+        });
+    }
+    if !supports_call_cache_type(layout.return_ty) {
+        reasons.push(CallCacheRejectReason::UnsupportedReturnType {
+            description: describe_jit_call_cache_type(layout.return_ty),
+        });
+    }
+    for (index, ty) in layout.params.iter().copied().enumerate() {
+        if !supports_call_cache_type(ty) {
+            reasons.push(CallCacheRejectReason::UnsupportedParameterType {
+                index,
+                description: describe_jit_call_cache_type(ty),
+            });
+        }
+    }
+
+    reasons
+}
+
+fn describe_jit_call_cache_type(ty: JitType) -> String {
+    match ty {
+        JitType::Unit => "unit results are not stored in the scalar runtime cache".into(),
+        JitType::Str => {
+            "strings are pointer-backed and do not have a stable scalar cache encoding yet".into()
+        }
+        JitType::OpaquePtr => {
+            "pointer-like values carry unstable aliasing and identity for deterministic cache keys"
+                .into()
+        }
+        JitType::Int { bits, .. } if bits > 64 => {
+            format!("{bits}-bit integers are wider than the current 64-bit cache encoding")
+        }
+        _ => "the current runtime cache only supports scalar bool/int/float values".into(),
+    }
 }
 
 fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>) -> FunctionLayout {
@@ -1825,6 +2425,16 @@ fn value_to_call_cache_bits(
     })
 }
 
+fn constant_value_from_call_cache_bits(
+    builder: &mut FunctionBuilder<'_>,
+    ty: JitType,
+    raw_bits: u64,
+    mem_flags: cranelift_codegen::ir::MemFlags,
+) -> Result<Value, String> {
+    let bits = builder.ins().iconst(types::I64, raw_bits as i64);
+    call_cache_bits_to_value(builder, bits, ty, mem_flags)
+}
+
 fn call_cache_bits_to_value(
     builder: &mut FunctionBuilder<'_>,
     bits: Value,
@@ -2081,6 +2691,16 @@ impl CallCacheRuntime {
                     stores: 0,
                     entries: HashMap::new(),
                     pending_candidates: [None; MAX_PENDING_CALL_CACHE_CANDIDATES],
+                    observed_keys: HashMap::new(),
+                    arg_profiles: (0..MAX_CALL_CACHE_ARGS)
+                        .map(|_| ScalarArgumentProfile::default())
+                        .collect(),
+                    reuse_distance_total: 0,
+                    reuse_distance_samples: 0,
+                    max_reuse_distance: 0,
+                    hottest_key: None,
+                    specialization_guard_hits: 0,
+                    specialization_guard_fallbacks: 0,
                 })
                 .collect(),
         }
@@ -2089,14 +2709,16 @@ impl CallCacheRuntime {
     fn lookup(&mut self, slot: i32, key: CallCacheKey) -> Option<u64> {
         let function = self.functions.get_mut(slot as usize)?;
         function.calls += 1;
+        self.tick = self.tick.saturating_add(1);
+        function.observe_call(key, self.tick);
         if function.calls <= self.warmup {
             return None;
         }
-        self.tick = self.tick.saturating_add(1);
         let value = {
             let entry = function.entries.get_mut(&key)?;
             entry.hits = entry.hits.saturating_add(1);
             entry.last_touch = self.tick;
+            entry.payoff_score = entry.payoff_score.saturating_add(4);
             entry.value
         };
         function.hits += 1;
@@ -2106,7 +2728,11 @@ impl CallCacheRuntime {
 
     fn store(&mut self, slot: i32, key: CallCacheKey, value: u64) {
         let function_index = slot as usize;
-        let Some(mode) = self.functions.get(function_index).map(|function| function.mode) else {
+        let Some(mode) = self
+            .functions
+            .get(function_index)
+            .map(|function| function.mode)
+        else {
             return;
         };
         if self
@@ -2120,6 +2746,12 @@ impl CallCacheRuntime {
         match mode {
             CallCacheMode::Basic => {
                 let function = &mut self.functions[function_index];
+                let decision = agam_runtime::profile::call_cache_admission_decision(
+                    &function.observation_for_key(&key, self.capacity),
+                );
+                if !decision.admit {
+                    return;
+                }
                 if !function.entries.contains_key(&key) && function.entries.len() >= self.capacity {
                     return;
                 }
@@ -2129,6 +2761,7 @@ impl CallCacheRuntime {
                         value,
                         hits: 1,
                         last_touch: self.tick,
+                        payoff_score: decision.payoff_score,
                     },
                 );
                 function.stores += 1;
@@ -2147,9 +2780,19 @@ impl CallCacheRuntime {
                         entry.value = value;
                         entry.last_touch = self.tick;
                         entry.hits = entry.hits.saturating_add(1);
+                        entry.payoff_score = entry.payoff_score.saturating_add(4);
                         function.remove_pending_candidate(&key);
                         return;
                     }
+                }
+                let decision = {
+                    let function = &self.functions[function_index];
+                    agam_runtime::profile::call_cache_admission_decision(
+                        &function.observation_for_key(&key, self.capacity),
+                    )
+                };
+                if !decision.admit {
+                    return;
                 }
                 if self.optimized_entries < self.capacity {
                     let function = &mut self.functions[function_index];
@@ -2159,6 +2802,7 @@ impl CallCacheRuntime {
                             value,
                             hits: candidate_hits,
                             last_touch: self.tick,
+                            payoff_score: decision.payoff_score,
                         },
                     );
                     function.remove_pending_candidate(&key);
@@ -2171,7 +2815,7 @@ impl CallCacheRuntime {
                     return;
                 };
                 let victim_score = self.optimized_entry_score(victim.function_index, &victim.key);
-                let candidate_score = (candidate_hits, self.tick);
+                let candidate_score = (decision.payoff_score, self.tick);
                 if candidate_score <= victim_score {
                     return;
                 }
@@ -2185,11 +2829,26 @@ impl CallCacheRuntime {
                         value,
                         hits: candidate_hits,
                         last_touch: self.tick,
+                        payoff_score: decision.payoff_score,
                     },
                 );
                 function.remove_pending_candidate(&key);
                 function.stores += 1;
             }
+        }
+    }
+
+    fn record_specialization_hit(&mut self, slot: i32) {
+        if let Some(function) = self.functions.get_mut(slot as usize) {
+            function.specialization_guard_hits =
+                function.specialization_guard_hits.saturating_add(1);
+        }
+    }
+
+    fn record_specialization_fallback(&mut self, slot: i32) {
+        if let Some(function) = self.functions.get_mut(slot as usize) {
+            function.specialization_guard_fallbacks =
+                function.specialization_guard_fallbacks.saturating_add(1);
         }
     }
 
@@ -2221,7 +2880,7 @@ impl CallCacheRuntime {
         self.functions
             .get(function_index)
             .and_then(|function| function.entries.get(key))
-            .map(|entry| (entry.hits, entry.last_touch))
+            .map(|entry| (entry.payoff_score, entry.last_touch))
             .unwrap_or((0, 0))
     }
 
@@ -2234,6 +2893,7 @@ impl CallCacheRuntime {
             functions: Vec::with_capacity(self.functions.len()),
         };
         for function in self.functions {
+            let profile = function.profile_snapshot();
             stats.total_calls += function.calls;
             stats.total_hits += function.hits;
             stats.total_stores += function.stores;
@@ -2243,6 +2903,7 @@ impl CallCacheRuntime {
                 hits: function.hits,
                 stores: function.stores,
                 entries: function.entries.len(),
+                profile,
             });
         }
         stats
@@ -2377,6 +3038,24 @@ extern "C" fn rt_memo_store(slot: i32, args_ptr: *const u64, arg_count: i32, res
     });
 }
 
+extern "C" fn rt_specialization_hit(slot: i32) {
+    JIT_CALL_CACHE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        if let Some(runtime) = state.active.as_mut() {
+            runtime.record_specialization_hit(slot);
+        }
+    });
+}
+
+extern "C" fn rt_specialization_fallback(slot: i32) {
+    JIT_CALL_CACHE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        if let Some(runtime) = state.active.as_mut() {
+            runtime.record_specialization_fallback(slot);
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2394,6 +3073,21 @@ mod tests {
         args: &[&str],
         options: JitOptions,
     ) -> (i32, Option<JitCallCacheStats>) {
+        let mir = lower_source_to_mir(source);
+        let runtime_args: Vec<String> = std::iter::once("jit-test".to_string())
+            .chain(args.iter().map(|arg| (*arg).to_string()))
+            .collect();
+        let result = run_main_with_options(&mir, &runtime_args, options).expect("jit run failed");
+        (result, take_last_call_cache_stats())
+    }
+
+    fn run_named_source(source: &str, function_name: &str) -> JitValue {
+        let mir = lower_source_to_mir(source);
+        let runtime_args = vec!["jit-test".to_string()];
+        run_function(&mir, function_name, &runtime_args).expect("jit run failed")
+    }
+
+    fn lower_source_to_mir(source: &str) -> agam_mir::ir::MirModule {
         let source_id = SourceId(0);
         let mut lexer = Lexer::new(source, source_id);
         let mut tokens = Vec::new();
@@ -2414,12 +3108,7 @@ mod tests {
         let mut mir = MirLowering::new();
         let mut mir = mir.lower_module(&hir);
         let _ = agam_mir::opt::optimize_module(&mut mir);
-
-        let runtime_args: Vec<String> = std::iter::once("jit-test".to_string())
-            .chain(args.iter().map(|arg| (*arg).to_string()))
-            .collect();
-        let result = run_main_with_options(&mir, &runtime_args, options).expect("jit run failed");
-        (result, take_last_call_cache_stats())
+        mir
     }
 
     #[test]
@@ -2451,6 +3140,16 @@ fn main() -> i32:
     return add(41)
 "#;
         assert_eq!(run_source(source, &[]), 42);
+    }
+
+    #[test]
+    fn test_jit_can_run_named_zero_arg_bool_function() {
+        let source = r#"
+@test
+fn test_truth() -> bool:
+    return true
+"#;
+        assert_eq!(run_named_source(source, "test_truth"), JitValue::Bool(true));
     }
 
     #[test]
@@ -2577,6 +3276,280 @@ fn main() -> i32:
     }
 
     #[test]
+    fn test_call_cache_allows_stable_process_arg_reads() {
+        let source = r#"
+fn arg_count() -> i32:
+    return argc()
+
+fn main() -> i32:
+    let total: i32 = 0
+    let i: i32 = 0
+    while i < 32:
+        total = total + arg_count()
+        i = i + 1
+    if total > 0:
+        return 0
+    return 1
+"#;
+        let (result, stats) = run_source_with_options(
+            source,
+            &["value"],
+            JitOptions {
+                call_cache: true,
+                call_cache_capacity: 8,
+                call_cache_warmup: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result, 0);
+        let stats = stats.expect("expected call-cache stats");
+        let arg_count = stats
+            .functions
+            .iter()
+            .find(|function| function.name == "arg_count")
+            .expect("missing arg_count cache stats");
+        assert!(
+            arg_count.hits > 0,
+            "stable argc-based function should participate in automatic caching: {arg_count:?}"
+        );
+    }
+
+    #[test]
+    fn test_call_cache_can_wrap_selected_pure_caller_without_selecting_callee() {
+        let source = r#"
+fn inner(n: i64) -> i64:
+    return n + 1
+
+fn outer(n: i64) -> i64:
+    return inner(n) + 1
+
+fn main() -> i32:
+    let acc: i64 = 0
+    let i: i64 = 0
+    while i < 32:
+        acc = acc + outer(7)
+        i = i + 1
+    if acc > 0:
+        return 0
+    return 1
+"#;
+        let (result, stats) = run_source_with_options(
+            source,
+            &[],
+            JitOptions {
+                call_cache_only: vec!["outer".into()],
+                call_cache_capacity: 8,
+                call_cache_warmup: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result, 0);
+        let stats = stats.expect("expected call-cache stats");
+        let outer = stats
+            .functions
+            .iter()
+            .find(|function| function.name == "outer")
+            .expect("missing outer cache stats");
+        assert!(
+            outer.hits > 0,
+            "selected pure caller should stay cacheable even when its callee is not selected: {outer:?}"
+        );
+        assert!(
+            stats
+                .functions
+                .iter()
+                .all(|function| function.name != "inner"),
+            "non-selected pure callee should not be forced into the cache plan: {stats:?}"
+        );
+    }
+
+    #[test]
+    fn test_call_cache_basic_mode_adapts_away_from_unique_inputs() {
+        let source = r#"
+fn hot(n: i64) -> i64:
+    let total: i64 = 0
+    let i: i64 = 0
+    while i < 64:
+        total = total + ((n * 3) + i) % 19
+        i = i + 1
+    return total
+
+fn main() -> i32:
+    let acc: i64 = 0
+    let i: i64 = 0
+    while i < 32:
+        acc = acc + hot(i)
+        i = i + 1
+    if acc > 0:
+        return 0
+    return 1
+"#;
+        let (result, stats) = run_source_with_options(
+            source,
+            &[],
+            JitOptions {
+                call_cache: true,
+                call_cache_capacity: 8,
+                call_cache_warmup: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result, 0);
+        let stats = stats.expect("expected call-cache stats");
+        let hot = stats
+            .functions
+            .iter()
+            .find(|function| function.name == "hot")
+            .expect("missing hot cache stats");
+        assert_eq!(
+            hot.stores, 0,
+            "unique inputs should not be admitted: {hot:?}"
+        );
+        assert_eq!(
+            hot.entries, 0,
+            "unique inputs should not occupy cache space: {hot:?}"
+        );
+        assert!(hot.profile.unique_keys >= 8);
+    }
+
+    #[test]
+    fn test_call_cache_profile_emits_specialization_hint_for_stable_value() {
+        let source = r#"
+fn hot(n: i64) -> i64:
+    let total: i64 = 0
+    let i: i64 = 0
+    while i < 64:
+        total = total + ((n * 5) + i) % 23
+        i = i + 1
+    return total
+
+fn main() -> i32:
+    let acc: i64 = 0
+    let i: i64 = 0
+    while i < 32:
+        acc = acc + hot(33)
+        i = i + 1
+    if acc > 0:
+        return 0
+    return 1
+"#;
+        let (result, stats) = run_source_with_options(
+            source,
+            &[],
+            JitOptions {
+                call_cache: true,
+                call_cache_capacity: 8,
+                call_cache_warmup: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result, 0);
+        let stats = stats.expect("expected call-cache stats");
+        let hot = stats
+            .functions
+            .iter()
+            .find(|function| function.name == "hot")
+            .expect("missing hot cache stats");
+        assert!(
+            !hot.profile.stable_values.is_empty(),
+            "expected stable value profile: {hot:?}"
+        );
+        assert!(
+            !matches!(
+                hot.profile.specialization_hint,
+                CallCacheSpecializationHint::None
+            ),
+            "expected specialization hint from repeated stable argument: {hot:?}"
+        );
+    }
+
+    #[test]
+    fn test_jit_compiles_guarded_specialized_clone_from_profile_plan() {
+        let source = r#"
+fn hot(n: i64) -> i64:
+    return (n * 3) + 1
+
+fn main() -> i32:
+    if hot(33) == 100:
+        return 0
+    return 1
+"#;
+        let mir = lower_source_to_mir(source);
+        let compiled = CompiledJitModule::compile(
+            &mir,
+            JitOptions {
+                call_cache_optimize_only: vec!["hot".into()],
+                call_cache_specializations: vec![CallCacheSpecializationPlan {
+                    name: "hot".into(),
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 24,
+                    }],
+                }],
+                ..Default::default()
+            },
+        )
+        .expect("jit compile failed");
+
+        assert!(
+            compiled
+                .function_ptrs
+                .keys()
+                .any(|name| name.starts_with("__agam_spec_hot_")),
+            "expected a compiled specialized clone, got {:?}",
+            compiled.function_ptrs.keys().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_jit_specialized_clone_guard_keeps_non_matching_inputs_generic() {
+        let source = r#"
+fn hot(n: i64) -> i64:
+    let total: i64 = 0
+    let i: i64 = 0
+    while i < 64:
+        total = total + ((n * 5) + i) % 23
+        i = i + 1
+    return total
+
+fn main() -> i32:
+    let bias: i64 = argc()
+    let matched: i64 = hot(32 + bias)
+    let fallback: i64 = hot(6 + bias)
+    if matched != fallback:
+        return 0
+    return 1
+"#;
+        let (result, stats) = run_source_with_options(
+            source,
+            &[],
+            JitOptions {
+                call_cache_optimize_only: vec!["hot".into()],
+                call_cache_specializations: vec![CallCacheSpecializationPlan {
+                    name: "hot".into(),
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 24,
+                    }],
+                }],
+                call_cache_warmup: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result, 0);
+        let stats = stats.expect("expected specialization stats");
+        let hot = stats
+            .functions
+            .iter()
+            .find(|function| function.name == "hot")
+            .expect("missing hot specialization stats");
+        assert_eq!(hot.profile.specialization_guard_hits, 1);
+        assert_eq!(hot.profile.specialization_guard_fallbacks, 1);
+    }
+
+    #[test]
     fn test_call_cache_optimize_mode_works_without_basic_flag() {
         let source = r#"
 fn hot(n: i64) -> i64:
@@ -2614,8 +3587,14 @@ fn main() -> i32:
             .iter()
             .find(|function| function.name == "hot")
             .expect("missing hot cache stats");
-        assert!(hot.hits > 0, "expected optimize mode to cache repeated input: {hot:?}");
-        assert!(hot.entries <= 1, "expected optimized cache to keep the hot key small: {hot:?}");
+        assert!(
+            hot.hits > 0,
+            "expected optimize mode to cache repeated input: {hot:?}"
+        );
+        assert!(
+            hot.entries <= 1,
+            "expected optimized cache to keep the hot key small: {hot:?}"
+        );
     }
 
     #[test]
@@ -2632,11 +3611,7 @@ fn main() -> i32:
         }
 
         let function = &runtime.functions[0];
-        let pending_candidates = function
-            .pending_candidates
-            .iter()
-            .flatten()
-            .count();
+        let pending_candidates = function.pending_candidates.iter().flatten().count();
         assert!(
             pending_candidates <= MAX_PENDING_CALL_CACHE_CANDIDATES,
             "pending candidates grew past the fixed bound: {pending_candidates}"

@@ -8,14 +8,25 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 use std::fmt::Write;
+use std::hash::{Hash, Hasher};
 
+use agam_mir::analysis::{
+    CallCacheAnalysis, CallCacheMode as MirCallCacheMode, CallCacheRejectReason, CallCacheRequest,
+};
 use agam_mir::ir::*;
+use agam_profile::{CallCacheSpecializationPlan, StableScalarValueProfile};
 use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 
 const MAX_CALL_CACHE_ARGS: usize = 4;
 const DEFAULT_CALL_CACHE_CAPACITY: usize = 256;
 const DEFAULT_CALL_CACHE_WARMUP: u64 = 32;
 const OPTIMIZED_CALL_CACHE_MIN_REPEATS: u32 = 2;
+const LLVM_CALL_CACHE_PROFILE_ENV: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_OUT";
+const LLVM_CALL_CACHE_PROFILE_HEADER: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_V4\n";
+const LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT: &str = "FN\t%s\t%llu\t%llu\t%llu\t%u\n";
+const LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_LINE_FMT: &str = "SP\t%s\t%llu\t%llu\n";
+const LLVM_CALL_CACHE_PROFILE_STABLE_LINE_FMT: &str = "SV\t%s\t%u\t%llu\t%llu\n";
+const LLVM_CALL_CACHE_PROFILE_REUSE_LINE_FMT: &str = "RD\t%s\t%llu\t%llu\t%llu\n";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct LlvmIntType {
@@ -158,6 +169,7 @@ pub struct LlvmEmitOptions {
     pub call_cache_exclude: Vec<String>,
     pub call_cache_optimize: bool,
     pub call_cache_optimize_only: Vec<String>,
+    pub call_cache_specializations: Vec<CallCacheSpecializationPlan>,
     pub call_cache_capacity: usize,
     pub call_cache_warmup: u64,
 }
@@ -176,6 +188,7 @@ impl LlvmEmitOptions {
             call_cache_exclude: Vec::new(),
             call_cache_optimize: false,
             call_cache_optimize_only: Vec::new(),
+            call_cache_specializations: Vec::new(),
             call_cache_capacity: DEFAULT_CALL_CACHE_CAPACITY,
             call_cache_warmup: DEFAULT_CALL_CACHE_WARMUP,
         }
@@ -197,6 +210,26 @@ impl CallCachePlan {
     fn is_optimized(&self, name: &str) -> bool {
         self.optimized_functions.contains(name)
     }
+}
+
+#[derive(Clone)]
+struct LlvmFunctionSpecialization {
+    clone_name: String,
+    stable_values: Vec<StableScalarValueProfile>,
+}
+
+impl LlvmFunctionSpecialization {
+    fn stable_bits_for(&self, index: usize) -> Option<u64> {
+        self.stable_values
+            .iter()
+            .find(|value| value.index == index)
+            .map(|value| value.raw_bits)
+    }
+}
+
+#[derive(Clone, Default)]
+struct SpecializationRegistry {
+    by_function: HashMap<String, LlvmFunctionSpecialization>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -269,7 +302,8 @@ pub fn emit_llvm_with_options(
         options.call_cache_capacity = 1;
     }
     let layouts = analyze_module(module);
-    let call_cache_plan = analyze_call_cache_plan(module, &layouts, &options);
+    let call_cache_analysis = build_call_cache_analysis(module, &layouts, &options);
+    let call_cache_plan = call_cache_plan_from_analysis(&call_cache_analysis);
     let mut emitter = LlvmEmitter::new(module, layouts, call_cache_plan, options);
     emitter.emit_module(module)
 }
@@ -561,108 +595,119 @@ fn analyze_function(
     layout
 }
 
-fn analyze_call_cache_plan(
+pub fn analyze_call_cache(module: &MirModule, options: &LlvmEmitOptions) -> CallCacheAnalysis {
+    let layouts = analyze_module(module);
+    build_call_cache_analysis(module, &layouts, options)
+}
+
+fn build_call_cache_analysis(
     module: &MirModule,
     layouts: &HashMap<String, FunctionLayout>,
     options: &LlvmEmitOptions,
-) -> CallCachePlan {
-    if !options.call_cache
-        && !options.call_cache_optimize
-        && options.call_cache_only.is_empty()
-        && options.call_cache_optimize_only.is_empty()
-    {
-        return CallCachePlan::default();
-    }
+) -> CallCacheAnalysis {
+    let support_reasons = module
+        .functions
+        .iter()
+        .map(|function| {
+            let reasons = layouts
+                .get(&function.name)
+                .map(llvm_call_cache_support_reasons)
+                .unwrap_or_else(|| {
+                    vec![CallCacheRejectReason::UnsupportedReturnType {
+                        description: "function layout analysis failed".into(),
+                    }]
+                });
+            (function.name.clone(), reasons)
+        })
+        .collect();
+    agam_mir::analysis::analyze_call_cache(
+        module,
+        &call_cache_request_from_options(options),
+        &support_reasons,
+    )
+}
 
-    let mut include_only: HashSet<&str> = options
+fn call_cache_request_from_options(options: &LlvmEmitOptions) -> CallCacheRequest {
+    let mut include_only = options
         .call_cache_only
         .iter()
-        .map(String::as_str)
-        .collect();
-    include_only.extend(options.call_cache_optimize_only.iter().map(String::as_str));
-    let exclude: HashSet<&str> = options
-        .call_cache_exclude
-        .iter()
-        .map(String::as_str)
-        .collect();
-    let mut candidates: HashSet<String> = module
-        .functions
-        .iter()
-        .filter(|func| {
-            func.name != "main"
-                && !exclude.contains(func.name.as_str())
-                && if options.call_cache || options.call_cache_optimize {
-                    true
-                } else {
-                    include_only.contains(func.name.as_str())
-                }
-                && layouts
-                    .get(&func.name)
-                    .map(function_layout_supports_call_cache)
-                    .unwrap_or(false)
-        })
-        .map(|func| func.name.clone())
-        .collect();
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    include_only.extend(options.call_cache_optimize_only.iter().cloned());
 
-    loop {
-        let to_remove: Vec<String> = module
-            .functions
-            .iter()
-            .filter(|func| candidates.contains(&func.name))
-            .filter(|func| function_has_impure_or_uncacheable_calls(func, &candidates))
-            .map(|func| func.name.clone())
-            .collect();
-        if to_remove.is_empty() {
-            break;
-        }
-        for name in to_remove {
-            candidates.remove(&name);
-        }
+    CallCacheRequest {
+        enable_all: options.call_cache || options.call_cache_optimize,
+        optimize_all: options.call_cache_optimize,
+        include_only,
+        optimize_only: options.call_cache_optimize_only.iter().cloned().collect(),
+        exclude: options.call_cache_exclude.iter().cloned().collect(),
     }
+}
 
-    let cacheable_functions: Vec<String> = module
+fn call_cache_plan_from_analysis(analysis: &CallCacheAnalysis) -> CallCachePlan {
+    let cacheable_functions: Vec<String> = analysis
         .functions
         .iter()
-        .filter(|func| candidates.contains(&func.name))
-        .map(|func| func.name.clone())
+        .filter_map(|function| function.mode.map(|_| function.name.clone()))
         .collect();
-    let optimize_only: HashSet<&str> = options
-        .call_cache_optimize_only
+    let cacheable_set = cacheable_functions.iter().cloned().collect();
+    let optimized_functions = analysis
+        .functions
         .iter()
-        .map(String::as_str)
+        .filter_map(|function| match function.mode {
+            Some(MirCallCacheMode::Optimize) => Some(function.name.clone()),
+            _ => None,
+        })
         .collect();
 
     CallCachePlan {
-        cacheable_set: cacheable_functions.iter().cloned().collect(),
-        optimized_functions: cacheable_functions
-            .iter()
-            .filter(|name| options.call_cache_optimize || optimize_only.contains(name.as_str()))
-            .cloned()
-            .collect(),
         cacheable_functions,
+        cacheable_set,
+        optimized_functions,
     }
 }
 
-fn function_layout_supports_call_cache(layout: &FunctionLayout) -> bool {
-    layout.params.len() <= MAX_CALL_CACHE_ARGS
-        && supports_call_cache_type(layout.return_ty)
-        && layout.params.iter().copied().all(supports_call_cache_type)
+fn llvm_call_cache_support_reasons(layout: &FunctionLayout) -> Vec<CallCacheRejectReason> {
+    let mut reasons = Vec::new();
+
+    if layout.params.len() > MAX_CALL_CACHE_ARGS {
+        reasons.push(CallCacheRejectReason::TooManyArguments {
+            actual: layout.params.len(),
+            max_supported: MAX_CALL_CACHE_ARGS,
+        });
+    }
+    if !supports_call_cache_type(layout.return_ty) {
+        reasons.push(CallCacheRejectReason::UnsupportedReturnType {
+            description: describe_llvm_call_cache_type(layout.return_ty),
+        });
+    }
+    for (index, ty) in layout.params.iter().copied().enumerate() {
+        if !supports_call_cache_type(ty) {
+            reasons.push(CallCacheRejectReason::UnsupportedParameterType {
+                index,
+                description: describe_llvm_call_cache_type(ty),
+            });
+        }
+    }
+
+    reasons
 }
 
-fn function_has_impure_or_uncacheable_calls(
-    function: &MirFunction,
-    cacheable_functions: &HashSet<String>,
-) -> bool {
-    function.blocks.iter().any(|block| {
-        block.instructions.iter().any(|instr| match &instr.op {
-            Op::Call { callee, .. } => {
-                is_print_builtin(callee)
-                    || builtin_signature(callee).is_some()
-                    || !cacheable_functions.contains(callee)
-            }
-            _ => false,
-        })
-    })
+fn describe_llvm_call_cache_type(ty: LlvmType) -> String {
+    match ty {
+        LlvmType::Str => {
+            "strings are pointer-backed and do not have a stable scalar cache encoding yet".into()
+        }
+        LlvmType::OpaquePtr => {
+            "pointer-like values carry unstable aliasing and identity for deterministic cache keys"
+                .into()
+        }
+        LlvmType::Int(int_ty) if int_ty.bits > 64 => format!(
+            "{}-bit integers are wider than the current 64-bit cache encoding",
+            int_ty.bits
+        ),
+        _ => "the current runtime cache only supports scalar bool/int/float values".into(),
+    }
 }
 
 fn infer_llvm_type_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<LlvmType> {
@@ -1047,12 +1092,16 @@ fn classify_increment_guard(
             op: MirBinOp::LtEq,
             left,
             right: _,
-        }) if is_square_of_local(instrs, *left, local_name) => Some(IncrementGuardKind::SquareUpper),
+        }) if is_square_of_local(instrs, *left, local_name) => {
+            Some(IncrementGuardKind::SquareUpper)
+        }
         Some(Op::BinOp {
             op: MirBinOp::GtEq,
             left: _,
             right,
-        }) if is_square_of_local(instrs, *right, local_name) => Some(IncrementGuardKind::SquareUpper),
+        }) if is_square_of_local(instrs, *right, local_name) => {
+            Some(IncrementGuardKind::SquareUpper)
+        }
         _ => None,
     }
 }
@@ -1179,6 +1228,7 @@ struct LlvmEmitter {
     options: LlvmEmitOptions,
     layouts: HashMap<String, FunctionLayout>,
     call_cache_plan: CallCachePlan,
+    specializations: SpecializationRegistry,
     function_attrs: HashMap<String, FunctionAttrs>,
     user_functions: HashSet<String>,
     external_decls: BTreeMap<String, String>,
@@ -1195,11 +1245,18 @@ impl LlvmEmitter {
         call_cache_plan: CallCachePlan,
         options: LlvmEmitOptions,
     ) -> Self {
+        let specializations = build_specialization_registry(
+            module,
+            &layouts,
+            &call_cache_plan,
+            &options.call_cache_specializations,
+        );
         let function_attrs = analyze_function_attrs(module, &layouts);
         Self {
             options,
             layouts,
             call_cache_plan,
+            specializations,
             function_attrs,
             user_functions: module
                 .functions
@@ -1222,10 +1279,27 @@ impl LlvmEmitter {
                 .get(&func.name)
                 .cloned()
                 .ok_or_else(|| format!("missing LLVM layout for `{}`", func.name))?;
-            let body = self.emit_function(func, &layout)?;
+            let emitted_name = if func.name == "main" {
+                "main".to_string()
+            } else {
+                mangle_name(&func.name)
+            };
+            let body = self.emit_function(func, &layout, &emitted_name, None)?;
             functions.push_str(&body);
             functions.push('\n');
+            if let Some(specialization) = self.specializations.by_function.get(&func.name).cloned()
+            {
+                let clone_body = self.emit_function(
+                    func,
+                    &layout,
+                    &specialization.clone_name,
+                    Some(&specialization),
+                )?;
+                functions.push_str(&clone_body);
+                functions.push('\n');
+            }
         }
+        self.prepare_call_cache_profile_export();
 
         let mut output = String::new();
         writeln!(output, "; Generated by agamc — Agam Compiler").unwrap();
@@ -1308,6 +1382,7 @@ impl LlvmEmitter {
         );
         output.push_str(&functions);
         self.emit_call_cache_wrappers(&mut output)?;
+        self.emit_call_cache_profile_export(&mut output)?;
         output.push_str(
             "attributes #0 = { nofree nounwind }\n\
              attributes #1 = { nofree nounwind willreturn }\n\
@@ -1325,18 +1400,10 @@ impl LlvmEmitter {
         writeln!(out).unwrap();
         for name in &self.call_cache_plan.cacheable_functions {
             let globals = call_cache_global_names(name);
-            writeln!(
-                out,
-                "{} = internal global i64 0, align 8",
-                globals.calls
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "{} = internal global i32 0, align 4",
-                globals.len
-            )
-            .unwrap();
+            writeln!(out, "{} = internal global i64 0, align 8", globals.calls).unwrap();
+            writeln!(out, "{} = internal global i64 0, align 8", globals.hits).unwrap();
+            writeln!(out, "{} = internal global i64 0, align 8", globals.stores).unwrap();
+            writeln!(out, "{} = internal global i32 0, align 4", globals.len).unwrap();
             writeln!(
                 out,
                 "{} = internal global [{} x [{} x i64]] zeroinitializer, align 16",
@@ -1349,6 +1416,54 @@ impl LlvmEmitter {
                 globals.values, self.options.call_cache_capacity
             )
             .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x i64] zeroinitializer, align 8",
+                globals.ages, self.options.call_cache_capacity
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x i64] zeroinitializer, align 16",
+                globals.profile_stable_values, MAX_CALL_CACHE_ARGS
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x i64] zeroinitializer, align 16",
+                globals.profile_stable_scores, MAX_CALL_CACHE_ARGS
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global i64 0, align 8",
+                globals.profile_reuse_total
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global i64 0, align 8",
+                globals.profile_reuse_samples
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global i64 0, align 8",
+                globals.profile_reuse_max
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global i64 0, align 8",
+                globals.profile_specialization_hits
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global i64 0, align 8",
+                globals.profile_specialization_fallbacks
+            )
+            .unwrap();
             if self.call_cache_plan.is_optimized(name) {
                 writeln!(
                     out,
@@ -1358,14 +1473,16 @@ impl LlvmEmitter {
                 .unwrap();
                 writeln!(
                     out,
-                    "{} = internal global [{} x i64] zeroinitializer, align 8",
-                    globals.ages, self.options.call_cache_capacity
+                    "{} = internal global i1 false, align 1",
+                    globals.pending_valid
                 )
                 .unwrap();
-                writeln!(out, "{} = internal global i1 false, align 1", globals.pending_valid)
-                    .unwrap();
-                writeln!(out, "{} = internal global i32 0, align 4", globals.pending_count)
-                    .unwrap();
+                writeln!(
+                    out,
+                    "{} = internal global i32 0, align 4",
+                    globals.pending_count
+                )
+                .unwrap();
                 writeln!(
                     out,
                     "{} = internal global [{} x i64] zeroinitializer, align 16",
@@ -1374,6 +1491,205 @@ impl LlvmEmitter {
                 .unwrap();
             }
         }
+        Ok(())
+    }
+
+    fn prepare_call_cache_profile_export(&mut self) {
+        if self.call_cache_plan.cacheable_functions.is_empty() {
+            return;
+        }
+
+        self.register_external_decl(
+            "getenv",
+            "declare noundef i8* @getenv(i8* nocapture noundef readonly) local_unnamed_addr #0",
+        );
+        self.register_external_decl(
+            "fopen",
+            "declare noundef i8* @fopen(i8* nocapture noundef readonly, i8* nocapture noundef readonly) local_unnamed_addr #0",
+        );
+        self.register_external_decl(
+            "fprintf",
+            "declare noundef i32 @fprintf(i8*, i8* nocapture noundef readonly, ...) local_unnamed_addr #0",
+        );
+        self.register_external_decl(
+            "fclose",
+            "declare noundef i32 @fclose(i8*) local_unnamed_addr #0",
+        );
+        let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_ENV);
+        let _ = self.intern_string_constant("w");
+        let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_HEADER);
+        let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT);
+        let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_LINE_FMT);
+        let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_STABLE_LINE_FMT);
+        let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_REUSE_LINE_FMT);
+        let cacheable_names = self.call_cache_plan.cacheable_functions.clone();
+        for name in &cacheable_names {
+            let _ = self.intern_string_constant(name);
+        }
+    }
+
+    fn emit_call_cache_profile_export(&mut self, out: &mut String) -> Result<(), String> {
+        if self.call_cache_plan.cacheable_functions.is_empty() {
+            return Ok(());
+        }
+
+        let env_name = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_ENV);
+        let mode = self.intern_string_constant("w");
+        let header = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_HEADER);
+        let function_line_fmt =
+            self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT);
+        let specialization_line_fmt =
+            self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_LINE_FMT);
+        let stable_line_fmt = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_STABLE_LINE_FMT);
+        let reuse_line_fmt = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_REUSE_LINE_FMT);
+
+        writeln!(
+            out,
+            "define void @agam_call_cache_dump_profiles() local_unnamed_addr #0 {{"
+        )
+        .unwrap();
+        writeln!(out, "entry:").unwrap();
+        writeln!(out, "  %p0 = call i8* @getenv(i8* {env_name})").unwrap();
+        writeln!(out, "  %p1 = icmp eq i8* %p0, null").unwrap();
+        writeln!(out, "  br i1 %p1, label %ret, label %open").unwrap();
+        writeln!(out, "open:").unwrap();
+        writeln!(out, "  %p2 = call i8* @fopen(i8* %p0, i8* {mode})").unwrap();
+        writeln!(out, "  %p3 = icmp eq i8* %p2, null").unwrap();
+        writeln!(out, "  br i1 %p3, label %ret, label %write").unwrap();
+        writeln!(out, "write:").unwrap();
+        writeln!(
+            out,
+            "  %p4 = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {header})"
+        )
+        .unwrap();
+
+        let cacheable_names = self.call_cache_plan.cacheable_functions.clone();
+        let mut next_temp = 10usize;
+        for name in &cacheable_names {
+            let globals = call_cache_global_names(name);
+            let name_ptr = self.intern_string_constant(name);
+            let layout = self.layouts.get(name).ok_or_else(|| {
+                format!("missing LLVM layout for call-cache profile export `{name}`")
+            })?;
+            let calls_tmp = fresh_call_cache_temp(&mut next_temp);
+            let hits_tmp = fresh_call_cache_temp(&mut next_temp);
+            let stores_tmp = fresh_call_cache_temp(&mut next_temp);
+            let len_tmp = fresh_call_cache_temp(&mut next_temp);
+            let write_tmp = fresh_call_cache_temp(&mut next_temp);
+            let specialization_hits_tmp = fresh_call_cache_temp(&mut next_temp);
+            let specialization_fallbacks_tmp = fresh_call_cache_temp(&mut next_temp);
+            let specialization_write_tmp = fresh_call_cache_temp(&mut next_temp);
+            let reuse_total_tmp = fresh_call_cache_temp(&mut next_temp);
+            let reuse_samples_tmp = fresh_call_cache_temp(&mut next_temp);
+            let reuse_max_tmp = fresh_call_cache_temp(&mut next_temp);
+            let reuse_has_samples_tmp = fresh_call_cache_temp(&mut next_temp);
+            let reuse_safe_samples_tmp = fresh_call_cache_temp(&mut next_temp);
+            let reuse_avg_tmp = fresh_call_cache_temp(&mut next_temp);
+            let reuse_write_tmp = fresh_call_cache_temp(&mut next_temp);
+            writeln!(out, "  {calls_tmp} = load i64, i64* {}", globals.calls).unwrap();
+            writeln!(out, "  {hits_tmp} = load i64, i64* {}", globals.hits).unwrap();
+            writeln!(out, "  {stores_tmp} = load i64, i64* {}", globals.stores).unwrap();
+            writeln!(out, "  {len_tmp} = load i32, i32* {}", globals.len).unwrap();
+            writeln!(
+                out,
+                "  {specialization_hits_tmp} = load i64, i64* {}",
+                globals.profile_specialization_hits
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {specialization_fallbacks_tmp} = load i64, i64* {}",
+                globals.profile_specialization_fallbacks
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {reuse_total_tmp} = load i64, i64* {}",
+                globals.profile_reuse_total
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {reuse_samples_tmp} = load i64, i64* {}",
+                globals.profile_reuse_samples
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {reuse_max_tmp} = load i64, i64* {}",
+                globals.profile_reuse_max
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {reuse_has_samples_tmp} = icmp ne i64 {reuse_samples_tmp}, 0"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {reuse_safe_samples_tmp} = select i1 {reuse_has_samples_tmp}, i64 {reuse_samples_tmp}, i64 1"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {reuse_avg_tmp} = udiv i64 {reuse_total_tmp}, {reuse_safe_samples_tmp}"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {write_tmp} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {function_line_fmt}, i8* {name_ptr}, i64 {calls_tmp}, i64 {hits_tmp}, i64 {stores_tmp}, i32 {len_tmp})"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {specialization_write_tmp} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {specialization_line_fmt}, i8* {name_ptr}, i64 {specialization_hits_tmp}, i64 {specialization_fallbacks_tmp})"
+            )
+            .unwrap();
+            for arg_index in 0..layout.params.len() {
+                let stable_value_ptr = fresh_call_cache_temp(&mut next_temp);
+                let stable_value = fresh_call_cache_temp(&mut next_temp);
+                let stable_score_ptr = fresh_call_cache_temp(&mut next_temp);
+                let stable_score = fresh_call_cache_temp(&mut next_temp);
+                let stable_write = fresh_call_cache_temp(&mut next_temp);
+                writeln!(
+                    out,
+                    "  {stable_value_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+                    MAX_CALL_CACHE_ARGS,
+                    MAX_CALL_CACHE_ARGS,
+                    globals.profile_stable_values,
+                    arg_index
+                )
+                .unwrap();
+                writeln!(out, "  {stable_value} = load i64, i64* {stable_value_ptr}").unwrap();
+                writeln!(
+                    out,
+                    "  {stable_score_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+                    MAX_CALL_CACHE_ARGS,
+                    MAX_CALL_CACHE_ARGS,
+                    globals.profile_stable_scores,
+                    arg_index
+                )
+                .unwrap();
+                writeln!(out, "  {stable_score} = load i64, i64* {stable_score_ptr}").unwrap();
+                writeln!(
+                    out,
+                    "  {stable_write} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {stable_line_fmt}, i8* {name_ptr}, i32 {}, i64 {stable_value}, i64 {stable_score})",
+                    arg_index
+                )
+                .unwrap();
+            }
+            writeln!(
+                out,
+                "  {reuse_write_tmp} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {reuse_line_fmt}, i8* {name_ptr}, i64 {reuse_avg_tmp}, i64 {reuse_max_tmp}, i64 {reuse_samples_tmp})"
+            )
+            .unwrap();
+        }
+
+        writeln!(out, "  %p5 = call i32 @fclose(i8* %p2)").unwrap();
+        writeln!(out, "  br label %ret").unwrap();
+        writeln!(out, "ret:").unwrap();
+        writeln!(out, "  ret void").unwrap();
+        writeln!(out, "}}\n").unwrap();
         Ok(())
     }
 
@@ -1390,6 +1706,7 @@ impl LlvmEmitter {
                 self.options.call_cache_capacity,
                 self.options.call_cache_warmup,
                 self.call_cache_plan.is_optimized(name),
+                self.specializations.by_function.get(name),
             )?;
         }
         Ok(())
@@ -1407,19 +1724,23 @@ impl LlvmEmitter {
         &mut self,
         func: &MirFunction,
         layout: &FunctionLayout,
+        emitted_name: &str,
+        specialization: Option<&LlvmFunctionSpecialization>,
     ) -> Result<String, String> {
         let mut out = String::new();
         let mut values: HashMap<ValueId, ValueRef> = HashMap::new();
         let mut locals: HashMap<String, (LlvmType, String)> = HashMap::new();
         let mut emitted_locals = HashSet::new();
+        let mut specialization_temp_id = 0usize;
         let attrs = self
             .function_attrs
             .get(&func.name)
             .copied()
             .unwrap_or_default();
         let fn_attr_suffix = format_function_attrs(attrs);
+        let is_main = func.name == "main" && specialization.is_none();
 
-        if func.name == "main" {
+        if is_main {
             writeln!(
                 out,
                 "define noundef i32 @main(i32 noundef %argc, i8** noundef %argv) local_unnamed_addr{} {{",
@@ -1431,7 +1752,7 @@ impl LlvmEmitter {
                 out,
                 "define noundef {} @{}(",
                 layout.return_ty.ir(),
-                mangle_name(&func.name)
+                emitted_name
             )
             .unwrap();
             for (i, _param) in func.params.iter().enumerate() {
@@ -1452,7 +1773,7 @@ impl LlvmEmitter {
             writeln!(out, "block_{}:", block.id.0).unwrap();
 
             if block.id == func.entry {
-                if func.name == "main" {
+                if is_main {
                     writeln!(out, "  store i32 %argc, i32* @agam_argc_storage").unwrap();
                     writeln!(out, "  store i8** %argv, i8*** @agam_argv_storage").unwrap();
                 }
@@ -1464,11 +1785,23 @@ impl LlvmEmitter {
                         .unwrap_or_else(LlvmType::default_int);
                     let local_name = format!("%local_{}", sanitize_name(&param.name));
                     writeln!(out, "  {} = alloca {}", local_name, ty.ir()).unwrap();
+                    let bound_value = if let Some(raw_bits) =
+                        specialization.and_then(|spec| spec.stable_bits_for(i))
+                    {
+                        emit_call_cache_decode_value(
+                            &mut out,
+                            &mut specialization_temp_id,
+                            ty,
+                            &llvm_i64_literal(raw_bits),
+                        )?
+                    } else {
+                        format!("%p{}", i)
+                    };
                     writeln!(
                         out,
-                        "  store {} %p{}, {}* {}",
+                        "  store {} {}, {}* {}",
                         ty.ir(),
-                        i,
+                        bound_value,
                         ty.ir(),
                         local_name
                     )
@@ -1477,7 +1810,7 @@ impl LlvmEmitter {
                     emitted_locals.insert(param.name.clone());
                     values.insert(
                         param.value,
-                        ValueRef::new(ty, format!("%p{}", i), value_sign(layout, param.value)),
+                        ValueRef::new(ty, bound_value, value_sign(layout, param.value)),
                     );
                 }
             }
@@ -1560,7 +1893,24 @@ impl LlvmEmitter {
                     .unwrap_or_else(LlvmType::default_int);
                 if !emitted_locals.contains(name) {
                     let ptr_name = format!("%local_{}", sanitize_name(name));
-                    writeln!(out, "  {} = alloca {}", ptr_name, local_ty.ir()).unwrap();
+                    // Emit escape analysis annotation as an LLVM IR comment.
+                    let escape_comment = if instr.metadata.stack_promote {
+                        " ; stack-promoted, noalias"
+                    } else {
+                        match instr.metadata.escape_state {
+                            Some(EscapeState::GlobalEscape) => " ; escapes: global",
+                            Some(EscapeState::ArgEscape) => " ; escapes: arg",
+                            _ => "",
+                        }
+                    };
+                    writeln!(
+                        out,
+                        "  {} = alloca {}{}",
+                        ptr_name,
+                        local_ty.ir(),
+                        escape_comment,
+                    )
+                    .unwrap();
                     locals.insert(name.clone(), (local_ty, ptr_name));
                     emitted_locals.insert(name.clone());
                 }
@@ -1979,8 +2329,10 @@ impl LlvmEmitter {
                 ));
             }
         };
-        let flags = if matches!(op, MirBinOp::Add | MirBinOp::Sub | MirBinOp::Mul | MirBinOp::Shl)
-        {
+        let flags = if matches!(
+            op,
+            MirBinOp::Add | MirBinOp::Sub | MirBinOp::Mul | MirBinOp::Shl
+        ) {
             format_int_arith_flags(
                 layout
                     .value_int_flags
@@ -2180,6 +2532,9 @@ impl LlvmEmitter {
                 let returned = get_value(values, *value)?;
                 if is_main {
                     let returned = self.coerce_value(out, &returned, LlvmType::default_int())?;
+                    if !self.call_cache_plan.cacheable_functions.is_empty() {
+                        writeln!(out, "  call void @agam_call_cache_dump_profiles()").unwrap();
+                    }
                     writeln!(out, "  ret i32 {}", returned.repr).unwrap();
                 } else {
                     let returned = self.coerce_value(out, &returned, layout.return_ty)?;
@@ -2188,6 +2543,9 @@ impl LlvmEmitter {
             }
             Terminator::ReturnVoid => {
                 if is_main {
+                    if !self.call_cache_plan.cacheable_functions.is_empty() {
+                        writeln!(out, "  call void @agam_call_cache_dump_profiles()").unwrap();
+                    }
                     writeln!(out, "  ret i32 0").unwrap();
                 } else {
                     writeln!(
@@ -2439,6 +2797,8 @@ fn mangle_name(name: &str) -> String {
 
 struct CallCacheGlobalNames {
     calls: String,
+    hits: String,
+    stores: String,
     len: String,
     keys: String,
     values: String,
@@ -2447,6 +2807,13 @@ struct CallCacheGlobalNames {
     pending_valid: String,
     pending_count: String,
     pending_keys: String,
+    profile_stable_values: String,
+    profile_stable_scores: String,
+    profile_reuse_total: String,
+    profile_reuse_samples: String,
+    profile_reuse_max: String,
+    profile_specialization_hits: String,
+    profile_specialization_fallbacks: String,
 }
 
 fn call_cache_wrapper_name(name: &str) -> String {
@@ -2457,6 +2824,8 @@ fn call_cache_global_names(name: &str) -> CallCacheGlobalNames {
     let base = sanitize_name(name);
     CallCacheGlobalNames {
         calls: format!("@agam_call_cache_{}_calls", base),
+        hits: format!("@agam_call_cache_{}_hits", base),
+        stores: format!("@agam_call_cache_{}_stores", base),
         len: format!("@agam_call_cache_{}_len", base),
         keys: format!("@agam_call_cache_{}_keys", base),
         values: format!("@agam_call_cache_{}_values", base),
@@ -2465,6 +2834,19 @@ fn call_cache_global_names(name: &str) -> CallCacheGlobalNames {
         pending_valid: format!("@agam_call_cache_{}_pending_valid", base),
         pending_count: format!("@agam_call_cache_{}_pending_count", base),
         pending_keys: format!("@agam_call_cache_{}_pending_keys", base),
+        profile_stable_values: format!("@agam_call_cache_{}_profile_stable_values", base),
+        profile_stable_scores: format!("@agam_call_cache_{}_profile_stable_scores", base),
+        profile_reuse_total: format!("@agam_call_cache_{}_profile_reuse_total", base),
+        profile_reuse_samples: format!("@agam_call_cache_{}_profile_reuse_samples", base),
+        profile_reuse_max: format!("@agam_call_cache_{}_profile_reuse_max", base),
+        profile_specialization_hits: format!(
+            "@agam_call_cache_{}_profile_specialization_hits",
+            base
+        ),
+        profile_specialization_fallbacks: format!(
+            "@agam_call_cache_{}_profile_specialization_fallbacks",
+            base
+        ),
     }
 }
 
@@ -2475,12 +2857,278 @@ fn emit_call_cache_wrapper_ir(
     capacity: usize,
     warmup: u64,
     optimize: bool,
+    specialization: Option<&LlvmFunctionSpecialization>,
 ) -> Result<(), String> {
     if optimize {
-        emit_optimized_call_cache_wrapper_ir(out, name, layout, capacity, warmup)
+        emit_optimized_call_cache_wrapper_ir(out, name, layout, capacity, warmup, specialization)
     } else {
-        emit_basic_call_cache_wrapper_ir(out, name, layout, capacity, warmup)
+        emit_basic_call_cache_wrapper_ir(out, name, layout, capacity, warmup, specialization)
     }
+}
+
+fn fresh_call_cache_label(next_temp: &mut usize, prefix: &str) -> String {
+    let value = format!("{prefix}_{}", *next_temp);
+    *next_temp += 1;
+    value
+}
+
+fn emit_increment_i64_global(out: &mut String, next_temp: &mut usize, global: &str) {
+    let current = fresh_call_cache_temp(next_temp);
+    let next = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {current} = load i64, i64* {global}").unwrap();
+    writeln!(out, "  {next} = add i64 {current}, 1").unwrap();
+    writeln!(out, "  store i64 {next}, i64* {global}").unwrap();
+}
+
+fn emit_specialized_call_or_fallback(
+    out: &mut String,
+    next_temp: &mut usize,
+    layout: &FunctionLayout,
+    original: &str,
+    call_args: &str,
+    encoded_args: &[String],
+    globals: &CallCacheGlobalNames,
+    specialization: Option<&LlvmFunctionSpecialization>,
+) -> Result<String, String> {
+    let Some(specialization) = specialization else {
+        let miss_value = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {miss_value} = call noundef {} @{}({})",
+            layout.return_ty.ir(),
+            original,
+            call_args
+        )
+        .unwrap();
+        return Ok(miss_value);
+    };
+
+    let stable_values: Vec<_> = specialization
+        .stable_values
+        .iter()
+        .filter(|value| encoded_args.get(value.index).is_some())
+        .collect();
+    if stable_values.is_empty() {
+        let miss_value = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {miss_value} = call noundef {} @{}({})",
+            layout.return_ty.ir(),
+            original,
+            call_args
+        )
+        .unwrap();
+        return Ok(miss_value);
+    }
+
+    let mut guard = String::new();
+    for stable in stable_values {
+        let expected = llvm_i64_literal(stable.raw_bits);
+        let arg_eq = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {arg_eq} = icmp eq i64 {}, {}",
+            encoded_args[stable.index], expected
+        )
+        .unwrap();
+        if guard.is_empty() {
+            guard = arg_eq;
+        } else {
+            let combined = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {combined} = and i1 {guard}, {arg_eq}").unwrap();
+            guard = combined;
+        }
+    }
+
+    let specialized_label = fresh_call_cache_label(next_temp, "spec_call");
+    let generic_label = fresh_call_cache_label(next_temp, "generic_call");
+    let cont_label = fresh_call_cache_label(next_temp, "specialized_cont");
+    writeln!(
+        out,
+        "  br i1 {guard}, label %{specialized_label}, label %{generic_label}"
+    )
+    .unwrap();
+
+    writeln!(out, "{specialized_label}:").unwrap();
+    emit_increment_i64_global(out, next_temp, &globals.profile_specialization_hits);
+    let specialized_value = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialized_value} = call noundef {} @{}({})",
+        layout.return_ty.ir(),
+        specialization.clone_name,
+        call_args
+    )
+    .unwrap();
+    writeln!(out, "  br label %{cont_label}").unwrap();
+
+    writeln!(out, "{generic_label}:").unwrap();
+    emit_increment_i64_global(out, next_temp, &globals.profile_specialization_fallbacks);
+    let generic_value = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {generic_value} = call noundef {} @{}({})",
+        layout.return_ty.ir(),
+        original,
+        call_args
+    )
+    .unwrap();
+    writeln!(out, "  br label %{cont_label}").unwrap();
+
+    writeln!(out, "{cont_label}:").unwrap();
+    let miss_value = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {miss_value} = phi {} [ {specialized_value}, %{specialized_label} ], [ {generic_value}, %{generic_label} ]",
+        layout.return_ty.ir()
+    )
+    .unwrap();
+    Ok(miss_value)
+}
+
+fn emit_call_cache_stable_value_profile_update(
+    out: &mut String,
+    next_temp: &mut usize,
+    globals: &CallCacheGlobalNames,
+    encoded_args: &[String],
+) {
+    for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+        let seed_label = fresh_call_cache_label(next_temp, "stable_seed");
+        let compare_label = fresh_call_cache_label(next_temp, "stable_compare");
+        let hit_label = fresh_call_cache_label(next_temp, "stable_hit");
+        let miss_label = fresh_call_cache_label(next_temp, "stable_miss");
+        let done_label = fresh_call_cache_label(next_temp, "stable_done");
+
+        let value_ptr = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {value_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+            MAX_CALL_CACHE_ARGS, MAX_CALL_CACHE_ARGS, globals.profile_stable_values, arg_index
+        )
+        .unwrap();
+        let score_ptr = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {score_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+            MAX_CALL_CACHE_ARGS, MAX_CALL_CACHE_ARGS, globals.profile_stable_scores, arg_index
+        )
+        .unwrap();
+        let score_old = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {score_old} = load i64, i64* {score_ptr}").unwrap();
+        let score_is_zero = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {score_is_zero} = icmp eq i64 {score_old}, 0").unwrap();
+        writeln!(
+            out,
+            "  br i1 {score_is_zero}, label %{seed_label}, label %{compare_label}"
+        )
+        .unwrap();
+
+        writeln!(out, "{seed_label}:").unwrap();
+        writeln!(out, "  store i64 {arg_bits}, i64* {value_ptr}").unwrap();
+        writeln!(out, "  store i64 1, i64* {score_ptr}").unwrap();
+        writeln!(out, "  br label %{done_label}").unwrap();
+
+        writeln!(out, "{compare_label}:").unwrap();
+        let value_old = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {value_old} = load i64, i64* {value_ptr}").unwrap();
+        let matches = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {matches} = icmp eq i64 {value_old}, {arg_bits}").unwrap();
+        writeln!(
+            out,
+            "  br i1 {matches}, label %{hit_label}, label %{miss_label}"
+        )
+        .unwrap();
+
+        writeln!(out, "{hit_label}:").unwrap();
+        let score_hit = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {score_hit} = add i64 {score_old}, 1").unwrap();
+        writeln!(out, "  store i64 {score_hit}, i64* {score_ptr}").unwrap();
+        writeln!(out, "  br label %{done_label}").unwrap();
+
+        writeln!(out, "{miss_label}:").unwrap();
+        let score_miss = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {score_miss} = sub i64 {score_old}, 1").unwrap();
+        writeln!(out, "  store i64 {score_miss}, i64* {score_ptr}").unwrap();
+        writeln!(out, "  br label %{done_label}").unwrap();
+
+        writeln!(out, "{done_label}:").unwrap();
+    }
+}
+
+fn emit_call_cache_reuse_profile_update(
+    out: &mut String,
+    next_temp: &mut usize,
+    globals: &CallCacheGlobalNames,
+    age_ptr: &str,
+    calls_new: &str,
+) {
+    let age_old = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {age_old} = load i64, i64* {age_ptr}").unwrap();
+    let reuse = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {reuse} = sub i64 {calls_new}, {age_old}").unwrap();
+    let reuse_total_old = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {reuse_total_old} = load i64, i64* {}",
+        globals.profile_reuse_total
+    )
+    .unwrap();
+    let reuse_total_new = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {reuse_total_new} = add i64 {reuse_total_old}, {reuse}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {reuse_total_new}, i64* {}",
+        globals.profile_reuse_total
+    )
+    .unwrap();
+    let reuse_samples_old = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {reuse_samples_old} = load i64, i64* {}",
+        globals.profile_reuse_samples
+    )
+    .unwrap();
+    let reuse_samples_new = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {reuse_samples_new} = add i64 {reuse_samples_old}, 1"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {reuse_samples_new}, i64* {}",
+        globals.profile_reuse_samples
+    )
+    .unwrap();
+    let reuse_max_old = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {reuse_max_old} = load i64, i64* {}",
+        globals.profile_reuse_max
+    )
+    .unwrap();
+    let reuse_gt_max = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {reuse_gt_max} = icmp ugt i64 {reuse}, {reuse_max_old}"
+    )
+    .unwrap();
+    let reuse_max_new = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {reuse_max_new} = select i1 {reuse_gt_max}, i64 {reuse}, i64 {reuse_max_old}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {reuse_max_new}, i64* {}",
+        globals.profile_reuse_max
+    )
+    .unwrap();
 }
 
 fn emit_basic_call_cache_wrapper_ir(
@@ -2489,6 +3137,7 @@ fn emit_basic_call_cache_wrapper_ir(
     layout: &FunctionLayout,
     capacity: usize,
     warmup: u64,
+    specialization: Option<&LlvmFunctionSpecialization>,
 ) -> Result<(), String> {
     let wrapper = call_cache_wrapper_name(name);
     let original = mangle_name(name);
@@ -2534,6 +3183,7 @@ fn emit_basic_call_cache_wrapper_ir(
             &format!("%p{index}"),
         )?);
     }
+    emit_call_cache_stable_value_profile_update(out, &mut next_temp, &globals, &encoded_args);
 
     let use_cache = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {use_cache} = icmp ule i64 {calls_new}, {warmup}").unwrap();
@@ -2553,7 +3203,11 @@ fn emit_basic_call_cache_wrapper_ir(
     )
     .unwrap();
     let scan_done = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {scan_done} = icmp eq i32 {scan_index}, {len_loaded}").unwrap();
+    writeln!(
+        out,
+        "  {scan_done} = icmp eq i32 {scan_index}, {len_loaded}"
+    )
+    .unwrap();
     writeln!(out, "  br i1 {scan_done}, label %miss, label %check").unwrap();
 
     writeln!(out, "check:").unwrap();
@@ -2605,22 +3259,41 @@ fn emit_basic_call_cache_wrapper_ir(
     .unwrap();
     let cached_bits = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {cached_bits} = load i64, i64* {cached_value_ptr}").unwrap();
+    let hit_age_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {hit_age_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {scan_index_i64}",
+        capacity, capacity, globals.ages
+    )
+    .unwrap();
+    emit_call_cache_reuse_profile_update(out, &mut next_temp, &globals, &hit_age_ptr, &calls_new);
+    writeln!(out, "  store i64 {calls_new}, i64* {hit_age_ptr}").unwrap();
+    let hit_count_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {hit_count_ptr} = load i64, i64* {}", globals.hits).unwrap();
+    let hit_count_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {hit_count_new} = add i64 {hit_count_ptr}, 1").unwrap();
+    writeln!(out, "  store i64 {hit_count_new}, i64* {}", globals.hits).unwrap();
     let cached_value =
         emit_call_cache_decode_value(out, &mut next_temp, layout.return_ty, &cached_bits)?;
     writeln!(out, "  ret {} {cached_value}", layout.return_ty.ir()).unwrap();
 
     writeln!(out, "miss:").unwrap();
-    let miss_value = fresh_call_cache_temp(&mut next_temp);
+    let miss_value = emit_specialized_call_or_fallback(
+        out,
+        &mut next_temp,
+        layout,
+        &original,
+        &call_args,
+        &encoded_args,
+        &globals,
+        specialization,
+    )?;
+    let store_enabled = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
-        "  {miss_value} = call noundef {} @{}({})",
-        layout.return_ty.ir(),
-        original,
-        call_args
+        "  {store_enabled} = icmp ugt i64 {calls_new}, {warmup}"
     )
     .unwrap();
-    let store_enabled = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {store_enabled} = icmp ugt i64 {calls_new}, {warmup}").unwrap();
     writeln!(
         out,
         "  br i1 {store_enabled}, label %store_check, label %ret_miss"
@@ -2667,6 +3340,29 @@ fn emit_basic_call_cache_wrapper_ir(
     )
     .unwrap();
     writeln!(out, "  store i64 {result_bits}, i64* {store_value_ptr}").unwrap();
+    let store_age_ptr = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {store_age_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {store_index_i64}",
+        capacity, capacity, globals.ages
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {calls_new}, i64* {store_age_ptr}").unwrap();
+    let store_count_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {store_count_old} = load i64, i64* {}",
+        globals.stores
+    )
+    .unwrap();
+    let store_count_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_count_new} = add i64 {store_count_old}, 1").unwrap();
+    writeln!(
+        out,
+        "  store i64 {store_count_new}, i64* {}",
+        globals.stores
+    )
+    .unwrap();
     let next_len = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {next_len} = add nuw i32 {store_len}, 1").unwrap();
     writeln!(out, "  store i32 {next_len}, i32* {}", globals.len).unwrap();
@@ -2685,6 +3381,7 @@ fn emit_optimized_call_cache_wrapper_ir(
     layout: &FunctionLayout,
     capacity: usize,
     warmup: u64,
+    specialization: Option<&LlvmFunctionSpecialization>,
 ) -> Result<(), String> {
     let wrapper = call_cache_wrapper_name(name);
     let original = mangle_name(name);
@@ -2739,6 +3436,7 @@ fn emit_optimized_call_cache_wrapper_ir(
             &format!("%p{index}"),
         )?);
     }
+    emit_call_cache_stable_value_profile_update(out, &mut next_temp, &globals, &encoded_args);
 
     let use_cache = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {use_cache} = icmp ule i64 {calls_new}, {warmup}").unwrap();
@@ -2758,7 +3456,11 @@ fn emit_optimized_call_cache_wrapper_ir(
     )
     .unwrap();
     let scan_done = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {scan_done} = icmp eq i32 {scan_index}, {len_loaded}").unwrap();
+    writeln!(
+        out,
+        "  {scan_done} = icmp eq i32 {scan_index}, {len_loaded}"
+    )
+    .unwrap();
     writeln!(out, "  br i1 {scan_done}, label %miss, label %check").unwrap();
 
     writeln!(out, "check:").unwrap();
@@ -2829,23 +3531,34 @@ fn emit_optimized_call_cache_wrapper_ir(
         capacity, capacity, globals.ages
     )
     .unwrap();
+    emit_call_cache_reuse_profile_update(out, &mut next_temp, &globals, &hit_age_ptr, &calls_new);
     writeln!(out, "  store i64 {calls_new}, i64* {hit_age_ptr}").unwrap();
+    let hit_count_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {hit_count_old} = load i64, i64* {}", globals.hits).unwrap();
+    let hit_count_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {hit_count_new} = add i64 {hit_count_old}, 1").unwrap();
+    writeln!(out, "  store i64 {hit_count_new}, i64* {}", globals.hits).unwrap();
     let cached_value =
         emit_call_cache_decode_value(out, &mut next_temp, layout.return_ty, &cached_bits)?;
     writeln!(out, "  ret {} {cached_value}", layout.return_ty.ir()).unwrap();
 
     writeln!(out, "miss:").unwrap();
-    let miss_value = fresh_call_cache_temp(&mut next_temp);
+    let miss_value = emit_specialized_call_or_fallback(
+        out,
+        &mut next_temp,
+        layout,
+        &original,
+        &call_args,
+        &encoded_args,
+        &globals,
+        specialization,
+    )?;
+    let store_enabled = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
-        "  {miss_value} = call noundef {} @{}({})",
-        layout.return_ty.ir(),
-        original,
-        call_args
+        "  {store_enabled} = icmp ugt i64 {calls_new}, {warmup}"
     )
     .unwrap();
-    let store_enabled = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {store_enabled} = icmp ugt i64 {calls_new}, {warmup}").unwrap();
     writeln!(
         out,
         "  br i1 {store_enabled}, label %admit_check, label %ret_miss"
@@ -2854,11 +3567,24 @@ fn emit_optimized_call_cache_wrapper_ir(
 
     writeln!(out, "admit_check:").unwrap();
     let pending_valid = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {pending_valid} = load i1, i1* {}", globals.pending_valid).unwrap();
+    writeln!(
+        out,
+        "  {pending_valid} = load i1, i1* {}",
+        globals.pending_valid
+    )
+    .unwrap();
     if encoded_args.is_empty() {
-        writeln!(out, "  br i1 {pending_valid}, label %admit_hit, label %admit_reset").unwrap();
+        writeln!(
+            out,
+            "  br i1 {pending_valid}, label %admit_hit, label %admit_reset"
+        )
+        .unwrap();
     } else {
-        writeln!(out, "  br i1 {pending_valid}, label %admit_compare, label %admit_reset").unwrap();
+        writeln!(
+            out,
+            "  br i1 {pending_valid}, label %admit_compare, label %admit_reset"
+        )
+        .unwrap();
 
         writeln!(out, "admit_compare:").unwrap();
         let mut pending_match = String::new();
@@ -2867,10 +3593,7 @@ fn emit_optimized_call_cache_wrapper_ir(
             writeln!(
                 out,
                 "  {arg_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
-                MAX_CALL_CACHE_ARGS,
-                MAX_CALL_CACHE_ARGS,
-                globals.pending_keys,
-                arg_index
+                MAX_CALL_CACHE_ARGS, MAX_CALL_CACHE_ARGS, globals.pending_keys, arg_index
             )
             .unwrap();
             let arg_loaded = fresh_call_cache_temp(&mut next_temp);
@@ -2885,7 +3608,11 @@ fn emit_optimized_call_cache_wrapper_ir(
                 pending_match = new_match;
             }
         }
-        writeln!(out, "  br i1 {pending_match}, label %admit_hit, label %admit_reset").unwrap();
+        writeln!(
+            out,
+            "  br i1 {pending_match}, label %admit_hit, label %admit_reset"
+        )
+        .unwrap();
     }
 
     writeln!(out, "admit_reset:").unwrap();
@@ -2894,10 +3621,7 @@ fn emit_optimized_call_cache_wrapper_ir(
         writeln!(
             out,
             "  {arg_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
-            MAX_CALL_CACHE_ARGS,
-            MAX_CALL_CACHE_ARGS,
-            globals.pending_keys,
-            arg_index
+            MAX_CALL_CACHE_ARGS, MAX_CALL_CACHE_ARGS, globals.pending_keys, arg_index
         )
         .unwrap();
         writeln!(out, "  store i64 {arg_bits}, i64* {arg_ptr}").unwrap();
@@ -2908,10 +3632,24 @@ fn emit_optimized_call_cache_wrapper_ir(
 
     writeln!(out, "admit_hit:").unwrap();
     let pending_count_old = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {pending_count_old} = load i32, i32* {}", globals.pending_count).unwrap();
+    writeln!(
+        out,
+        "  {pending_count_old} = load i32, i32* {}",
+        globals.pending_count
+    )
+    .unwrap();
     let pending_count_new = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {pending_count_new} = add i32 {pending_count_old}, 1").unwrap();
-    writeln!(out, "  store i32 {pending_count_new}, i32* {}", globals.pending_count).unwrap();
+    writeln!(
+        out,
+        "  {pending_count_new} = add i32 {pending_count_old}, 1"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i32 {pending_count_new}, i32* {}",
+        globals.pending_count
+    )
+    .unwrap();
     let repeated_enough = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -2935,7 +3673,11 @@ fn emit_optimized_call_cache_wrapper_ir(
         capacity as u32
     )
     .unwrap();
-    writeln!(out, "  br i1 {has_room}, label %store_new, label %victim_init").unwrap();
+    writeln!(
+        out,
+        "  br i1 {has_room}, label %store_new, label %victim_init"
+    )
+    .unwrap();
 
     writeln!(out, "store_new:").unwrap();
     let store_index_i64 = fresh_call_cache_temp(&mut next_temp);
@@ -2972,7 +3714,11 @@ fn emit_optimized_call_cache_wrapper_ir(
         capacity, capacity, globals.scores
     )
     .unwrap();
-    writeln!(out, "  store i32 {pending_count_new}, i32* {store_score_ptr}").unwrap();
+    writeln!(
+        out,
+        "  store i32 {pending_count_new}, i32* {store_score_ptr}"
+    )
+    .unwrap();
     let store_age_ptr = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -2981,6 +3727,21 @@ fn emit_optimized_call_cache_wrapper_ir(
     )
     .unwrap();
     writeln!(out, "  store i64 {calls_new}, i64* {store_age_ptr}").unwrap();
+    let store_count_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {store_count_old} = load i64, i64* {}",
+        globals.stores
+    )
+    .unwrap();
+    let store_count_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_count_new} = add i64 {store_count_old}, 1").unwrap();
+    writeln!(
+        out,
+        "  store i64 {store_count_new}, i64* {}",
+        globals.stores
+    )
+    .unwrap();
     let next_len = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {next_len} = add nuw i32 {store_len}, 1").unwrap();
     writeln!(out, "  store i32 {next_len}, i32* {}", globals.len).unwrap();
@@ -3016,7 +3777,11 @@ fn emit_optimized_call_cache_wrapper_ir(
     writeln!(out, "  {loop_index} = load i32, i32* {loop_index_slot}").unwrap();
     let loop_done = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {loop_done} = icmp eq i32 {loop_index}, {store_len}").unwrap();
-    writeln!(out, "  br i1 {loop_done}, label %victim_decide, label %victim_check").unwrap();
+    writeln!(
+        out,
+        "  br i1 {loop_done}, label %victim_decide, label %victim_check"
+    )
+    .unwrap();
 
     writeln!(out, "victim_check:").unwrap();
     let loop_index_i64 = fresh_call_cache_temp(&mut next_temp);
@@ -3033,9 +3798,17 @@ fn emit_optimized_call_cache_wrapper_ir(
     let best_score = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {best_score} = load i32, i32* {best_score_slot}").unwrap();
     let worse_score = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {worse_score} = icmp ult i32 {loop_score}, {best_score}").unwrap();
+    writeln!(
+        out,
+        "  {worse_score} = icmp ult i32 {loop_score}, {best_score}"
+    )
+    .unwrap();
     let same_score = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {same_score} = icmp eq i32 {loop_score}, {best_score}").unwrap();
+    writeln!(
+        out,
+        "  {same_score} = icmp eq i32 {loop_score}, {best_score}"
+    )
+    .unwrap();
     let loop_age_ptr = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -3052,8 +3825,16 @@ fn emit_optimized_call_cache_wrapper_ir(
     let same_and_older = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {same_and_older} = and i1 {same_score}, {older_age}").unwrap();
     let replace_victim = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {replace_victim} = or i1 {worse_score}, {same_and_older}").unwrap();
-    writeln!(out, "  br i1 {replace_victim}, label %victim_replace, label %victim_next").unwrap();
+    writeln!(
+        out,
+        "  {replace_victim} = or i1 {worse_score}, {same_and_older}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  br i1 {replace_victim}, label %victim_replace, label %victim_next"
+    )
+    .unwrap();
 
     writeln!(out, "victim_replace:").unwrap();
     writeln!(out, "  store i32 {loop_index}, i32* {victim_index_slot}").unwrap();
@@ -3069,20 +3850,48 @@ fn emit_optimized_call_cache_wrapper_ir(
 
     writeln!(out, "victim_decide:").unwrap();
     let best_score_final = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {best_score_final} = load i32, i32* {best_score_slot}").unwrap();
+    writeln!(
+        out,
+        "  {best_score_final} = load i32, i32* {best_score_slot}"
+    )
+    .unwrap();
     let better_score = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {better_score} = icmp ugt i32 {pending_count_new}, {best_score_final}").unwrap();
+    writeln!(
+        out,
+        "  {better_score} = icmp ugt i32 {pending_count_new}, {best_score_final}"
+    )
+    .unwrap();
     let equal_score = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {equal_score} = icmp eq i32 {pending_count_new}, {best_score_final}").unwrap();
+    writeln!(
+        out,
+        "  {equal_score} = icmp eq i32 {pending_count_new}, {best_score_final}"
+    )
+    .unwrap();
     let best_age_final = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {best_age_final} = load i64, i64* {best_age_slot}").unwrap();
     let newer_age = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {newer_age} = icmp ugt i64 {calls_new}, {best_age_final}").unwrap();
+    writeln!(
+        out,
+        "  {newer_age} = icmp ugt i64 {calls_new}, {best_age_final}"
+    )
+    .unwrap();
     let equal_and_newer = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {equal_and_newer} = and i1 {equal_score}, {newer_age}").unwrap();
+    writeln!(
+        out,
+        "  {equal_and_newer} = and i1 {equal_score}, {newer_age}"
+    )
+    .unwrap();
     let admit_replace = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {admit_replace} = or i1 {better_score}, {equal_and_newer}").unwrap();
-    writeln!(out, "  br i1 {admit_replace}, label %store_replace, label %ret_miss").unwrap();
+    writeln!(
+        out,
+        "  {admit_replace} = or i1 {better_score}, {equal_and_newer}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  br i1 {admit_replace}, label %store_replace, label %ret_miss"
+    )
+    .unwrap();
 
     writeln!(out, "store_replace:").unwrap();
     let victim_index = fresh_call_cache_temp(&mut next_temp);
@@ -3121,7 +3930,11 @@ fn emit_optimized_call_cache_wrapper_ir(
         capacity, capacity, globals.scores
     )
     .unwrap();
-    writeln!(out, "  store i32 {pending_count_new}, i32* {replace_score_ptr}").unwrap();
+    writeln!(
+        out,
+        "  store i32 {pending_count_new}, i32* {replace_score_ptr}"
+    )
+    .unwrap();
     let replace_age_ptr = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -3130,6 +3943,25 @@ fn emit_optimized_call_cache_wrapper_ir(
     )
     .unwrap();
     writeln!(out, "  store i64 {calls_new}, i64* {replace_age_ptr}").unwrap();
+    let replace_store_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {replace_store_old} = load i64, i64* {}",
+        globals.stores
+    )
+    .unwrap();
+    let replace_store_new = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {replace_store_new} = add i64 {replace_store_old}, 1"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {replace_store_new}, i64* {}",
+        globals.stores
+    )
+    .unwrap();
     writeln!(out, "  br label %store_done").unwrap();
 
     writeln!(out, "store_done:").unwrap();
@@ -3217,6 +4049,85 @@ fn emit_call_cache_decode_value(
         }
         _ => Err(format!("unsupported LLVM call-cache type {ty:?}")),
     }
+}
+
+fn llvm_i64_literal(raw_bits: u64) -> String {
+    (raw_bits as i64).to_string()
+}
+
+fn build_specialization_registry(
+    module: &MirModule,
+    layouts: &HashMap<String, FunctionLayout>,
+    call_cache_plan: &CallCachePlan,
+    plans: &[CallCacheSpecializationPlan],
+) -> SpecializationRegistry {
+    let function_names: HashSet<&str> = module
+        .functions
+        .iter()
+        .map(|function| function.name.as_str())
+        .collect();
+    let mut by_function = HashMap::new();
+
+    for plan in plans {
+        if !function_names.contains(plan.name.as_str())
+            || !call_cache_plan.contains(&plan.name)
+            || !call_cache_plan.is_optimized(&plan.name)
+        {
+            continue;
+        }
+        let Some(layout) = layouts.get(&plan.name) else {
+            continue;
+        };
+
+        let mut stable_values: BTreeMap<usize, StableScalarValueProfile> = BTreeMap::new();
+        for value in &plan.stable_values {
+            let Some(param_ty) = layout.params.get(value.index).copied() else {
+                continue;
+            };
+            if !supports_call_cache_type(param_ty) {
+                continue;
+            }
+            let replace = stable_values
+                .get(&value.index)
+                .map(|current| value.matches > current.matches)
+                .unwrap_or(true);
+            if replace {
+                stable_values.insert(value.index, value.clone());
+            }
+        }
+
+        if stable_values.is_empty() {
+            continue;
+        }
+
+        let stable_values: Vec<_> = stable_values.into_values().collect();
+        by_function.insert(
+            plan.name.clone(),
+            LlvmFunctionSpecialization {
+                clone_name: llvm_specialization_clone_name(&plan.name, &stable_values),
+                stable_values,
+            },
+        );
+    }
+
+    SpecializationRegistry { by_function }
+}
+
+fn llvm_specialization_clone_name(
+    function: &str,
+    stable_values: &[StableScalarValueProfile],
+) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    function.hash(&mut hasher);
+    for value in stable_values {
+        value.index.hash(&mut hasher);
+        value.raw_bits.hash(&mut hasher);
+    }
+    format!(
+        "__agam_spec_{}_{}",
+        sanitize_name(function),
+        hasher.finish()
+    )
 }
 
 fn analyze_function_attrs(
@@ -3466,7 +4377,53 @@ fn main() -> i32:
         );
         assert!(llvm.contains("@agam_call_cache_hot("));
         assert!(llvm.contains("@agam_call_cache_hot_calls = internal global i64 0"));
+        assert!(llvm.contains("@agam_call_cache_hot_hits = internal global i64 0"));
+        assert!(llvm.contains("@agam_call_cache_hot_stores = internal global i64 0"));
         assert!(llvm.contains("call noundef i64 @agam_call_cache_hot"));
+        assert!(llvm.contains("define void @agam_call_cache_dump_profiles()"));
+        assert!(llvm.contains("AGAM_LLVM_CALL_CACHE_PROFILE_OUT"));
+    }
+
+    #[test]
+    fn test_emit_llvm_call_cache_stable_value_profile_globals_and_export() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn hot(n: i64) -> i64:
+    return n + 1
+
+fn main() -> i32:
+    if hot(argc()) >= 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache: true,
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(llvm.contains(
+            "@agam_call_cache_hot_profile_stable_values = internal global [4 x i64] zeroinitializer"
+        ));
+        assert!(llvm.contains(
+            "@agam_call_cache_hot_profile_stable_scores = internal global [4 x i64] zeroinitializer"
+        ));
+        assert!(llvm.contains("@agam_call_cache_hot_profile_reuse_total = internal global i64 0"));
+        assert!(
+            llvm.contains("@agam_call_cache_hot_profile_reuse_samples = internal global i64 0")
+        );
+        assert!(llvm.contains("@agam_call_cache_hot_profile_reuse_max = internal global i64 0"));
+        assert!(
+            llvm.contains(
+                "@agam_call_cache_hot_profile_specialization_hits = internal global i64 0"
+            )
+        );
+        assert!(llvm.contains(
+            "@agam_call_cache_hot_profile_specialization_fallbacks = internal global i64 0"
+        ));
+        assert!(llvm.contains("AGAM_LLVM_CALL_CACHE_PROFILE_V4"));
+        assert!(llvm.contains(
+            "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_values"
+        ));
     }
 
     #[test]
@@ -3493,6 +4450,51 @@ fn main() -> i32:
     }
 
     #[test]
+    fn test_emit_call_cache_wrapper_for_stable_process_arg_reader() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn arg_count() -> i32:
+    return argc()
+
+fn main() -> i32:
+    if arg_count() > 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache: true,
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(llvm.contains("@agam_call_cache_arg_count("));
+        assert!(llvm.contains("call noundef i32 @agam_call_cache_arg_count"));
+    }
+
+    #[test]
+    fn test_emit_call_cache_wrapper_for_selected_pure_caller_without_selected_callee() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn inner(n: i64) -> i64:
+    return n + 1
+
+fn outer(n: i64) -> i64:
+    return inner(n) + 1
+
+fn main() -> i32:
+    if outer(argc()) >= 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache_only: vec!["outer".into()],
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(llvm.contains("@agam_call_cache_outer("));
+        assert!(!llvm.contains("@agam_call_cache_inner("));
+    }
+
+    #[test]
     fn test_emit_optimized_call_cache_wrapper_for_pure_function() {
         let llvm = compile_to_llvm_with_options(
             r#"
@@ -3513,6 +4515,42 @@ fn main() -> i32:
         assert!(llvm.contains("@agam_call_cache_hot_pending_count = internal global i32 0"));
         assert!(llvm.contains("label %admit_check"));
         assert!(llvm.contains("label %victim_init"));
+    }
+
+    #[test]
+    fn test_emit_guarded_specialization_clone_for_optimized_llvm_call_cache() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn hot(n: i64) -> i64:
+    return n + 1
+
+fn main() -> i32:
+    if hot(argc()) >= 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache_optimize_only: vec!["hot".into()],
+                call_cache_specializations: vec![CallCacheSpecializationPlan {
+                    name: "hot".into(),
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 7,
+                        matches: 16,
+                    }],
+                }],
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(llvm.contains("define noundef i64 @__agam_spec_hot_"));
+        assert!(llvm.contains("store i64 7, i64* %local_n"));
+        assert!(llvm.contains("call noundef i64 @__agam_spec_hot_"));
+        assert!(llvm.contains("label %spec_call_"));
+        assert!(llvm.contains("phi i64"));
+        assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
+        assert!(
+            llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
+        );
     }
 
     #[test]
