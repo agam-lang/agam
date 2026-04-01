@@ -8,8 +8,8 @@
 
 1. **Phase 15D: Value Profiling, Adaptive Admission, and Specialization**
    - Status: partial
-   - Done: runtime-side value profiling, specialization guard reporting, persisted optimize/specialization decisions that react to measured guard feedback, and live JIT/LLVM optimized-cache scoring that now reacts to guarded-clone outcomes
-   - Next work: replace LLVM's remaining fixed optimized-cache admission heuristics with the shared measured-payoff loop
+   - Done: runtime-side value profiling, specialization guard reporting, persisted optimize/specialization decisions that react to measured guard feedback, live JIT/LLVM optimized-cache scoring that now reacts to guarded-clone outcomes, and an emitted LLVM adaptive admission score that replaces the old fixed optimized pending-count gate
+   - Next work: extend LLVM specialization cloning beyond the current guarded clone/export slice and close the remaining LLVM/JIT runtime-signal parity gaps
    - Detail file: `details/15D.md`
 2. **Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation**
    - Status: not started as a completed slice

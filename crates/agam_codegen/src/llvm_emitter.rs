@@ -20,7 +20,6 @@ use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 const MAX_CALL_CACHE_ARGS: usize = 4;
 const DEFAULT_CALL_CACHE_CAPACITY: usize = 256;
 const DEFAULT_CALL_CACHE_WARMUP: u64 = 32;
-const OPTIMIZED_CALL_CACHE_MIN_REPEATS: u32 = 2;
 const LLVM_CALL_CACHE_PROFILE_ENV: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_OUT";
 const LLVM_CALL_CACHE_PROFILE_HEADER: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_V4\n";
 const LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT: &str = "FN\t%s\t%llu\t%llu\t%llu\t%u\n";
@@ -1485,6 +1484,12 @@ impl LlvmEmitter {
                 .unwrap();
                 writeln!(
                     out,
+                    "{} = internal global i64 0, align 8",
+                    globals.pending_last_seen
+                )
+                .unwrap();
+                writeln!(
+                    out,
                     "{} = internal global [{} x i64] zeroinitializer, align 16",
                     globals.pending_keys, MAX_CALL_CACHE_ARGS
                 )
@@ -2806,6 +2811,7 @@ struct CallCacheGlobalNames {
     ages: String,
     pending_valid: String,
     pending_count: String,
+    pending_last_seen: String,
     pending_keys: String,
     profile_stable_values: String,
     profile_stable_scores: String,
@@ -2833,6 +2839,7 @@ fn call_cache_global_names(name: &str) -> CallCacheGlobalNames {
         ages: format!("@agam_call_cache_{}_ages", base),
         pending_valid: format!("@agam_call_cache_{}_pending_valid", base),
         pending_count: format!("@agam_call_cache_{}_pending_count", base),
+        pending_last_seen: format!("@agam_call_cache_{}_pending_last_seen", base),
         pending_keys: format!("@agam_call_cache_{}_pending_keys", base),
         profile_stable_values: format!("@agam_call_cache_{}_profile_stable_values", base),
         profile_stable_scores: format!("@agam_call_cache_{}_profile_stable_scores", base),
@@ -2903,23 +2910,38 @@ fn emit_specialization_feedback_adjusted_score(
     let attempts = fresh_call_cache_temp(next_temp);
     writeln!(out, "  {attempts} = add i64 {hits}, {fallbacks}").unwrap();
     let enough_samples = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {enough_samples} = icmp uge i64 {attempts}, 8").unwrap();
-    let favorable_double_hits = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {favorable_double_hits} = shl i64 {hits}, 1").unwrap();
+    writeln!(
+        out,
+        "  {enough_samples} = icmp uge i64 {attempts}, {}",
+        agam_profile::SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS
+    )
+    .unwrap();
+    let favorable_weighted_hits = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {favorable_weighted_hits} = mul i64 {hits}, {}",
+        agam_profile::SPECIALIZATION_FEEDBACK_FAVORABLE_MULTIPLIER
+    )
+    .unwrap();
     let favorable = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
-        "  {favorable} = icmp uge i64 {favorable_double_hits}, {attempts}"
+        "  {favorable} = icmp uge i64 {favorable_weighted_hits}, {attempts}"
     )
     .unwrap();
     let no_hits = fresh_call_cache_temp(next_temp);
     writeln!(out, "  {no_hits} = icmp eq i64 {hits}, 0").unwrap();
-    let unfavorable_quad_hits = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {unfavorable_quad_hits} = shl i64 {hits}, 2").unwrap();
+    let unfavorable_weighted_hits = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {unfavorable_weighted_hits} = mul i64 {hits}, {}",
+        agam_profile::SPECIALIZATION_FEEDBACK_UNFAVORABLE_MULTIPLIER
+    )
+    .unwrap();
     let weak_matches = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
-        "  {weak_matches} = icmp ult i64 {unfavorable_quad_hits}, {attempts}"
+        "  {weak_matches} = icmp ult i64 {unfavorable_weighted_hits}, {attempts}"
     )
     .unwrap();
     let unfavorable = fresh_call_cache_temp(next_temp);
@@ -2937,11 +2959,26 @@ fn emit_specialization_feedback_adjusted_score(
     )
     .unwrap();
     let favored_score = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {favored_score} = add i32 {base_score}, 16").unwrap();
+    writeln!(
+        out,
+        "  {favored_score} = add i32 {base_score}, {}",
+        agam_profile::SPECIALIZATION_FEEDBACK_FAVORABLE_SCORE_BONUS
+    )
+    .unwrap();
     let penalty_applies = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {penalty_applies} = icmp ugt i32 {base_score}, 18").unwrap();
+    writeln!(
+        out,
+        "  {penalty_applies} = icmp uge i32 {base_score}, {}",
+        agam_profile::SPECIALIZATION_FEEDBACK_UNFAVORABLE_SCORE_PENALTY
+    )
+    .unwrap();
     let penalized_sub = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {penalized_sub} = sub i32 {base_score}, 18").unwrap();
+    writeln!(
+        out,
+        "  {penalized_sub} = sub i32 {base_score}, {}",
+        agam_profile::SPECIALIZATION_FEEDBACK_UNFAVORABLE_SCORE_PENALTY
+    )
+    .unwrap();
     let penalized_score = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
@@ -2961,6 +2998,312 @@ fn emit_specialization_feedback_adjusted_score(
     )
     .unwrap();
     adjusted_score
+}
+
+fn emit_adaptive_stable_argument_slot_count(
+    out: &mut String,
+    next_temp: &mut usize,
+    globals: &CallCacheGlobalNames,
+    param_count: usize,
+    total_calls: &str,
+) -> String {
+    if param_count == 0 {
+        return "0".into();
+    }
+
+    let enough_calls = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {enough_calls} = icmp uge i64 {total_calls}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_MIN_CALLS_FOR_DOMINANT_HOT_KEY
+    )
+    .unwrap();
+    let stable_call_target = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {stable_call_target} = mul i64 {total_calls}, 3").unwrap();
+
+    let mut stable_slots = String::from("0");
+    for arg_index in 0..param_count {
+        let stable_score_ptr = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {stable_score_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+            MAX_CALL_CACHE_ARGS,
+            MAX_CALL_CACHE_ARGS,
+            globals.profile_stable_scores,
+            arg_index
+        )
+        .unwrap();
+        let stable_score = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {stable_score} = load i64, i64* {stable_score_ptr}").unwrap();
+        let weighted_stable_score = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {weighted_stable_score} = mul i64 {stable_score}, 4").unwrap();
+        let stable_matches = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {stable_matches} = icmp uge i64 {weighted_stable_score}, {stable_call_target}"
+        )
+        .unwrap();
+        let stable_slot = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {stable_slot} = and i1 {enough_calls}, {stable_matches}"
+        )
+        .unwrap();
+        let next_stable_slots = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {next_stable_slots} = add i32 {stable_slots}, 1").unwrap();
+        let stable_slots_value = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {stable_slots_value} = select i1 {stable_slot}, i32 {next_stable_slots}, i32 {stable_slots}"
+        )
+        .unwrap();
+        stable_slots = stable_slots_value;
+    }
+
+    stable_slots
+}
+
+fn emit_optimized_admission_score(
+    out: &mut String,
+    next_temp: &mut usize,
+    layout: &FunctionLayout,
+    globals: &CallCacheGlobalNames,
+    capacity: usize,
+    total_calls: &str,
+    cached_entries: &str,
+    candidate_hits: &str,
+    candidate_reuse_distance: &str,
+) -> String {
+    let repeated_enough = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {repeated_enough} = icmp uge i32 {candidate_hits}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_MIN_CANDIDATE_HITS as u32
+    )
+    .unwrap();
+    let repeated_score = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {repeated_score} = select i1 {repeated_enough}, i32 {}, i32 0",
+        agam_profile::ADAPTIVE_ADMISSION_REPEATED_ARGUMENTS_SCORE
+    )
+    .unwrap();
+
+    let candidate_hot = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {candidate_hot} = icmp uge i32 {candidate_hits}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_HOT_CANDIDATE_HITS as u32
+    )
+    .unwrap();
+    let hot_bonus = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {hot_bonus} = select i1 {candidate_hot}, i32 {}, i32 0",
+        agam_profile::ADAPTIVE_ADMISSION_ALREADY_HOT_SCORE
+    )
+    .unwrap();
+    let score_after_hot = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {score_after_hot} = add i32 {repeated_score}, {hot_bonus}"
+    )
+    .unwrap();
+
+    let short_reuse = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {short_reuse} = icmp ule i64 {candidate_reuse_distance}, {}",
+        (capacity.max(2) as u64) * agam_profile::ADAPTIVE_ADMISSION_SHORT_REUSE_WINDOW_MULTIPLIER
+    )
+    .unwrap();
+    let medium_reuse = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {medium_reuse} = icmp ule i64 {candidate_reuse_distance}, {}",
+        (capacity.max(2) as u64) * agam_profile::ADAPTIVE_ADMISSION_MEDIUM_REUSE_WINDOW_MULTIPLIER
+    )
+    .unwrap();
+    let medium_reuse_bonus = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {medium_reuse_bonus} = select i1 {medium_reuse}, i32 {}, i32 0",
+        agam_profile::ADAPTIVE_ADMISSION_MEDIUM_REUSE_SCORE
+    )
+    .unwrap();
+    let reuse_bonus = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {reuse_bonus} = select i1 {short_reuse}, i32 {}, i32 {medium_reuse_bonus}",
+        agam_profile::ADAPTIVE_ADMISSION_SHORT_REUSE_SCORE
+    )
+    .unwrap();
+    let score_after_reuse = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {score_after_reuse} = add i32 {score_after_hot}, {reuse_bonus}"
+    )
+    .unwrap();
+
+    let hits_total = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {hits_total} = load i64, i64* {}", globals.hits).unwrap();
+    let hit_rate_num = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {hit_rate_num} = mul i64 {hits_total}, 1000").unwrap();
+    let hit_per_thousand = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {hit_per_thousand} = udiv i64 {hit_rate_num}, {total_calls}"
+    )
+    .unwrap();
+    let strong_hit_rate = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {strong_hit_rate} = icmp uge i64 {hit_per_thousand}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_STRONG_HIT_RATE_PER_THOUSAND
+    )
+    .unwrap();
+    let growing_hit_rate = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {growing_hit_rate} = icmp uge i64 {hit_per_thousand}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_GROWING_HIT_RATE_PER_THOUSAND
+    )
+    .unwrap();
+    let growing_hit_rate_bonus = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {growing_hit_rate_bonus} = select i1 {growing_hit_rate}, i32 {}, i32 0",
+        agam_profile::ADAPTIVE_ADMISSION_GROWING_HIT_RATE_SCORE
+    )
+    .unwrap();
+    let hit_rate_bonus = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {hit_rate_bonus} = select i1 {strong_hit_rate}, i32 {}, i32 {growing_hit_rate_bonus}",
+        agam_profile::ADAPTIVE_ADMISSION_STRONG_HIT_RATE_SCORE
+    )
+    .unwrap();
+    let score_after_hit_rate = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {score_after_hit_rate} = add i32 {score_after_reuse}, {hit_rate_bonus}"
+    )
+    .unwrap();
+
+    let candidate_hits_i64 = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {candidate_hits_i64} = zext i32 {candidate_hits} to i64"
+    )
+    .unwrap();
+    let dominant_hits = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {dominant_hits} = mul i64 {candidate_hits_i64}, 2").unwrap();
+    let dominant_hot_key = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {dominant_hot_key} = icmp uge i64 {dominant_hits}, {total_calls}"
+    )
+    .unwrap();
+    let enough_calls_for_hot_key = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {enough_calls_for_hot_key} = icmp uge i64 {total_calls}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_MIN_CALLS_FOR_DOMINANT_HOT_KEY
+    )
+    .unwrap();
+    let dominant_hot_key_with_calls = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {dominant_hot_key_with_calls} = and i1 {enough_calls_for_hot_key}, {dominant_hot_key}"
+    )
+    .unwrap();
+    let dominant_hot_key_bonus = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {dominant_hot_key_bonus} = select i1 {dominant_hot_key_with_calls}, i32 {}, i32 0",
+        agam_profile::ADAPTIVE_ADMISSION_DOMINANT_HOT_KEY_SCORE
+    )
+    .unwrap();
+    let score_after_hot_key = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {score_after_hot_key} = add i32 {score_after_hit_rate}, {dominant_hot_key_bonus}"
+    )
+    .unwrap();
+
+    let stable_slots = emit_adaptive_stable_argument_slot_count(
+        out,
+        next_temp,
+        globals,
+        layout.params.len(),
+        total_calls,
+    );
+    let stable_slots_over_cap = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {stable_slots_over_cap} = icmp ugt i32 {stable_slots}, 2"
+    )
+    .unwrap();
+    let stable_slots_capped = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {stable_slots_capped} = select i1 {stable_slots_over_cap}, i32 2, i32 {stable_slots}"
+    )
+    .unwrap();
+    let stable_slots_bonus = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {stable_slots_bonus} = mul i32 {stable_slots_capped}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_STABLE_ARGUMENT_SLOT_SCORE
+    )
+    .unwrap();
+    let score_after_stable = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {score_after_stable} = add i32 {score_after_hot_key}, {stable_slots_bonus}"
+    )
+    .unwrap();
+
+    let score_after_capacity = if capacity > 0 {
+        let cache_full = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {cache_full} = icmp uge i32 {cached_entries}, {}",
+            capacity as u32
+        )
+        .unwrap();
+        let full_penalty_applies = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {full_penalty_applies} = icmp uge i32 {score_after_stable}, {}",
+            agam_profile::ADAPTIVE_ADMISSION_CACHE_FULL_PENALTY
+        )
+        .unwrap();
+        let full_penalty_sub = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {full_penalty_sub} = sub i32 {score_after_stable}, {}",
+            agam_profile::ADAPTIVE_ADMISSION_CACHE_FULL_PENALTY
+        )
+        .unwrap();
+        let full_penalized = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {full_penalized} = select i1 {full_penalty_applies}, i32 {full_penalty_sub}, i32 0"
+        )
+        .unwrap();
+        let score_after_capacity = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {score_after_capacity} = select i1 {cache_full}, i32 {full_penalized}, i32 {score_after_stable}"
+        )
+        .unwrap();
+        score_after_capacity
+    } else {
+        score_after_stable
+    };
+
+    emit_specialization_feedback_adjusted_score(out, next_temp, globals, &score_after_capacity)
 }
 
 fn emit_specialized_call_or_fallback(
@@ -3713,9 +4056,34 @@ fn emit_optimized_call_cache_wrapper_ir(
     }
     writeln!(out, "  store i1 true, i1* {}", globals.pending_valid).unwrap();
     writeln!(out, "  store i32 1, i32* {}", globals.pending_count).unwrap();
+    writeln!(
+        out,
+        "  store i64 {calls_new}, i64* {}",
+        globals.pending_last_seen
+    )
+    .unwrap();
     writeln!(out, "  br label %ret_miss").unwrap();
 
     writeln!(out, "admit_hit:").unwrap();
+    let pending_last_seen_old = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {pending_last_seen_old} = load i64, i64* {}",
+        globals.pending_last_seen
+    )
+    .unwrap();
+    let pending_reuse_distance = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {pending_reuse_distance} = sub i64 {calls_new}, {pending_last_seen_old}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {calls_new}, i64* {}",
+        globals.pending_last_seen
+    )
+    .unwrap();
     let pending_count_old = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -3735,28 +4103,46 @@ fn emit_optimized_call_cache_wrapper_ir(
         globals.pending_count
     )
     .unwrap();
+    let store_len = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {store_len} = load i32, i32* {}", globals.len).unwrap();
+    let candidate_score = emit_optimized_admission_score(
+        out,
+        &mut next_temp,
+        layout,
+        &globals,
+        capacity,
+        &calls_new,
+        &store_len,
+        &pending_count_new,
+        &pending_reuse_distance,
+    );
     let repeated_enough = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
         "  {repeated_enough} = icmp uge i32 {pending_count_new}, {}",
-        OPTIMIZED_CALL_CACHE_MIN_REPEATS
+        agam_profile::ADAPTIVE_ADMISSION_MIN_CANDIDATE_HITS as u32
+    )
+    .unwrap();
+    let threshold_met = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {threshold_met} = icmp uge i32 {candidate_score}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_OPTIMIZE_THRESHOLD
+    )
+    .unwrap();
+    let admit_candidate = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {admit_candidate} = and i1 {repeated_enough}, {threshold_met}"
     )
     .unwrap();
     writeln!(
         out,
-        "  br i1 {repeated_enough}, label %store_check, label %ret_miss"
+        "  br i1 {admit_candidate}, label %store_check, label %ret_miss"
     )
     .unwrap();
-    let candidate_score = emit_specialization_feedback_adjusted_score(
-        out,
-        &mut next_temp,
-        &globals,
-        &pending_count_new,
-    );
 
     writeln!(out, "store_check:").unwrap();
-    let store_len = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {store_len} = load i32, i32* {}", globals.len).unwrap();
     let has_room = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -4054,6 +4440,7 @@ fn emit_optimized_call_cache_wrapper_ir(
     writeln!(out, "store_done:").unwrap();
     writeln!(out, "  store i1 false, i1* {}", globals.pending_valid).unwrap();
     writeln!(out, "  store i32 0, i32* {}", globals.pending_count).unwrap();
+    writeln!(out, "  store i64 0, i64* {}", globals.pending_last_seen).unwrap();
     writeln!(out, "  br label %ret_miss").unwrap();
 
     writeln!(out, "ret_miss:").unwrap();
@@ -4600,12 +4987,13 @@ fn main() -> i32:
         );
         assert!(llvm.contains("@agam_call_cache_hot_scores = internal global"));
         assert!(llvm.contains("@agam_call_cache_hot_pending_count = internal global i32 0"));
+        assert!(llvm.contains("@agam_call_cache_hot_pending_last_seen = internal global i64 0"));
         assert!(llvm.contains("label %admit_check"));
         assert!(llvm.contains("label %victim_init"));
     }
 
     #[test]
-    fn test_emit_optimized_call_cache_wrapper_uses_specialization_feedback_in_scores() {
+    fn test_emit_optimized_call_cache_wrapper_uses_adaptive_admission_signals() {
         let llvm = compile_to_llvm_with_options(
             r#"
 fn hot(n: i64) -> i64:
@@ -4621,6 +5009,11 @@ fn main() -> i32:
                 ..LlvmEmitOptions::default()
             },
         );
+        assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_pending_last_seen"));
+        assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_hits"));
+        assert!(llvm.contains(
+            "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_scores"
+        ));
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
         assert!(
             llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")

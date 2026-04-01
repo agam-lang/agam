@@ -8,6 +8,30 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 pub const CALL_CACHE_PROFILE_SCHEMA_VERSION: u32 = 1;
+pub const ADAPTIVE_ADMISSION_MIN_CANDIDATE_HITS: u64 = 2;
+pub const ADAPTIVE_ADMISSION_HOT_CANDIDATE_HITS: u64 = 3;
+pub const ADAPTIVE_ADMISSION_SHORT_REUSE_WINDOW_MULTIPLIER: u64 = 2;
+pub const ADAPTIVE_ADMISSION_MEDIUM_REUSE_WINDOW_MULTIPLIER: u64 = 4;
+pub const ADAPTIVE_ADMISSION_GROWING_HIT_RATE_PER_THOUSAND: u64 = 100;
+pub const ADAPTIVE_ADMISSION_STRONG_HIT_RATE_PER_THOUSAND: u64 = 250;
+pub const ADAPTIVE_ADMISSION_MIN_CALLS_FOR_DOMINANT_HOT_KEY: u64 = 8;
+pub const ADAPTIVE_ADMISSION_REPEATED_ARGUMENTS_SCORE: u32 = 40;
+pub const ADAPTIVE_ADMISSION_ALREADY_HOT_SCORE: u32 = 12;
+pub const ADAPTIVE_ADMISSION_SHORT_REUSE_SCORE: u32 = 24;
+pub const ADAPTIVE_ADMISSION_MEDIUM_REUSE_SCORE: u32 = 12;
+pub const ADAPTIVE_ADMISSION_GROWING_HIT_RATE_SCORE: u32 = 8;
+pub const ADAPTIVE_ADMISSION_STRONG_HIT_RATE_SCORE: u32 = 18;
+pub const ADAPTIVE_ADMISSION_DOMINANT_HOT_KEY_SCORE: u32 = 18;
+pub const ADAPTIVE_ADMISSION_STABLE_ARGUMENT_SLOT_SCORE: u32 = 10;
+pub const ADAPTIVE_ADMISSION_BROAD_KEY_SPREAD_PENALTY: u32 = 20;
+pub const ADAPTIVE_ADMISSION_CACHE_FULL_PENALTY: u32 = 6;
+pub const ADAPTIVE_ADMISSION_BASIC_THRESHOLD: u32 = 40;
+pub const ADAPTIVE_ADMISSION_OPTIMIZE_THRESHOLD: u32 = 52;
+pub const SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS: u64 = 8;
+pub const SPECIALIZATION_FEEDBACK_FAVORABLE_SCORE_BONUS: u32 = 16;
+pub const SPECIALIZATION_FEEDBACK_UNFAVORABLE_SCORE_PENALTY: u32 = 18;
+pub const SPECIALIZATION_FEEDBACK_FAVORABLE_MULTIPLIER: u64 = 2;
+pub const SPECIALIZATION_FEEDBACK_UNFAVORABLE_MULTIPLIER: u64 = 4;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StableScalarValueProfile {
@@ -163,52 +187,55 @@ pub fn adaptive_admission_decision(
     let mut payoff_score = 0u32;
     let mut reasons = Vec::new();
 
-    if observation.candidate_hits >= 2 {
-        payoff_score += 40;
+    if observation.candidate_hits >= ADAPTIVE_ADMISSION_MIN_CANDIDATE_HITS {
+        payoff_score += ADAPTIVE_ADMISSION_REPEATED_ARGUMENTS_SCORE;
         reasons.push("repeated arguments".into());
     }
-    if observation.candidate_hits >= 3 {
-        payoff_score += 12;
+    if observation.candidate_hits >= ADAPTIVE_ADMISSION_HOT_CANDIDATE_HITS {
+        payoff_score += ADAPTIVE_ADMISSION_ALREADY_HOT_SCORE;
         reasons.push("candidate is already hot".into());
     }
     if let Some(distance) = observation.candidate_reuse_distance {
-        let short = (observation.capacity.max(2) as u64) * 2;
-        let medium = (observation.capacity.max(2) as u64) * 4;
+        let short =
+            (observation.capacity.max(2) as u64) * ADAPTIVE_ADMISSION_SHORT_REUSE_WINDOW_MULTIPLIER;
+        let medium = (observation.capacity.max(2) as u64)
+            * ADAPTIVE_ADMISSION_MEDIUM_REUSE_WINDOW_MULTIPLIER;
         if distance <= short {
-            payoff_score += 24;
+            payoff_score += ADAPTIVE_ADMISSION_SHORT_REUSE_SCORE;
             reasons.push("short reuse distance".into());
         } else if distance <= medium {
-            payoff_score += 12;
+            payoff_score += ADAPTIVE_ADMISSION_MEDIUM_REUSE_SCORE;
             reasons.push("moderate reuse distance".into());
         }
     }
     if observation.total_calls > 0 {
         let hit_per_thousand =
             observation.total_hits.saturating_mul(1000) / observation.total_calls;
-        if hit_per_thousand >= 250 {
-            payoff_score += 18;
+        if hit_per_thousand >= ADAPTIVE_ADMISSION_STRONG_HIT_RATE_PER_THOUSAND {
+            payoff_score += ADAPTIVE_ADMISSION_STRONG_HIT_RATE_SCORE;
             reasons.push("strong hit rate".into());
-        } else if hit_per_thousand >= 100 {
-            payoff_score += 8;
+        } else if hit_per_thousand >= ADAPTIVE_ADMISSION_GROWING_HIT_RATE_PER_THOUSAND {
+            payoff_score += ADAPTIVE_ADMISSION_GROWING_HIT_RATE_SCORE;
             reasons.push("growing hit rate".into());
         }
     }
-    if observation.total_calls >= 8
+    if observation.total_calls >= ADAPTIVE_ADMISSION_MIN_CALLS_FOR_DOMINANT_HOT_KEY
         && observation.hottest_key_hits.saturating_mul(2) >= observation.total_calls
     {
-        payoff_score += 18;
+        payoff_score += ADAPTIVE_ADMISSION_DOMINANT_HOT_KEY_SCORE;
         reasons.push("dominant hot key".into());
     }
     if observation.stable_argument_slots > 0 {
-        payoff_score += 10 * observation.stable_argument_slots.min(2) as u32;
+        payoff_score += ADAPTIVE_ADMISSION_STABLE_ARGUMENT_SLOT_SCORE
+            * observation.stable_argument_slots.min(2) as u32;
         reasons.push("stable scalar values".into());
     }
     if observation.unique_keys > observation.capacity.saturating_mul(2) {
-        payoff_score = payoff_score.saturating_sub(20);
+        payoff_score = payoff_score.saturating_sub(ADAPTIVE_ADMISSION_BROAD_KEY_SPREAD_PENALTY);
         reasons.push("broad unique-key spread".into());
     }
     if observation.cached_entries >= observation.capacity && observation.capacity > 0 {
-        payoff_score = payoff_score.saturating_sub(6);
+        payoff_score = payoff_score.saturating_sub(ADAPTIVE_ADMISSION_CACHE_FULL_PENALTY);
         reasons.push("cache is full".into());
     }
     match specialization_feedback_signal_from_counts(
@@ -216,18 +243,25 @@ pub fn adaptive_admission_decision(
         observation.specialization_guard_fallbacks,
     ) {
         Some(SpecializationFeedbackSignal::Favorable) => {
-            payoff_score = payoff_score.saturating_add(16);
+            payoff_score =
+                payoff_score.saturating_add(SPECIALIZATION_FEEDBACK_FAVORABLE_SCORE_BONUS);
             reasons.push("specialization guard matches".into());
         }
         Some(SpecializationFeedbackSignal::Unfavorable) => {
-            payoff_score = payoff_score.saturating_sub(18);
+            payoff_score =
+                payoff_score.saturating_sub(SPECIALIZATION_FEEDBACK_UNFAVORABLE_SCORE_PENALTY);
             reasons.push("specialization guard mismatches".into());
         }
         Some(SpecializationFeedbackSignal::Neutral) | None => {}
     }
 
-    let threshold = if observation.optimize_mode { 52 } else { 40 };
-    let admit = observation.candidate_hits >= 2 && payoff_score >= threshold;
+    let threshold = if observation.optimize_mode {
+        ADAPTIVE_ADMISSION_OPTIMIZE_THRESHOLD
+    } else {
+        ADAPTIVE_ADMISSION_BASIC_THRESHOLD
+    };
+    let admit = observation.candidate_hits >= ADAPTIVE_ADMISSION_MIN_CANDIDATE_HITS
+        && payoff_score >= threshold;
 
     AdaptiveAdmissionDecision {
         admit,
@@ -430,8 +464,12 @@ pub fn apply_specialization_feedback_payoff(
         specialization_guard_hits,
         specialization_guard_fallbacks,
     ) {
-        Some(SpecializationFeedbackSignal::Favorable) => payoff_score.saturating_add(16),
-        Some(SpecializationFeedbackSignal::Unfavorable) => payoff_score.saturating_sub(18),
+        Some(SpecializationFeedbackSignal::Favorable) => {
+            payoff_score.saturating_add(SPECIALIZATION_FEEDBACK_FAVORABLE_SCORE_BONUS)
+        }
+        Some(SpecializationFeedbackSignal::Unfavorable) => {
+            payoff_score.saturating_sub(SPECIALIZATION_FEEDBACK_UNFAVORABLE_SCORE_PENALTY)
+        }
         Some(SpecializationFeedbackSignal::Neutral) | None => payoff_score,
     }
 }
@@ -441,13 +479,18 @@ fn specialization_feedback_signal_from_counts(
     specialization_guard_fallbacks: u64,
 ) -> Option<SpecializationFeedbackSignal> {
     let attempts = specialization_guard_hits.saturating_add(specialization_guard_fallbacks);
-    if attempts < 8 {
+    if attempts < SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS {
         return None;
     }
-    if specialization_guard_hits == 0 || specialization_guard_hits.saturating_mul(4) < attempts {
+    if specialization_guard_hits == 0
+        || specialization_guard_hits.saturating_mul(SPECIALIZATION_FEEDBACK_UNFAVORABLE_MULTIPLIER)
+            < attempts
+    {
         return Some(SpecializationFeedbackSignal::Unfavorable);
     }
-    if specialization_guard_hits.saturating_mul(2) >= attempts {
+    if specialization_guard_hits.saturating_mul(SPECIALIZATION_FEEDBACK_FAVORABLE_MULTIPLIER)
+        >= attempts
+    {
         return Some(SpecializationFeedbackSignal::Favorable);
     }
     Some(SpecializationFeedbackSignal::Neutral)
