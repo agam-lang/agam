@@ -8,8 +8,8 @@
 
 1. **Phase 15D: Value Profiling, Adaptive Admission, and Specialization**
    - Status: partial
-   - Done: runtime-side value profiling, specialization guard reporting, and persisted optimize/specialization decisions that now react to measured guard feedback
-   - Next work: feed measured payoff and specialization guard evidence into runtime admission and eviction policy
+   - Done: runtime-side value profiling, specialization guard reporting, persisted optimize/specialization decisions that react to measured guard feedback, and live JIT admission/eviction scoring that now reacts to guarded-clone outcomes
+   - Next work: mirror the specialization-feedback runtime policy loop on the LLVM cache path
    - Detail file: `details/15D.md`
 2. **Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation**
    - Status: not started as a completed slice

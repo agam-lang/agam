@@ -82,6 +82,10 @@ pub struct AdaptiveAdmissionObservation {
     pub candidate_reuse_distance: Option<u64>,
     pub hottest_key_hits: u64,
     pub stable_argument_slots: usize,
+    #[serde(default)]
+    pub specialization_guard_hits: u64,
+    #[serde(default)]
+    pub specialization_guard_fallbacks: u64,
     pub optimize_mode: bool,
 }
 
@@ -206,6 +210,20 @@ pub fn adaptive_admission_decision(
     if observation.cached_entries >= observation.capacity && observation.capacity > 0 {
         payoff_score = payoff_score.saturating_sub(6);
         reasons.push("cache is full".into());
+    }
+    match specialization_feedback_signal_from_counts(
+        observation.specialization_guard_hits,
+        observation.specialization_guard_fallbacks,
+    ) {
+        Some(SpecializationFeedbackSignal::Favorable) => {
+            payoff_score = payoff_score.saturating_add(16);
+            reasons.push("specialization guard matches".into());
+        }
+        Some(SpecializationFeedbackSignal::Unfavorable) => {
+            payoff_score = payoff_score.saturating_sub(18);
+            reasons.push("specialization guard mismatches".into());
+        }
+        Some(SpecializationFeedbackSignal::Neutral) | None => {}
     }
 
     let threshold = if observation.optimize_mode { 52 } else { 40 };
@@ -403,24 +421,45 @@ fn reuse_distance_signal(
         .map(|_| ReuseDistanceSignal::Neutral)
 }
 
-fn specialization_feedback_signal(
-    profile: &CallCacheFunctionProfile,
+pub fn apply_specialization_feedback_payoff(
+    payoff_score: u32,
+    specialization_guard_hits: u64,
+    specialization_guard_fallbacks: u64,
+) -> u32 {
+    match specialization_feedback_signal_from_counts(
+        specialization_guard_hits,
+        specialization_guard_fallbacks,
+    ) {
+        Some(SpecializationFeedbackSignal::Favorable) => payoff_score.saturating_add(16),
+        Some(SpecializationFeedbackSignal::Unfavorable) => payoff_score.saturating_sub(18),
+        Some(SpecializationFeedbackSignal::Neutral) | None => payoff_score,
+    }
+}
+
+fn specialization_feedback_signal_from_counts(
+    specialization_guard_hits: u64,
+    specialization_guard_fallbacks: u64,
 ) -> Option<SpecializationFeedbackSignal> {
-    let attempts = profile
-        .specialization_guard_hits
-        .saturating_add(profile.specialization_guard_fallbacks);
+    let attempts = specialization_guard_hits.saturating_add(specialization_guard_fallbacks);
     if attempts < 8 {
         return None;
     }
-    if profile.specialization_guard_hits == 0
-        || profile.specialization_guard_hits.saturating_mul(4) < attempts
-    {
+    if specialization_guard_hits == 0 || specialization_guard_hits.saturating_mul(4) < attempts {
         return Some(SpecializationFeedbackSignal::Unfavorable);
     }
-    if profile.specialization_guard_hits.saturating_mul(2) >= attempts {
+    if specialization_guard_hits.saturating_mul(2) >= attempts {
         return Some(SpecializationFeedbackSignal::Favorable);
     }
     Some(SpecializationFeedbackSignal::Neutral)
+}
+
+fn specialization_feedback_signal(
+    profile: &CallCacheFunctionProfile,
+) -> Option<SpecializationFeedbackSignal> {
+    specialization_feedback_signal_from_counts(
+        profile.specialization_guard_hits,
+        profile.specialization_guard_fallbacks,
+    )
 }
 
 fn specialization_feedback_is_favorable(profile: &CallCacheFunctionProfile) -> bool {
@@ -538,6 +577,8 @@ mod tests {
             candidate_reuse_distance: None,
             hottest_key_hits: 1,
             stable_argument_slots: 0,
+            specialization_guard_hits: 0,
+            specialization_guard_fallbacks: 0,
             optimize_mode: false,
         });
         assert!(!decision.admit);
@@ -556,10 +597,52 @@ mod tests {
             candidate_reuse_distance: Some(1),
             hottest_key_hits: 8,
             stable_argument_slots: 1,
+            specialization_guard_hits: 0,
+            specialization_guard_fallbacks: 0,
             optimize_mode: false,
         });
         assert!(decision.admit);
         assert!(decision.payoff_score >= 40);
+    }
+
+    #[test]
+    fn adaptive_admission_uses_favorable_specialization_feedback_in_optimize_mode() {
+        let decision = adaptive_admission_decision(&AdaptiveAdmissionObservation {
+            total_calls: 16,
+            total_hits: 0,
+            unique_keys: 2,
+            cached_entries: 0,
+            capacity: 8,
+            candidate_hits: 2,
+            candidate_reuse_distance: None,
+            hottest_key_hits: 4,
+            stable_argument_slots: 0,
+            specialization_guard_hits: 8,
+            specialization_guard_fallbacks: 0,
+            optimize_mode: true,
+        });
+        assert!(decision.admit);
+        assert!(decision.payoff_score >= 52);
+    }
+
+    #[test]
+    fn adaptive_admission_penalizes_unfavorable_specialization_feedback() {
+        let decision = adaptive_admission_decision(&AdaptiveAdmissionObservation {
+            total_calls: 16,
+            total_hits: 0,
+            unique_keys: 2,
+            cached_entries: 0,
+            capacity: 8,
+            candidate_hits: 2,
+            candidate_reuse_distance: None,
+            hottest_key_hits: 4,
+            stable_argument_slots: 0,
+            specialization_guard_hits: 0,
+            specialization_guard_fallbacks: 8,
+            optimize_mode: false,
+        });
+        assert!(!decision.admit);
+        assert!(decision.payoff_score < 40);
     }
 
     #[test]

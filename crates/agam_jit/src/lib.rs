@@ -441,6 +441,8 @@ impl CallCacheFunctionState {
             candidate_reuse_distance: candidate.last_reuse_distance,
             hottest_key_hits: self.hottest_key.map(|(_, hits)| hits).unwrap_or(0),
             stable_argument_slots,
+            specialization_guard_hits: self.specialization_guard_hits,
+            specialization_guard_fallbacks: self.specialization_guard_fallbacks,
             optimize_mode: self.mode == CallCacheMode::Optimize,
         }
     }
@@ -2879,8 +2881,18 @@ impl CallCacheRuntime {
     fn optimized_entry_score(&self, function_index: usize, key: &CallCacheKey) -> (u32, u64) {
         self.functions
             .get(function_index)
-            .and_then(|function| function.entries.get(key))
-            .map(|entry| (entry.payoff_score, entry.last_touch))
+            .and_then(|function| {
+                function.entries.get(key).map(|entry| {
+                    (
+                        agam_profile::apply_specialization_feedback_payoff(
+                            entry.payoff_score,
+                            function.specialization_guard_hits,
+                            function.specialization_guard_fallbacks,
+                        ),
+                        entry.last_touch,
+                    )
+                })
+            })
             .unwrap_or((0, 0))
     }
 
@@ -3621,5 +3633,91 @@ fn main() -> i32:
             0,
             "unique inputs should not bypass the repeated-input admission policy"
         );
+    }
+
+    #[test]
+    fn test_optimize_mode_uses_favorable_specialization_feedback_for_admission() {
+        let mut runtime =
+            CallCacheRuntime::new(&["hot".to_string()], &[CallCacheMode::Optimize], 4, 0);
+        for _ in 0..8 {
+            runtime.record_specialization_hit(0);
+        }
+        let key = CallCacheKey {
+            len: 1,
+            args: [33, 0, 0, 0],
+        };
+
+        runtime.lookup(0, key);
+        runtime.store(0, key, 99);
+        runtime.lookup(0, key);
+        runtime.store(0, key, 99);
+
+        assert_eq!(runtime.functions[0].entries.len(), 1);
+    }
+
+    #[test]
+    fn test_optimize_mode_rejects_unfavorable_specialization_feedback() {
+        let mut runtime =
+            CallCacheRuntime::new(&["hot".to_string()], &[CallCacheMode::Optimize], 4, 0);
+        for _ in 0..8 {
+            runtime.record_specialization_fallback(0);
+        }
+        let key = CallCacheKey {
+            len: 1,
+            args: [33, 0, 0, 0],
+        };
+
+        runtime.lookup(0, key);
+        runtime.store(0, key, 99);
+        runtime.lookup(0, key);
+        runtime.store(0, key, 99);
+
+        assert_eq!(runtime.functions[0].entries.len(), 0);
+    }
+
+    #[test]
+    fn test_global_optimized_victim_prefers_unfavorable_specialization_feedback() {
+        let mut runtime = CallCacheRuntime::new(
+            &["cold".to_string(), "hot".to_string()],
+            &[CallCacheMode::Optimize, CallCacheMode::Optimize],
+            2,
+            0,
+        );
+        let cold_key = CallCacheKey {
+            len: 1,
+            args: [7, 0, 0, 0],
+        };
+        let hot_key = CallCacheKey {
+            len: 1,
+            args: [33, 0, 0, 0],
+        };
+        runtime.functions[0].entries.insert(
+            cold_key,
+            CallCacheEntry {
+                value: 1,
+                hits: 4,
+                last_touch: 10,
+                payoff_score: 12,
+            },
+        );
+        runtime.functions[1].entries.insert(
+            hot_key,
+            CallCacheEntry {
+                value: 2,
+                hits: 4,
+                last_touch: 20,
+                payoff_score: 12,
+            },
+        );
+        runtime.functions[0].specialization_guard_hits = 0;
+        runtime.functions[0].specialization_guard_fallbacks = 8;
+        runtime.functions[1].specialization_guard_hits = 8;
+        runtime.functions[1].specialization_guard_fallbacks = 0;
+
+        let victim = runtime
+            .global_optimized_victim()
+            .expect("expected an optimized victim");
+        assert_eq!(victim.function_index, 0);
+        assert_eq!(victim.key, cold_key);
     }
 }
