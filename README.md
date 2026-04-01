@@ -300,3 +300,462 @@ For backend and LLVM-adjacent work, the repo guidance is:
 - treat benchmark evidence as part of the implementation, not optional follow-up
 
 Agam is building toward one language that can scale from scripting to systems work to AI-native native code without splitting the project into disconnected sub-languages. That is the point of the repository, and the LLVM/JIT/tooling work in this workspace is the current path toward it.
+
+## How To Code With Agam: Complete Guide A-Z
+
+This section is a repo-grounded guide to the Agam surface that is actually present in this workspace today. It is intentionally based on `examples/`, `.agent/test/`, and the compiler/runtime crates instead of on future language ideas.
+
+### 1. Pick A Source Mode First
+
+Agam currently supports three source styles:
+
+| Mode | When To Use It | Example |
+| --- | --- | --- |
+| `@lang.base` | indentation-significant, readable application code | [`examples/hello_base.agam`](./examples/hello_base.agam) |
+| `@lang.base.dynamic` | scripting-oriented workflows with lighter binding syntax | [`examples/hello_base_dynamic.agam`](./examples/hello_base_dynamic.agam) |
+| `@lang.advance` | brace-delimited, explicit native-style code | [`examples/hello_advance.agam`](./examples/hello_advance.agam) |
+
+If you are unsure, start with `@lang.base` for readability or `@lang.advance` when you want the same explicit style used by most backend, benchmark, and LLVM-native examples.
+
+### 2. Start With A Small Runnable File
+
+Base mode:
+
+```agam
+@lang.base
+fn main():
+    let total = 40 + 2
+    if total == 42:
+        return 0
+    return 1
+```
+
+Advance mode:
+
+```agam
+@lang.advance
+fn main() -> i32 {
+    let total: i32 = 40 + 2;
+    if total == 42 {
+        return 0;
+    }
+    return 1;
+}
+```
+
+The current repo examples typically use an integer `main` that returns `0` on success.
+
+### 3. Use The Standard Local Development Loop
+
+For day-to-day work, the current first-party loop is:
+
+```bash
+agamc fmt --check path/to/file.agam
+agamc check path/to/file.agam
+agamc run path/to/file.agam --backend jit
+agamc build path/to/file.agam --fast
+```
+
+If you are working in a project directory created by `agamc new`, the integrated loop is:
+
+```bash
+agamc dev
+```
+
+### 4. Organize Code Around Functions And Imports
+
+The current Agam examples are function-oriented. A typical file:
+
+- selects a language mode with `@lang.*`
+- imports standard modules when needed
+- defines helper functions first
+- defines `main` last
+
+Example from the benchmark sources:
+
+```agam
+@lang.advance
+
+import agam_std.numerical
+import agam_std.ndarray
+import agam_std.dataframe
+
+fn main() -> i32 {
+    return 0;
+}
+```
+
+### 5. Write Typed Native Loops For Hot Paths
+
+The repo's benchmark and backend work assumes direct loops and explicit scalar types on hot paths. This is the current style Agam optimizes around:
+
+```agam
+@lang.advance
+fn hot(n: i64) -> i64 {
+    let total: i64 = 0;
+    let i: i64 = 0;
+    while i < n {
+        total = total + i;
+        i = i + 1;
+    }
+    return total;
+}
+```
+
+### 6. Use Tests As Plain Agam Code
+
+Current repo tests can live in `.agam` files with `@test` annotations:
+
+```agam
+@test
+fn arithmetic_is_sound() -> bool:
+    return (20 + 22) == 42
+```
+
+See [`examples/smoke_tests.agam`](./examples/smoke_tests.agam) for the current test-shaped syntax.
+
+### 7. Choose The Right Backend For The Job
+
+- use `--backend jit` for quick local execution
+- use `--backend llvm` for the primary native product path
+- use `--fast` when you want the best currently available optimized path without choosing manually
+- use `agamc doctor` when LLVM readiness is unclear
+
+### 8. Keep Current Limits In Mind
+
+Agam is real and runnable today, but it is still under active compiler development. The safest way to write believable Agam code is:
+
+- follow the examples already in `examples/` and `.agent/test/`
+- prefer the language constructs already proven by the parser, MIR, JIT, and LLVM paths
+- treat not-yet-documented or not-yet-exampled surface area as in progress rather than assumed
+
+## Agam Syntax For Development: Complete Guide A-Z
+
+This syntax guide is intentionally grounded in the current repo examples and parser-facing code. It documents the surface that is already visible in this workspace.
+
+### File Directives And Annotations
+
+- `@lang.base`
+  selects indentation-significant base mode
+- `@lang.base.dynamic`
+  selects scripting-oriented dynamic base mode
+- `@lang.advance`
+  selects brace-delimited advanced mode
+- `@test`
+  marks test-oriented functions/files used by the current testing flow
+- experimental annotations such as `@experimental.call_cache.optimize`
+  exist for optimization work and should stay local to hot-path experiments
+
+### Comments
+
+- base-mode examples use `#`
+- advance-mode examples use `//`
+
+### Functions
+
+Base mode:
+
+```agam
+fn add(a: i64, b: i64) -> i64:
+    return a + b
+```
+
+Advance mode:
+
+```agam
+fn add(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+```
+
+### Variables And Bindings
+
+Current repo examples show:
+
+- explicit bindings with `let`
+- type annotations such as `let total: i64 = 0`
+- dynamic-style assignments without `let` in `@lang.base.dynamic`
+- reassignment in loops and accumulators
+- `let mut` in some `@lang.advance` examples, but not as the only style used in the repo
+
+Examples:
+
+```agam
+let total: i64 = 0
+let i: i64 = 0
+total = total + 1
+```
+
+```agam
+let mut total: i32 = 0;
+total += 1;
+```
+
+### Conditionals
+
+Base mode:
+
+```agam
+if total == 42:
+    return 0
+return 1
+```
+
+Advance mode:
+
+```agam
+if total == 42 {
+    return 0;
+}
+return 1;
+```
+
+### Loops
+
+Current repo-grounded loop forms include `while` and `for`.
+
+`while`:
+
+```agam
+let i: i64 = 0
+while i < limit:
+    i = i + 1
+```
+
+`for`:
+
+```agam
+for score in scores {
+    total += score;
+}
+```
+
+### Types
+
+Current examples show:
+
+- signed integers such as `i32` and `i64`
+- floating-point values such as `f64`
+- `bool`
+- `String`
+- generic arrays such as `Array<i32>` and `Array<f64>`
+
+Example:
+
+```agam
+let name: String = "World";
+let scores: Array<i32> = [90, 85, 72, 95];
+```
+
+### Literals And Operators
+
+The repo examples use:
+
+- integer literals: `0`, `42`, `30000000`
+- floating-point literals: `0.001`, `0.1`, `0.00000001`
+- string literals: `"World"`
+- array literals: `[90, 85, 72, 95]`
+- arithmetic operators: `+`, `-`, `*`, `/`, `%`
+- comparison operators: `==`, `!=`, `<`, `<=`, `>=`, `>`
+
+### Strings And Printing
+
+Current examples show both direct concatenation and formatted printing:
+
+```agam
+println("Hello, " + name + "!");
+println("Average score: {}", avg);
+print_int(acc);
+```
+
+Base-mode examples also show formatted-string syntax:
+
+```agam
+print(f"Average score: {avg}")
+```
+
+### Imports And Standard Modules
+
+Current repo examples import standard modules like this:
+
+```agam
+import agam_std.numerical
+import agam_std.ndarray
+import agam_std.dataframe
+```
+
+### Indexing, Method Calls, And Field-Style Access
+
+The current examples show:
+
+- indexing: `x[0]`
+- method-style calls: `scores.len()`, `map(...)`, `filter(...)`
+- field-style access in closures such as `row.score`
+
+### Closures
+
+Advance-mode examples show closure syntax like:
+
+```agam
+let grad_f = |x: Array<f64>| -> Array<f64> {
+    let dx: f64 = -2.0 * (1.0 - x[0]);
+    return [dx];
+};
+```
+
+### Process Arguments And Host Helpers
+
+The current runtime-facing examples show:
+
+```agam
+if argc() > index {
+    return parse_int(argv(index));
+}
+```
+
+### Complete Repo-Grounded Syntax Example
+
+```agam
+@lang.advance
+
+fn arg_or(index: i32, fallback: i64) -> i64 {
+    if argc() > index {
+        return parse_int(argv(index));
+    }
+    return fallback;
+}
+
+fn main() -> i32 {
+    let input: i64 = arg_or(1, 33);
+    let acc: i64 = 0;
+    let i: i64 = 0;
+    while i < 8 {
+        acc = acc + input + i;
+        i = i + 1;
+    }
+    print_int(acc);
+    return 0;
+}
+```
+
+## Features
+
+Agam's current repo-visible features include:
+
+- multiple language modes through one compiler pipeline
+- a real frontend stack: lexer, parser, AST, semantic analysis, HIR, and MIR
+- direct LLVM IR emission
+- a C backend
+- a Cranelift JIT
+- native runtime helpers for arguments, printing, ARC, SIMD, and host-facing support
+- call-cache profiling, adaptive admission, and guarded specialization work
+- persisted optimization and specialization planning
+- first-party CLI workflows: `new`, `dev`, `fmt`, `doctor`, `cache status`, `package sdk`
+- standard-library-facing work for numerical, tensor, dataframe, and ML-oriented code paths
+- SDK packaging and host-toolchain discovery for the native LLVM direction
+
+Important feature-status note:
+
+- some of these surfaces are already working end to end
+- some are partially complete but real
+- some are still active compiler-development areas rather than finished product contracts
+
+The earlier "Current Status", "What Works Today", and "What Is Still In Progress" sections remain the authority for readiness.
+
+## How Agam Works: Complete Guide A-Z
+
+The short version is: you write `.agam` source, `agamc` lowers it through several internal compiler layers, then it either executes through the JIT or emits native code through the C or LLVM backends.
+
+### 1. Source And Mode Selection
+
+Your file starts by selecting a language mode such as `@lang.base` or `@lang.advance`. That controls the parser-facing surface style, but the source still enters one compiler pipeline.
+
+### 2. Lexing
+
+`agam_lexer` converts source text into tokens. This is where punctuation, keywords, indentation-sensitive structure, and literals first become compiler data.
+
+### 3. Parsing And AST Construction
+
+`agam_parser` and `agam_ast` build the syntax tree for the file. At this stage, Agam structure is explicit enough for diagnostics and later semantic work.
+
+### 4. Semantic Analysis
+
+`agam_sema` performs typing and semantic checks. This is where the compiler validates meaning rather than just surface syntax.
+
+### 5. Typed Lowering
+
+`agam_hir` and `agam_mir` lower the program into the compiler's typed internal forms. MIR is the main optimization and backend handoff layer in the current workspace.
+
+### 6. Optimization And Profiling Hooks
+
+From MIR, Agam can:
+
+- optimize code structurally
+- attach profiling-sensitive behavior
+- prepare adaptive decisions such as call-cache selection and specialization planning
+
+The profiling side is modeled in `agam_profile`, and the runtime helpers needed by execution live in `agam_runtime`.
+
+### 7. Execution Paths
+
+Agam currently has three real execution/codegen paths:
+
+- `agam_jit`
+  uses Cranelift for in-memory execution
+- `agam_codegen` C backend
+  emits portable C for a fallback native path
+- `agam_codegen` LLVM backend
+  emits LLVM IR for the primary native product direction
+
+### 8. Runtime Support
+
+Regardless of backend, generated code relies on runtime support for things like:
+
+- process arguments
+- printing and host helpers
+- ARC and memory/runtime glue
+- SIMD-oriented support
+- call-cache and profiling surfaces
+
+### 9. Adaptive Optimization Feedback
+
+Agam is not only a static frontend. The current optimization direction already includes:
+
+- runtime call-cache profiling
+- stable-value tracking
+- reuse-distance tracking
+- guarded specialization
+- persisted profiles that can influence later optimize/specialization decisions
+
+That is why the repo has both `agam_profile` and backend-specific specialization/cache code instead of a single one-shot codegen layer.
+
+### 10. The CLI Layer
+
+`agamc` in `crates/agam_driver` orchestrates the whole flow:
+
+- reads source files or project layouts
+- chooses a backend
+- checks toolchain readiness
+- runs formatter/test/dev/package flows
+- loads and stores persisted optimization evidence when that path is enabled
+
+### 11. The Current Direction
+
+The repository is converging on one supportable contract:
+
+- native LLVM for Windows, Linux, and Android as the primary compiled path
+- JIT as the fast local/in-memory execution path
+- profiling-backed optimization decisions instead of fixed heuristic guesses
+- first-party tooling and SDK packaging instead of ad hoc setup stories
+
+### 12. The Honest State Of The Project
+
+Agam already works as a real language and toolchain, but it is still in active compiler development. The correct way to understand "how it works" today is:
+
+- the pipeline is real
+- the backends are real
+- the tooling is real
+- the optimization system is real but still evolving
+- the full long-term language surface is larger than the currently proven subset
+
+That is why the best practical guide is always: read the current `examples/`, use the current `agamc` workflows, and keep performance claims tied to the current profiling and backend reality in this repo.
