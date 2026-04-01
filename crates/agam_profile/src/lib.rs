@@ -32,6 +32,7 @@ pub const SPECIALIZATION_FEEDBACK_FAVORABLE_SCORE_BONUS: u32 = 16;
 pub const SPECIALIZATION_FEEDBACK_UNFAVORABLE_SCORE_PENALTY: u32 = 18;
 pub const SPECIALIZATION_FEEDBACK_FAVORABLE_MULTIPLIER: u64 = 2;
 pub const SPECIALIZATION_FEEDBACK_UNFAVORABLE_MULTIPLIER: u64 = 4;
+pub const SPECIALIZATION_PLAN_MIN_MATCHES: u64 = 8;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StableScalarValueProfile {
@@ -384,7 +385,7 @@ pub fn recommended_specializations(
         .functions
         .iter()
         .filter(|function| function.total_calls >= 16)
-        .filter_map(|function| {
+        .flat_map(|function| {
             let mut stable_values = function.profile.stable_values.clone();
             stable_values.sort_by_key(|value| value.index);
             stable_values.dedup_by_key(|value| value.index);
@@ -408,15 +409,53 @@ pub fn recommended_specializations(
                 && !reuse_is_unfavorable
                 && !specialization_feedback_is_unfavorable
             {
-                Some(CallCacheSpecializationPlan {
-                    name: function.name.clone(),
-                    stable_values,
-                })
+                specialization_plan_candidates(
+                    &function.name,
+                    &stable_values,
+                    specialization_feedback_is_favorable,
+                )
             } else {
-                None
+                Vec::new()
             }
         })
         .collect()
+}
+
+fn specialization_plan_candidates(
+    function_name: &str,
+    stable_values: &[StableScalarValueProfile],
+    specialization_feedback_is_favorable: bool,
+) -> Vec<CallCacheSpecializationPlan> {
+    let mut ranked_values = stable_values.to_vec();
+    ranked_values.sort_by(|left, right| {
+        right
+            .matches
+            .cmp(&left.matches)
+            .then_with(|| left.index.cmp(&right.index))
+    });
+
+    let mut candidate_values: Vec<_> = ranked_values
+        .iter()
+        .filter(|value| value.matches >= SPECIALIZATION_PLAN_MIN_MATCHES)
+        .cloned()
+        .collect();
+    if candidate_values.is_empty() && specialization_feedback_is_favorable {
+        candidate_values = ranked_values;
+    }
+    if candidate_values.is_empty() {
+        return Vec::new();
+    }
+
+    let mut plans = Vec::with_capacity(candidate_values.len());
+    for prefix_len in (1..=candidate_values.len()).rev() {
+        let mut plan_values = candidate_values[..prefix_len].to_vec();
+        plan_values.sort_by_key(|value| value.index);
+        plans.push(CallCacheSpecializationPlan {
+            name: function_name.to_string(),
+            stable_values: plan_values,
+        });
+    }
+    plans
 }
 
 fn reuse_distance_signal(
@@ -732,13 +771,20 @@ mod tests {
                         hottest_key_hits: 24,
                         avg_reuse_distance: Some(1),
                         max_reuse_distance: Some(1),
-                        stable_values: vec![StableScalarValueProfile {
-                            index: 0,
-                            raw_bits: 33,
-                            matches: 24,
-                        }],
+                        stable_values: vec![
+                            StableScalarValueProfile {
+                                index: 0,
+                                raw_bits: 33,
+                                matches: 24,
+                            },
+                            StableScalarValueProfile {
+                                index: 1,
+                                raw_bits: 7,
+                                matches: 18,
+                            },
+                        ],
                         specialization_hint: CallCacheSpecializationHint::StableArguments {
-                            slots: vec![0],
+                            slots: vec![0, 1],
                         },
                         ..Default::default()
                     },
@@ -767,10 +813,14 @@ mod tests {
         };
 
         let plans = recommended_specializations(&profile);
-        assert_eq!(plans.len(), 1);
+        assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].name, "hot");
-        assert_eq!(plans[0].stable_values.len(), 1);
-        assert_eq!(plans[0].stable_values[0].raw_bits, 33);
+        assert_eq!(plans[0].stable_values.len(), 2);
+        assert_eq!(plans[0].stable_values[0].index, 0);
+        assert_eq!(plans[0].stable_values[1].index, 1);
+        assert_eq!(plans[1].name, "hot");
+        assert_eq!(plans[1].stable_values.len(), 1);
+        assert_eq!(plans[1].stable_values[0].raw_bits, 33);
     }
 
     #[test]
@@ -942,24 +992,84 @@ mod tests {
                     hottest_key_hits: 24,
                     avg_reuse_distance: Some(1),
                     max_reuse_distance: Some(1),
-                    stable_values: vec![StableScalarValueProfile {
-                        index: 0,
-                        raw_bits: 33,
-                        matches: 4,
-                    }],
+                    stable_values: vec![
+                        StableScalarValueProfile {
+                            index: 0,
+                            raw_bits: 33,
+                            matches: 4,
+                        },
+                        StableScalarValueProfile {
+                            index: 1,
+                            raw_bits: 7,
+                            matches: 3,
+                        },
+                    ],
                     specialization_guard_hits: 12,
                     specialization_guard_fallbacks: 4,
                     specialization_hint: CallCacheSpecializationHint::StableArguments {
-                        slots: vec![0],
+                        slots: vec![0, 1],
                     },
                 },
             }],
         };
 
         let plans = recommended_specializations(&profile);
-        assert_eq!(plans.len(), 1);
+        assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].name, "retained");
-        assert_eq!(plans[0].stable_values[0].raw_bits, 33);
+        assert_eq!(plans[0].stable_values.len(), 2);
+        assert_eq!(plans[1].stable_values.len(), 1);
+        assert_eq!(plans[1].stable_values[0].raw_bits, 33);
+    }
+
+    #[test]
+    fn recommended_specializations_rank_prefix_plans_by_match_strength() {
+        let plans = specialization_plan_candidates(
+            "hot",
+            &[
+                StableScalarValueProfile {
+                    index: 1,
+                    raw_bits: 7,
+                    matches: 14,
+                },
+                StableScalarValueProfile {
+                    index: 0,
+                    raw_bits: 33,
+                    matches: 20,
+                },
+                StableScalarValueProfile {
+                    index: 2,
+                    raw_bits: 11,
+                    matches: 9,
+                },
+            ],
+            false,
+        );
+
+        assert_eq!(plans.len(), 3);
+        assert_eq!(
+            plans[0]
+                .stable_values
+                .iter()
+                .map(|value| value.index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert_eq!(
+            plans[1]
+                .stable_values
+                .iter()
+                .map(|value| value.index)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(
+            plans[2]
+                .stable_values
+                .iter()
+                .map(|value| value.index)
+                .collect::<Vec<_>>(),
+            vec![0]
+        );
     }
 
     #[test]

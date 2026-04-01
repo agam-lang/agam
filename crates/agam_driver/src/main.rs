@@ -4752,14 +4752,21 @@ fn hot(n: i64) -> i64 { return n + 1; }
                     hottest_key_hits: 32,
                     avg_reuse_distance: Some(1),
                     max_reuse_distance: Some(1),
-                    stable_values: vec![agam_profile::StableScalarValueProfile {
-                        index: 0,
-                        raw_bits: 33,
-                        matches: 24,
-                    }],
+                    stable_values: vec![
+                        agam_profile::StableScalarValueProfile {
+                            index: 0,
+                            raw_bits: 33,
+                            matches: 24,
+                        },
+                        agam_profile::StableScalarValueProfile {
+                            index: 1,
+                            raw_bits: 7,
+                            matches: 18,
+                        },
+                    ],
                     specialization_hint:
                         agam_profile::CallCacheSpecializationHint::StableArgumentsAndHotKey {
-                            slots: vec![0],
+                            slots: vec![0, 1],
                             hits: 32,
                             unique_keys: 1,
                         },
@@ -4772,9 +4779,11 @@ fn hot(n: i64) -> i64 { return n + 1; }
             apply_persisted_optimize_profile(&CallCacheSelection::default(), Some(&profile));
         let plans = apply_persisted_specialization_profile(&selection, Some(&profile));
 
-        assert_eq!(plans.len(), 1);
+        assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].name, "hot");
-        assert_eq!(plans[0].stable_values[0].raw_bits, 33);
+        assert_eq!(plans[0].stable_values.len(), 2);
+        assert_eq!(plans[1].stable_values.len(), 1);
+        assert_eq!(plans[1].stable_values[0].raw_bits, 33);
     }
 
     #[test]
@@ -4911,16 +4920,23 @@ fn hot(n: i64) -> i64 { return n + 1; }
                     hottest_key_hits: 24,
                     avg_reuse_distance: Some(1),
                     max_reuse_distance: Some(1),
-                    stable_values: vec![agam_profile::StableScalarValueProfile {
-                        index: 0,
-                        raw_bits: 33,
-                        matches: 4,
-                    }],
+                    stable_values: vec![
+                        agam_profile::StableScalarValueProfile {
+                            index: 0,
+                            raw_bits: 33,
+                            matches: 4,
+                        },
+                        agam_profile::StableScalarValueProfile {
+                            index: 1,
+                            raw_bits: 7,
+                            matches: 3,
+                        },
+                    ],
                     specialization_guard_hits: 12,
                     specialization_guard_fallbacks: 4,
                     specialization_hint:
                         agam_profile::CallCacheSpecializationHint::StableArguments {
-                            slots: vec![0],
+                            slots: vec![0, 1],
                         },
                 },
             }],
@@ -4931,9 +4947,10 @@ fn hot(n: i64) -> i64 { return n + 1; }
         let plans = apply_persisted_specialization_profile(&selection, Some(&profile));
 
         assert_eq!(promoted, vec!["retained".to_string()]);
-        assert_eq!(plans.len(), 1);
+        assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].name, "retained");
-        assert_eq!(plans[0].stable_values[0].raw_bits, 33);
+        assert_eq!(plans[0].stable_values.len(), 2);
+        assert_eq!(plans[1].stable_values[0].raw_bits, 33);
     }
 
     #[test]
