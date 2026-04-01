@@ -146,6 +146,13 @@ enum ReuseDistanceSignal {
     Unfavorable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SpecializationFeedbackSignal {
+    Favorable,
+    Neutral,
+    Unfavorable,
+}
+
 pub fn adaptive_admission_decision(
     observation: &AdaptiveAdmissionObservation,
 ) -> AdaptiveAdmissionDecision {
@@ -305,12 +312,14 @@ pub fn recommended_optimize_functions(profile: &PersistentCallCacheProfile) -> V
                 reuse_distance_signal(function),
                 Some(ReuseDistanceSignal::Favorable)
             );
+            let specialization_feedback_is_unfavorable =
+                specialization_feedback_is_unfavorable(&function.profile);
             hit_rate_per_thousand >= 200
                 || reuse_is_favorable
-                || !matches!(
+                || (!matches!(
                     function.profile.specialization_hint,
                     CallCacheSpecializationHint::None
-                )
+                ) && !specialization_feedback_is_unfavorable)
         })
         .map(|function| function.name.clone())
         .collect()
@@ -338,10 +347,12 @@ pub fn recommended_specializations(
                 reuse_distance_signal(function),
                 Some(ReuseDistanceSignal::Unfavorable)
             );
+            let specialization_feedback_is_favorable =
+                specialization_feedback_is_favorable(&function.profile);
             let specialization_feedback_is_unfavorable =
                 specialization_feedback_is_unfavorable(&function.profile);
             if hinted
-                && stable_enough
+                && (stable_enough || specialization_feedback_is_favorable)
                 && !reuse_is_unfavorable
                 && !specialization_feedback_is_unfavorable
             {
@@ -392,13 +403,38 @@ fn reuse_distance_signal(
         .map(|_| ReuseDistanceSignal::Neutral)
 }
 
-fn specialization_feedback_is_unfavorable(profile: &CallCacheFunctionProfile) -> bool {
+fn specialization_feedback_signal(
+    profile: &CallCacheFunctionProfile,
+) -> Option<SpecializationFeedbackSignal> {
     let attempts = profile
         .specialization_guard_hits
         .saturating_add(profile.specialization_guard_fallbacks);
-    attempts >= 8
-        && (profile.specialization_guard_hits == 0
-            || profile.specialization_guard_hits.saturating_mul(4) < attempts)
+    if attempts < 8 {
+        return None;
+    }
+    if profile.specialization_guard_hits == 0
+        || profile.specialization_guard_hits.saturating_mul(4) < attempts
+    {
+        return Some(SpecializationFeedbackSignal::Unfavorable);
+    }
+    if profile.specialization_guard_hits.saturating_mul(2) >= attempts {
+        return Some(SpecializationFeedbackSignal::Favorable);
+    }
+    Some(SpecializationFeedbackSignal::Neutral)
+}
+
+fn specialization_feedback_is_favorable(profile: &CallCacheFunctionProfile) -> bool {
+    matches!(
+        specialization_feedback_signal(profile),
+        Some(SpecializationFeedbackSignal::Favorable)
+    )
+}
+
+fn specialization_feedback_is_unfavorable(profile: &CallCacheFunctionProfile) -> bool {
+    matches!(
+        specialization_feedback_signal(profile),
+        Some(SpecializationFeedbackSignal::Unfavorable)
+    )
 }
 
 fn merge_function_profile(
@@ -644,6 +680,45 @@ mod tests {
     }
 
     #[test]
+    fn recommended_optimize_functions_skip_unfavorable_specialization_only_signal() {
+        let profile = PersistentCallCacheProfile {
+            schema_version: CALL_CACHE_PROFILE_SCHEMA_VERSION,
+            backend: "jit".into(),
+            runs: 2,
+            total_calls: 64,
+            total_hits: 6,
+            total_stores: 2,
+            functions: vec![PersistentCallCacheFunctionProfile {
+                name: "thrashy".into(),
+                runs: 2,
+                total_calls: 32,
+                total_hits: 3,
+                total_stores: 1,
+                last_entries: 8,
+                profile: CallCacheFunctionProfile {
+                    unique_keys: 8,
+                    hottest_key_hits: 6,
+                    avg_reuse_distance: None,
+                    max_reuse_distance: None,
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 12,
+                    }],
+                    specialization_guard_hits: 1,
+                    specialization_guard_fallbacks: 15,
+                    specialization_hint: CallCacheSpecializationHint::StableArguments {
+                        slots: vec![0],
+                    },
+                },
+            }],
+        };
+
+        let recommended = recommended_optimize_functions(&profile);
+        assert!(recommended.is_empty());
+    }
+
+    #[test]
     fn recommended_specializations_skip_unfavorable_reuse_distance() {
         let profile = PersistentCallCacheProfile {
             schema_version: CALL_CACHE_PROFILE_SCHEMA_VERSION,
@@ -718,6 +793,47 @@ mod tests {
 
         let plans = recommended_specializations(&profile);
         assert!(plans.is_empty());
+    }
+
+    #[test]
+    fn recommended_specializations_retain_favorable_specialization_feedback() {
+        let profile = PersistentCallCacheProfile {
+            schema_version: CALL_CACHE_PROFILE_SCHEMA_VERSION,
+            backend: "llvm".into(),
+            runs: 2,
+            total_calls: 64,
+            total_hits: 48,
+            total_stores: 2,
+            functions: vec![PersistentCallCacheFunctionProfile {
+                name: "retained".into(),
+                runs: 2,
+                total_calls: 32,
+                total_hits: 24,
+                total_stores: 1,
+                last_entries: 1,
+                profile: CallCacheFunctionProfile {
+                    unique_keys: 1,
+                    hottest_key_hits: 24,
+                    avg_reuse_distance: Some(1),
+                    max_reuse_distance: Some(1),
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 4,
+                    }],
+                    specialization_guard_hits: 12,
+                    specialization_guard_fallbacks: 4,
+                    specialization_hint: CallCacheSpecializationHint::StableArguments {
+                        slots: vec![0],
+                    },
+                },
+            }],
+        };
+
+        let plans = recommended_specializations(&profile);
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].name, "retained");
+        assert_eq!(plans[0].stable_values[0].raw_bits, 33);
     }
 
     #[test]

@@ -4848,6 +4848,95 @@ fn hot(n: i64) -> i64 { return n + 1; }
     }
 
     #[test]
+    fn test_persisted_profile_does_not_prepromote_unfavorable_specialization_only_signal() {
+        let profile = agam_profile::PersistentCallCacheProfile {
+            schema_version: agam_profile::CALL_CACHE_PROFILE_SCHEMA_VERSION,
+            backend: "jit".into(),
+            runs: 2,
+            total_calls: 64,
+            total_hits: 6,
+            total_stores: 2,
+            functions: vec![agam_profile::PersistentCallCacheFunctionProfile {
+                name: "thrashy".into(),
+                runs: 2,
+                total_calls: 32,
+                total_hits: 3,
+                total_stores: 1,
+                last_entries: 8,
+                profile: agam_profile::CallCacheFunctionProfile {
+                    unique_keys: 8,
+                    hottest_key_hits: 6,
+                    avg_reuse_distance: None,
+                    max_reuse_distance: None,
+                    stable_values: vec![agam_profile::StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 12,
+                    }],
+                    specialization_guard_hits: 1,
+                    specialization_guard_fallbacks: 15,
+                    specialization_hint:
+                        agam_profile::CallCacheSpecializationHint::StableArguments {
+                            slots: vec![0],
+                        },
+                },
+            }],
+        };
+
+        let (selection, promoted) =
+            apply_persisted_optimize_profile(&CallCacheSelection::default(), Some(&profile));
+
+        assert!(promoted.is_empty());
+        assert!(!selection.optimize_functions.contains("thrashy"));
+    }
+
+    #[test]
+    fn test_persisted_profile_retains_specialization_from_favorable_feedback() {
+        let profile = agam_profile::PersistentCallCacheProfile {
+            schema_version: agam_profile::CALL_CACHE_PROFILE_SCHEMA_VERSION,
+            backend: "jit".into(),
+            runs: 2,
+            total_calls: 64,
+            total_hits: 48,
+            total_stores: 2,
+            functions: vec![agam_profile::PersistentCallCacheFunctionProfile {
+                name: "retained".into(),
+                runs: 2,
+                total_calls: 32,
+                total_hits: 24,
+                total_stores: 1,
+                last_entries: 1,
+                profile: agam_profile::CallCacheFunctionProfile {
+                    unique_keys: 1,
+                    hottest_key_hits: 24,
+                    avg_reuse_distance: Some(1),
+                    max_reuse_distance: Some(1),
+                    stable_values: vec![agam_profile::StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 4,
+                    }],
+                    specialization_guard_hits: 12,
+                    specialization_guard_fallbacks: 4,
+                    specialization_hint:
+                        agam_profile::CallCacheSpecializationHint::StableArguments {
+                            slots: vec![0],
+                        },
+                },
+            }],
+        };
+
+        let (selection, promoted) =
+            apply_persisted_optimize_profile(&CallCacheSelection::default(), Some(&profile));
+        let plans = apply_persisted_specialization_profile(&selection, Some(&profile));
+
+        assert_eq!(promoted, vec!["retained".to_string()]);
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].name, "retained");
+        assert_eq!(plans[0].stable_values[0].raw_bits, 33);
+    }
+
+    #[test]
     fn test_build_feature_signature_includes_cache_generation() {
         let signature = build_feature_signature(
             Backend::Llvm,
