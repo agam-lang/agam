@@ -2880,6 +2880,89 @@ fn emit_increment_i64_global(out: &mut String, next_temp: &mut usize, global: &s
     writeln!(out, "  store i64 {next}, i64* {global}").unwrap();
 }
 
+fn emit_specialization_feedback_adjusted_score(
+    out: &mut String,
+    next_temp: &mut usize,
+    globals: &CallCacheGlobalNames,
+    base_score: &str,
+) -> String {
+    let hits = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {hits} = load i64, i64* {}",
+        globals.profile_specialization_hits
+    )
+    .unwrap();
+    let fallbacks = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {fallbacks} = load i64, i64* {}",
+        globals.profile_specialization_fallbacks
+    )
+    .unwrap();
+    let attempts = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {attempts} = add i64 {hits}, {fallbacks}").unwrap();
+    let enough_samples = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {enough_samples} = icmp uge i64 {attempts}, 8").unwrap();
+    let favorable_double_hits = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {favorable_double_hits} = shl i64 {hits}, 1").unwrap();
+    let favorable = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {favorable} = icmp uge i64 {favorable_double_hits}, {attempts}"
+    )
+    .unwrap();
+    let no_hits = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {no_hits} = icmp eq i64 {hits}, 0").unwrap();
+    let unfavorable_quad_hits = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {unfavorable_quad_hits} = shl i64 {hits}, 2").unwrap();
+    let weak_matches = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {weak_matches} = icmp ult i64 {unfavorable_quad_hits}, {attempts}"
+    )
+    .unwrap();
+    let unfavorable = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {unfavorable} = or i1 {no_hits}, {weak_matches}").unwrap();
+    let favorable_with_samples = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {favorable_with_samples} = and i1 {enough_samples}, {favorable}"
+    )
+    .unwrap();
+    let unfavorable_with_samples = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {unfavorable_with_samples} = and i1 {enough_samples}, {unfavorable}"
+    )
+    .unwrap();
+    let favored_score = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {favored_score} = add i32 {base_score}, 16").unwrap();
+    let penalty_applies = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {penalty_applies} = icmp ugt i32 {base_score}, 18").unwrap();
+    let penalized_sub = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {penalized_sub} = sub i32 {base_score}, 18").unwrap();
+    let penalized_score = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {penalized_score} = select i1 {penalty_applies}, i32 {penalized_sub}, i32 0"
+    )
+    .unwrap();
+    let after_unfavorable = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {after_unfavorable} = select i1 {unfavorable_with_samples}, i32 {penalized_score}, i32 {base_score}"
+    )
+    .unwrap();
+    let adjusted_score = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {adjusted_score} = select i1 {favorable_with_samples}, i32 {favored_score}, i32 {after_unfavorable}"
+    )
+    .unwrap();
+    adjusted_score
+}
+
 fn emit_specialized_call_or_fallback(
     out: &mut String,
     next_temp: &mut usize,
@@ -3521,8 +3604,10 @@ fn emit_optimized_call_cache_wrapper_ir(
     .unwrap();
     let hit_score_old = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {hit_score_old} = load i32, i32* {hit_score_ptr}").unwrap();
-    let hit_score_new = fresh_call_cache_temp(&mut next_temp);
-    writeln!(out, "  {hit_score_new} = add i32 {hit_score_old}, 1").unwrap();
+    let hit_score_base = fresh_call_cache_temp(&mut next_temp);
+    writeln!(out, "  {hit_score_base} = add i32 {hit_score_old}, 1").unwrap();
+    let hit_score_new =
+        emit_specialization_feedback_adjusted_score(out, &mut next_temp, &globals, &hit_score_base);
     writeln!(out, "  store i32 {hit_score_new}, i32* {hit_score_ptr}").unwrap();
     let hit_age_ptr = fresh_call_cache_temp(&mut next_temp);
     writeln!(
@@ -3662,6 +3747,12 @@ fn emit_optimized_call_cache_wrapper_ir(
         "  br i1 {repeated_enough}, label %store_check, label %ret_miss"
     )
     .unwrap();
+    let candidate_score = emit_specialization_feedback_adjusted_score(
+        out,
+        &mut next_temp,
+        &globals,
+        &pending_count_new,
+    );
 
     writeln!(out, "store_check:").unwrap();
     let store_len = fresh_call_cache_temp(&mut next_temp);
@@ -3714,11 +3805,7 @@ fn emit_optimized_call_cache_wrapper_ir(
         capacity, capacity, globals.scores
     )
     .unwrap();
-    writeln!(
-        out,
-        "  store i32 {pending_count_new}, i32* {store_score_ptr}"
-    )
-    .unwrap();
+    writeln!(out, "  store i32 {candidate_score}, i32* {store_score_ptr}").unwrap();
     let store_age_ptr = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -3858,13 +3945,13 @@ fn emit_optimized_call_cache_wrapper_ir(
     let better_score = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
-        "  {better_score} = icmp ugt i32 {pending_count_new}, {best_score_final}"
+        "  {better_score} = icmp ugt i32 {candidate_score}, {best_score_final}"
     )
     .unwrap();
     let equal_score = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
-        "  {equal_score} = icmp eq i32 {pending_count_new}, {best_score_final}"
+        "  {equal_score} = icmp eq i32 {candidate_score}, {best_score_final}"
     )
     .unwrap();
     let best_age_final = fresh_call_cache_temp(&mut next_temp);
@@ -3932,7 +4019,7 @@ fn emit_optimized_call_cache_wrapper_ir(
     .unwrap();
     writeln!(
         out,
-        "  store i32 {pending_count_new}, i32* {replace_score_ptr}"
+        "  store i32 {candidate_score}, i32* {replace_score_ptr}"
     )
     .unwrap();
     let replace_age_ptr = fresh_call_cache_temp(&mut next_temp);
@@ -4515,6 +4602,31 @@ fn main() -> i32:
         assert!(llvm.contains("@agam_call_cache_hot_pending_count = internal global i32 0"));
         assert!(llvm.contains("label %admit_check"));
         assert!(llvm.contains("label %victim_init"));
+    }
+
+    #[test]
+    fn test_emit_optimized_call_cache_wrapper_uses_specialization_feedback_in_scores() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn hot(n: i64) -> i64:
+    return n + 1
+
+fn main() -> i32:
+    if hot(argc()) >= 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache_optimize: true,
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
+        assert!(
+            llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
+        );
+        assert!(llvm.contains("icmp uge i64"));
+        assert!(llvm.contains("select i1"));
     }
 
     #[test]
