@@ -4040,11 +4040,85 @@ fn emit_specialized_call_or_fallback(
         return Ok(miss_value);
     }
 
+    let guard_entry_label = fresh_call_cache_label(next_temp, "spec_guard_entry");
+    let generic_disabled_label = fresh_call_cache_label(next_temp, "generic_call_disabled");
     let generic_label = fresh_call_cache_label(next_temp, "generic_call");
     let cont_label = fresh_call_cache_label(next_temp, "specialized_cont");
     let mut incoming_values = Vec::new();
+    let specialization_hits = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_hits} = load i64, i64* {}",
+        globals.profile_specialization_hits
+    )
+    .unwrap();
+    let specialization_fallbacks = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_fallbacks} = load i64, i64* {}",
+        globals.profile_specialization_fallbacks
+    )
+    .unwrap();
+    let specialization_attempts = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_attempts} = add i64 {specialization_hits}, {specialization_fallbacks}"
+    )
+    .unwrap();
+    let specialization_attempts_ready = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_attempts_ready} = icmp uge i64 {specialization_attempts}, {}",
+        agam_profile::SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS
+    )
+    .unwrap();
+    let specialization_hits_zero = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_hits_zero} = icmp eq i64 {specialization_hits}, 0"
+    )
+    .unwrap();
+    let specialization_hits_weighted = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_hits_weighted} = mul i64 {specialization_hits}, {}",
+        agam_profile::SPECIALIZATION_FEEDBACK_UNFAVORABLE_MULTIPLIER
+    )
+    .unwrap();
+    let specialization_underperforming = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_underperforming} = icmp ult i64 {specialization_hits_weighted}, {specialization_attempts}"
+    )
+    .unwrap();
+    let specialization_unfavorable = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_unfavorable} = or i1 {specialization_hits_zero}, {specialization_underperforming}"
+    )
+    .unwrap();
+    let specialization_disabled = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_disabled} = and i1 {specialization_attempts_ready}, {specialization_unfavorable}"
+    )
+    .unwrap();
+    let specialization_enabled = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {specialization_enabled} = xor i1 {specialization_disabled}, true"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  br i1 {specialization_enabled}, label %{guard_entry_label}, label %{generic_disabled_label}"
+    )
+    .unwrap();
 
     for (index, specialization) in applicable_specializations.iter().enumerate() {
+        if index == 0 {
+            writeln!(out, "{guard_entry_label}:").unwrap();
+        }
         let mut guard = String::new();
         for stable in &specialization.stable_values {
             let expected = llvm_i64_literal(stable.raw_bits);
@@ -4108,6 +4182,18 @@ fn emit_specialized_call_or_fallback(
     .unwrap();
     writeln!(out, "  br label %{cont_label}").unwrap();
 
+    writeln!(out, "{generic_disabled_label}:").unwrap();
+    let generic_disabled_value = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {generic_disabled_value} = call noundef {} @{}({})",
+        layout.return_ty.ir(),
+        original,
+        call_args
+    )
+    .unwrap();
+    writeln!(out, "  br label %{cont_label}").unwrap();
+
     writeln!(out, "{cont_label}:").unwrap();
     let miss_value = fresh_call_cache_temp(next_temp);
     let mut phi_incoming = incoming_values
@@ -4115,6 +4201,9 @@ fn emit_specialized_call_or_fallback(
         .map(|(value, label)| format!("[ {value}, %{label} ]"))
         .collect::<Vec<_>>();
     phi_incoming.push(format!("[ {generic_value}, %{generic_label} ]"));
+    phi_incoming.push(format!(
+        "[ {generic_disabled_value}, %{generic_disabled_label} ]"
+    ));
     writeln!(
         out,
         "  {miss_value} = phi {} {}",
@@ -5930,11 +6019,13 @@ fn main() -> i32:
         assert!(llvm.contains("store i64 7, i64* %local_n"));
         assert!(llvm.contains("call noundef i64 @__agam_spec_hot_"));
         assert!(llvm.contains("label %spec_call_"));
+        assert!(llvm.contains("label %spec_guard_entry_"));
         assert!(llvm.contains("phi i64"));
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
         assert!(
             llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
         );
+        assert!(llvm.matches("call noundef i64 @agam_hot(").count() >= 2);
     }
 
     #[test]

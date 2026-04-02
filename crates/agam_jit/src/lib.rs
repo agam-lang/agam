@@ -613,6 +613,7 @@ const RT_MEMO_LOOKUP: &str = "__agam_jit_memo_lookup";
 const RT_MEMO_STORE: &str = "__agam_jit_memo_store";
 const RT_SPECIALIZATION_HIT: &str = "__agam_jit_specialization_hit";
 const RT_SPECIALIZATION_FALLBACK: &str = "__agam_jit_specialization_fallback";
+const RT_SPECIALIZATION_ENABLED: &str = "__agam_jit_specialization_enabled";
 const MAX_CALL_CACHE_ARGS: usize = 4;
 const DEFAULT_CALL_CACHE_CAPACITY: usize = 256;
 const DEFAULT_CALL_CACHE_WARMUP: u64 = 32;
@@ -1294,12 +1295,39 @@ impl AgamJit {
         let specialization_fallback_ref = self
             .module
             .declare_func_in_func(specialization_fallback_id, builder.func);
+        let specialization_enabled_id = self.runtime_func_id(
+            RT_SPECIALIZATION_ENABLED,
+            &[JitType::Int {
+                bits: 32,
+                signed: true,
+            }],
+            Some(JitType::Bool),
+        )?;
+        let specialization_enabled_ref = self
+            .module
+            .declare_func_in_func(specialization_enabled_id, builder.func);
         let slot_value = builder.ins().iconst(types::I32, slot as i64);
-        let specialized_block = builder.create_block();
-        let generic_block = builder.create_block();
+        let guard_entry_block = builder.create_block();
+        let generic_disabled_block = builder.create_block();
+        let generic_fallback_block = builder.create_block();
         let cont_block = builder.create_block();
         builder.append_block_param(cont_block, result_ty.clif_type(pointer_type));
+        let enabled_call = builder
+            .ins()
+            .call(specialization_enabled_ref, &[slot_value]);
+        let enabled = builder.inst_results(enabled_call)[0];
+        let enabled_guard = builder.ins().icmp_imm(IntCC::NotEqual, enabled, 0);
+        builder.ins().brif(
+            enabled_guard,
+            guard_entry_block,
+            &[],
+            generic_disabled_block,
+            &[],
+        );
+        builder.seal_block(guard_entry_block);
+        builder.seal_block(generic_disabled_block);
         let mut next_guard_block = None;
+        builder.switch_to_block(guard_entry_block);
 
         for (index, (specialization, specialized_id)) in
             applicable_specializations.iter().enumerate()
@@ -1311,17 +1339,13 @@ impl AgamJit {
             let specialized_func_ref = self
                 .module
                 .declare_func_in_func(*specialized_id, builder.func);
-            let specialized_block = if index == 0 {
-                specialized_block
-            } else {
-                builder.create_block()
-            };
+            let specialized_block = builder.create_block();
             let fail_block = if index + 1 < applicable_specializations.len() {
                 let guard_block = builder.create_block();
                 next_guard_block = Some(guard_block);
                 guard_block
             } else {
-                generic_block
+                generic_fallback_block
             };
 
             let mut guard = None;
@@ -1342,8 +1366,8 @@ impl AgamJit {
                 .ins()
                 .brif(guard, specialized_block, &[], fail_block, &[]);
             builder.seal_block(specialized_block);
-            if fail_block == generic_block {
-                builder.seal_block(generic_block);
+            if fail_block == generic_fallback_block {
+                builder.seal_block(generic_fallback_block);
             } else {
                 builder.seal_block(fail_block);
             }
@@ -1360,10 +1384,16 @@ impl AgamJit {
             builder.ins().jump(cont_block, &specialized_args);
         }
 
-        builder.switch_to_block(generic_block);
+        builder.switch_to_block(generic_fallback_block);
         builder
             .ins()
             .call(specialization_fallback_ref, &[slot_value]);
+        let generic_value =
+            self.emit_direct_call_result(builder, generic_func_ref, lowered_args, result_ty);
+        let generic_args = [cranelift_codegen::ir::BlockArg::Value(generic_value)];
+        builder.ins().jump(cont_block, &generic_args);
+
+        builder.switch_to_block(generic_disabled_block);
         let generic_value =
             self.emit_direct_call_result(builder, generic_func_ref, lowered_args, result_ty);
         let generic_args = [cranelift_codegen::ir::BlockArg::Value(generic_value)];
@@ -1630,6 +1660,10 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
     builder.symbol(
         RT_SPECIALIZATION_FALLBACK,
         rt_specialization_fallback as *const u8,
+    );
+    builder.symbol(
+        RT_SPECIALIZATION_ENABLED,
+        rt_specialization_enabled as *const u8,
     );
 }
 
@@ -2903,6 +2937,23 @@ impl CallCacheRuntime {
         }
     }
 
+    fn specialization_guard_enabled(&self, slot: i32) -> bool {
+        let Some(function) = self.functions.get(slot as usize) else {
+            return true;
+        };
+        let hits = function.specialization_guard_hits;
+        let fallbacks = function.specialization_guard_fallbacks;
+        let attempts = hits.saturating_add(fallbacks);
+        if attempts < agam_profile::SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS {
+            return true;
+        }
+        if hits == 0 {
+            return false;
+        }
+        hits.saturating_mul(agam_profile::SPECIALIZATION_FEEDBACK_UNFAVORABLE_MULTIPLIER)
+            >= attempts
+    }
+
     fn global_optimized_victim(&self) -> Option<CallCacheVictim> {
         let mut victim: Option<CallCacheVictim> = None;
         for (function_index, function) in self.functions.iter().enumerate() {
@@ -3115,6 +3166,17 @@ extern "C" fn rt_specialization_fallback(slot: i32) {
             runtime.record_specialization_fallback(slot);
         }
     });
+}
+
+extern "C" fn rt_specialization_enabled(slot: i32) -> u8 {
+    JIT_CALL_CACHE.with(|cell| {
+        let state = cell.borrow();
+        state
+            .active
+            .as_ref()
+            .map(|runtime| u8::from(runtime.specialization_guard_enabled(slot)))
+            .unwrap_or(1)
+    })
 }
 
 #[cfg(test)]
@@ -3734,6 +3796,59 @@ fn main() -> i32:
             .expect("missing hot specialization stats");
         assert_eq!(hot.profile.specialization_guard_hits, 1);
         assert_eq!(hot.profile.specialization_guard_fallbacks, 1);
+    }
+
+    #[test]
+    fn test_jit_specialization_guard_disables_after_unfavorable_feedback() {
+        let source = r#"
+fn hot(n: i64) -> i64:
+    let total: i64 = 0
+    let i: i64 = 0
+    while i < 64:
+        total = total + ((n * 5) + i) % 23
+        i = i + 1
+    return total
+
+fn main() -> i32:
+    let acc: i64 = 0
+    let i: i64 = 0
+    while i < 16:
+        acc = acc + hot(i)
+        i = i + 1
+    if acc > 0:
+        return 0
+    return 1
+"#;
+        let (result, stats) = run_source_with_options(
+            source,
+            &[],
+            JitOptions {
+                call_cache_only: vec!["hot".into()],
+                call_cache_specializations: vec![CallCacheSpecializationPlan {
+                    name: "hot".into(),
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 24,
+                    }],
+                }],
+                call_cache_warmup: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result, 0);
+        let stats = stats.expect("expected specialization stats");
+        let hot = stats
+            .functions
+            .iter()
+            .find(|function| function.name == "hot")
+            .expect("missing hot specialization stats");
+        assert_eq!(hot.profile.specialization_guard_hits, 0);
+        assert_eq!(
+            hot.profile.specialization_guard_fallbacks,
+            agam_profile::SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS,
+            "expected specialization guard to stop recording fallback noise once it is disabled: {hot:?}"
+        );
     }
 
     #[test]
