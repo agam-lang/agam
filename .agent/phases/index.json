@@ -1651,10 +1651,12 @@
       ],
       "already_done": [
         "Added the first `agam_pkg` source-workspace contract types for `agam.toml`, `agam.lock`, dependency specs, toolchain requirements, and named environments.",
-        "Added TOML read/write helpers and round-trip tests for the new workspace and lockfile data models."
+        "Added TOML read/write helpers and round-trip tests for the new workspace and lockfile data models.",
+        "Wired `agam_driver` project scaffolding and workspace resolution through the new manifest contract instead of hand-rendering `agam.toml`.",
+        "Added first-party manifest entry-path validation so `project.entry` must stay inside the workspace root."
       ],
       "remaining_work": [
-        "Wire the source-workspace contract into `agam_driver`, workspace discovery, and future resolver flows.",
+        "Reuse the parsed source-workspace contract across formatter, tests, LSP, and later daemon surfaces instead of letting each tool rediscover layout independently.",
         "Keep Phase 17A moving until the manifest contract is stable enough for registry and environment UX on top."
       ],
       "strategic_next_step": [],
@@ -1690,7 +1692,7 @@
       "coverage": [],
       "status_notes": [
         "Overall status: partial",
-        "Current note: `agam_pkg` now carries the first source-workspace, dependency, lockfile, and environment data models"
+        "Current note: `agam_pkg` now carries the first source-workspace, dependency, lockfile, and environment data models, and `agam_driver` consumes the manifest contract for project scaffolding and workspace resolution"
       ],
       "goal": [
         "Define one stable `agam.toml` contract for package metadata, workspace layout, dependency declarations, and toolchain expectations.",
@@ -1709,8 +1711,10 @@
       ],
       "checklist_status": [
         "[x] Add the first `agam_pkg` data models for source manifests, dependency specs, lockfiles, and environments.",
-        "[ ] Wire the manifest contract into `agamc new`, workspace discovery, and first-party diagnostics.",
-        "[ ] Freeze the manifest naming and compatibility policy before building resolver flows on top."
+        "[x] Wire the manifest contract into `agamc new` and workspace discovery.",
+        "[x] Validate `project.entry` so the manifest cannot point outside the workspace root.",
+        "[ ] Freeze the manifest naming and compatibility policy before building resolver flows on top.",
+        "[ ] Strengthen first-party diagnostics for malformed dependency, environment, and workspace-member metadata."
       ],
       "planned_work": [
         "Define the first stable source-package manifest schema for `agam.toml`.",
@@ -1720,16 +1724,18 @@
       ],
       "already_done": [
         "Added `WorkspaceManifest`, `DependencySpec`, `ToolchainRequirement`, `EnvironmentSpec`, and `WorkspaceLockfile` in `agam_pkg`.",
-        "Added TOML read/write helpers plus round-trip tests for manifest and lockfile compatibility, including the current `[project]` manifest shape."
+        "Added TOML read/write helpers plus round-trip tests for manifest and lockfile compatibility, including the current `[project]` manifest shape.",
+        "Switched `agamc new` to scaffold `agam.toml` through `agam_pkg::scaffold_workspace_manifest` and `agam_pkg::write_workspace_manifest_to_path`.",
+        "Switched workspace resolution in `agam_driver` to parse `agam.toml`, honor `project.entry`, expose the manifest project name, and reject entry paths that escape the workspace root."
       ],
       "remaining_work": [
-        "Reuse the new manifest contract from `agam_driver` instead of hand-rendering `agam.toml`.",
-        "Define validation and user-facing diagnostics around malformed dependency and environment metadata."
+        "Reuse the parsed manifest contract across formatter, tests, LSP, and later daemon surfaces.",
+        "Define stronger user-facing diagnostics around malformed dependency, environment, and workspace-member metadata."
       ],
       "strategic_next_step": [],
       "what_to_build_next": [
         "Freeze the manifest shape and naming conventions first.",
-        "Cover local path dependencies and workspace members before solving remote resolution.",
+        "Cover workspace members and local path dependencies before solving remote resolution.",
         "Reuse the same manifest contract across CLI, formatter, LSP, test, and future daemon surfaces."
       ],
       "dependencies_and_prerequisites": [

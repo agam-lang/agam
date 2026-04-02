@@ -21,8 +21,8 @@ Use this as the default answer to "what should Agam agents build next?"
    - Add Android target-pack packaging and validation
    - Detail file: `details/15H.md`
 5. **Finish Phase 17A**
-   - Wire the new manifest contract into `agamc new`, workspace discovery, and first-party diagnostics
-   - Keep source-package metadata separate from portable runtime packages and SDK distributions
+   - Reuse the parsed manifest contract across formatter, tests, LSP, and later daemon surfaces
+   - Strengthen diagnostics for malformed dependency, environment, and workspace-member metadata
    - Detail file: `details/17A.md`
 6. **Start Phase 17B**
    - Land deterministic dependency resolution and `agam.lock`
