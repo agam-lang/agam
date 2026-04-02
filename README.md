@@ -116,7 +116,7 @@ Core workspace areas:
 - `crates/agam_driver`
   - the `agamc` CLI
 - `crates/agam_pkg`
-  - package and SDK manifest support
+  - portable package, SDK manifest, and future source-package/environment management
 
 ## Getting Started
 
@@ -269,6 +269,15 @@ These are the active next phases from the repo's current program board:
 4. Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles
    - ship supportable Windows/Linux SDK outputs
    - extend Android target-pack validation
+
+After those core LLVM, daemon, and SDK slices, the next package-ecosystem priorities are:
+
+1. Phase 17A: workspace contract and dependency manifests
+2. Phase 17B: deterministic resolver and `agam.lock`
+3. Phase 17C: registry index and publish protocol
+4. Phase 17D: named environments and SDK linking
+5. Phase 17E: first-party base distributions and official package governance
+6. Phase 17F: standard-library growth on top of the new package ecosystem
 
 ## Repository Layout
 
