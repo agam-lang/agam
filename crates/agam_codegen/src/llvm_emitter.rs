@@ -1480,6 +1480,12 @@ impl LlvmEmitter {
             .unwrap();
             writeln!(
                 out,
+                "{} = internal global [{} x i64] zeroinitializer, align 16",
+                globals.profile_stable_matches, MAX_CALL_CACHE_ARGS
+            )
+            .unwrap();
+            writeln!(
+                out,
                 "{} = internal global i64 0, align 8",
                 globals.profile_reuse_total
             )
@@ -1712,8 +1718,8 @@ impl LlvmEmitter {
             for arg_index in 0..layout.params.len() {
                 let stable_value_ptr = fresh_call_cache_temp(&mut next_temp);
                 let stable_value = fresh_call_cache_temp(&mut next_temp);
-                let stable_score_ptr = fresh_call_cache_temp(&mut next_temp);
-                let stable_score = fresh_call_cache_temp(&mut next_temp);
+                let stable_matches_ptr = fresh_call_cache_temp(&mut next_temp);
+                let stable_matches = fresh_call_cache_temp(&mut next_temp);
                 let stable_write = fresh_call_cache_temp(&mut next_temp);
                 writeln!(
                     out,
@@ -1727,17 +1733,21 @@ impl LlvmEmitter {
                 writeln!(out, "  {stable_value} = load i64, i64* {stable_value_ptr}").unwrap();
                 writeln!(
                     out,
-                    "  {stable_score_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+                    "  {stable_matches_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
                     MAX_CALL_CACHE_ARGS,
                     MAX_CALL_CACHE_ARGS,
-                    globals.profile_stable_scores,
+                    globals.profile_stable_matches,
                     arg_index
                 )
                 .unwrap();
-                writeln!(out, "  {stable_score} = load i64, i64* {stable_score_ptr}").unwrap();
                 writeln!(
                     out,
-                    "  {stable_write} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {stable_line_fmt}, i8* {name_ptr}, i32 {}, i64 {stable_value}, i64 {stable_score})",
+                    "  {stable_matches} = load i64, i64* {stable_matches_ptr}"
+                )
+                .unwrap();
+                writeln!(
+                    out,
+                    "  {stable_write} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {stable_line_fmt}, i8* {name_ptr}, i32 {}, i64 {stable_value}, i64 {stable_matches})",
                     arg_index
                 )
                 .unwrap();
@@ -2885,6 +2895,7 @@ struct CallCacheGlobalNames {
     profile_observed_reuse: String,
     profile_stable_values: String,
     profile_stable_scores: String,
+    profile_stable_matches: String,
     profile_reuse_total: String,
     profile_reuse_samples: String,
     profile_reuse_max: String,
@@ -2920,6 +2931,7 @@ fn call_cache_global_names(name: &str) -> CallCacheGlobalNames {
         profile_observed_reuse: format!("@agam_call_cache_{}_profile_observed_reuse", base),
         profile_stable_values: format!("@agam_call_cache_{}_profile_stable_values", base),
         profile_stable_scores: format!("@agam_call_cache_{}_profile_stable_scores", base),
+        profile_stable_matches: format!("@agam_call_cache_{}_profile_stable_matches", base),
         profile_reuse_total: format!("@agam_call_cache_{}_profile_reuse_total", base),
         profile_reuse_samples: format!("@agam_call_cache_{}_profile_reuse_samples", base),
         profile_reuse_max: format!("@agam_call_cache_{}_profile_reuse_max", base),
@@ -3649,30 +3661,38 @@ fn emit_adaptive_stable_argument_slot_count(
 
     let mut stable_slots = String::from("0");
     for arg_index in 0..param_count {
-        let stable_score_ptr = fresh_call_cache_temp(next_temp);
+        let stable_matches_ptr = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
-            "  {stable_score_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+            "  {stable_matches_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
             MAX_CALL_CACHE_ARGS,
             MAX_CALL_CACHE_ARGS,
-            globals.profile_stable_scores,
+            globals.profile_stable_matches,
             arg_index
         )
         .unwrap();
-        let stable_score = fresh_call_cache_temp(next_temp);
-        writeln!(out, "  {stable_score} = load i64, i64* {stable_score_ptr}").unwrap();
-        let weighted_stable_score = fresh_call_cache_temp(next_temp);
-        writeln!(out, "  {weighted_stable_score} = mul i64 {stable_score}, 4").unwrap();
         let stable_matches = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
-            "  {stable_matches} = icmp uge i64 {weighted_stable_score}, {stable_call_target}"
+            "  {stable_matches} = load i64, i64* {stable_matches_ptr}"
+        )
+        .unwrap();
+        let weighted_stable_matches = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {weighted_stable_matches} = mul i64 {stable_matches}, 4"
+        )
+        .unwrap();
+        let stable_enough = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {stable_enough} = icmp uge i64 {weighted_stable_matches}, {stable_call_target}"
         )
         .unwrap();
         let stable_slot = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
-            "  {stable_slot} = and i1 {enough_calls}, {stable_matches}"
+            "  {stable_slot} = and i1 {enough_calls}, {stable_enough}"
         )
         .unwrap();
         let next_stable_slots = fresh_call_cache_temp(next_temp);
@@ -4133,6 +4153,13 @@ fn emit_call_cache_stable_value_profile_update(
             MAX_CALL_CACHE_ARGS, MAX_CALL_CACHE_ARGS, globals.profile_stable_scores, arg_index
         )
         .unwrap();
+        let matches_ptr = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {matches_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {}",
+            MAX_CALL_CACHE_ARGS, MAX_CALL_CACHE_ARGS, globals.profile_stable_matches, arg_index
+        )
+        .unwrap();
         let score_old = fresh_call_cache_temp(next_temp);
         writeln!(out, "  {score_old} = load i64, i64* {score_ptr}").unwrap();
         let score_is_zero = fresh_call_cache_temp(next_temp);
@@ -4146,6 +4173,7 @@ fn emit_call_cache_stable_value_profile_update(
         writeln!(out, "{seed_label}:").unwrap();
         writeln!(out, "  store i64 {arg_bits}, i64* {value_ptr}").unwrap();
         writeln!(out, "  store i64 1, i64* {score_ptr}").unwrap();
+        writeln!(out, "  store i64 1, i64* {matches_ptr}").unwrap();
         writeln!(out, "  br label %{done_label}").unwrap();
 
         writeln!(out, "{compare_label}:").unwrap();
@@ -4163,12 +4191,32 @@ fn emit_call_cache_stable_value_profile_update(
         let score_hit = fresh_call_cache_temp(next_temp);
         writeln!(out, "  {score_hit} = add i64 {score_old}, 1").unwrap();
         writeln!(out, "  store i64 {score_hit}, i64* {score_ptr}").unwrap();
+        let matches_old = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {matches_old} = load i64, i64* {matches_ptr}").unwrap();
+        let matches_hit = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {matches_hit} = add i64 {matches_old}, 1").unwrap();
+        writeln!(out, "  store i64 {matches_hit}, i64* {matches_ptr}").unwrap();
         writeln!(out, "  br label %{done_label}").unwrap();
 
         writeln!(out, "{miss_label}:").unwrap();
         let score_miss = fresh_call_cache_temp(next_temp);
         writeln!(out, "  {score_miss} = sub i64 {score_old}, 1").unwrap();
         writeln!(out, "  store i64 {score_miss}, i64* {score_ptr}").unwrap();
+        let matches_old = fresh_call_cache_temp(next_temp);
+        writeln!(out, "  {matches_old} = load i64, i64* {matches_ptr}").unwrap();
+        let candidate_extinguished = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {candidate_extinguished} = icmp eq i64 {score_miss}, 0"
+        )
+        .unwrap();
+        let matches_next = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {matches_next} = select i1 {candidate_extinguished}, i64 0, i64 {matches_old}"
+        )
+        .unwrap();
+        writeln!(out, "  store i64 {matches_next}, i64* {matches_ptr}").unwrap();
         writeln!(out, "  br label %{done_label}").unwrap();
 
         writeln!(out, "{done_label}:").unwrap();
@@ -5667,6 +5715,9 @@ fn main() -> i32:
         assert!(llvm.contains(
             "@agam_call_cache_hot_profile_stable_scores = internal global [4 x i64] zeroinitializer"
         ));
+        assert!(llvm.contains(
+            "@agam_call_cache_hot_profile_stable_matches = internal global [4 x i64] zeroinitializer"
+        ));
         assert!(llvm.contains("@agam_call_cache_hot_profile_reuse_total = internal global i64 0"));
         assert!(
             llvm.contains("@agam_call_cache_hot_profile_reuse_samples = internal global i64 0")
@@ -5699,6 +5750,9 @@ fn main() -> i32:
         assert!(llvm.contains("AGAM_LLVM_CALL_CACHE_PROFILE_V5"));
         assert!(llvm.contains(
             "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_values"
+        ));
+        assert!(llvm.contains(
+            "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_matches"
         ));
     }
 
@@ -5819,6 +5873,9 @@ fn main() -> i32:
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_hits"));
         assert!(llvm.contains(
             "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_scores"
+        ));
+        assert!(llvm.contains(
+            "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_matches"
         ));
         assert!(llvm.contains("load i32, i32* @agam_call_cache_hot_profile_unique_keys"));
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_hottest_key_hits"));
