@@ -52,7 +52,18 @@ pub struct CallCacheFunctionProfile {
     pub specialization_guard_hits: u64,
     #[serde(default)]
     pub specialization_guard_fallbacks: u64,
+    #[serde(default)]
+    pub specialization_profiles: Vec<CallCacheSpecializationFeedbackProfile>,
     pub specialization_hint: CallCacheSpecializationHint,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallCacheSpecializationFeedbackProfile {
+    pub stable_values: Vec<StableScalarValueProfile>,
+    #[serde(default)]
+    pub guard_hits: u64,
+    #[serde(default)]
+    pub guard_fallbacks: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -397,20 +408,41 @@ pub fn recommended_specializations(
                 reuse_distance_signal(function),
                 Some(ReuseDistanceSignal::Unfavorable)
             );
-            let specialization_feedback_is_favorable =
+            let function_specialization_feedback_is_favorable =
                 specialization_feedback_is_favorable(&function.profile);
-            let specialization_feedback_is_unfavorable =
-                specialization_feedback_is_unfavorable(&function.profile);
+            let plan_feedback_is_favorable =
+                function
+                    .profile
+                    .specialization_profiles
+                    .iter()
+                    .any(|specialization| {
+                        matches!(
+                            specialization_feedback_signal_from_counts(
+                                specialization.guard_hits,
+                                specialization.guard_fallbacks,
+                            ),
+                            Some(SpecializationFeedbackSignal::Favorable)
+                        )
+                    });
             if hinted
-                && (stable_enough || specialization_feedback_is_favorable)
+                && (stable_enough
+                    || function_specialization_feedback_is_favorable
+                    || plan_feedback_is_favorable)
                 && !reuse_is_unfavorable
-                && !specialization_feedback_is_unfavorable
             {
                 specialization_plan_candidates(
                     &function.name,
                     &stable_values,
-                    specialization_feedback_is_favorable,
+                    function_specialization_feedback_is_favorable || plan_feedback_is_favorable,
                 )
+                .into_iter()
+                .filter(|plan| {
+                    !specialization_feedback_is_unfavorable_for_values(
+                        &function.profile,
+                        &plan.stable_values,
+                    )
+                })
+                .collect::<Vec<_>>()
             } else {
                 Vec::new()
             }
@@ -548,11 +580,32 @@ fn specialization_feedback_is_favorable(profile: &CallCacheFunctionProfile) -> b
     )
 }
 
-fn specialization_feedback_is_unfavorable(profile: &CallCacheFunctionProfile) -> bool {
+fn specialization_feedback_is_unfavorable_for_values(
+    profile: &CallCacheFunctionProfile,
+    stable_values: &[StableScalarValueProfile],
+) -> bool {
     matches!(
-        specialization_feedback_signal(profile),
+        specialization_feedback_signal_for_values(profile, stable_values),
         Some(SpecializationFeedbackSignal::Unfavorable)
     )
+}
+
+fn specialization_feedback_signal_for_values(
+    profile: &CallCacheFunctionProfile,
+    stable_values: &[StableScalarValueProfile],
+) -> Option<SpecializationFeedbackSignal> {
+    let key = specialization_feedback_key(stable_values);
+    profile
+        .specialization_profiles
+        .iter()
+        .find(|specialization| specialization_feedback_key(&specialization.stable_values) == key)
+        .and_then(|specialization| {
+            specialization_feedback_signal_from_counts(
+                specialization.guard_hits,
+                specialization.guard_fallbacks,
+            )
+        })
+        .or_else(|| specialization_feedback_signal(profile))
 }
 
 fn merge_function_profile(
@@ -594,6 +647,21 @@ fn merge_function_profile(
     let specialization_attempts = incoming
         .specialization_guard_hits
         .saturating_add(incoming.specialization_guard_fallbacks);
+    let mut specialization_profiles = incoming
+        .specialization_profiles
+        .iter()
+        .filter(|specialization| {
+            specialization
+                .guard_hits
+                .saturating_add(specialization.guard_fallbacks)
+                > 0
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    specialization_profiles.sort_by(|left, right| {
+        specialization_feedback_key(&left.stable_values)
+            .cmp(&specialization_feedback_key(&right.stable_values))
+    });
     let mut merged = CallCacheFunctionProfile {
         unique_keys,
         hottest_key_hits,
@@ -610,10 +678,21 @@ fn merge_function_profile(
         } else {
             0
         },
+        specialization_profiles,
         specialization_hint: CallCacheSpecializationHint::None,
     };
     merged.specialization_hint = specialization_hint(total_calls_after_merge, &merged);
     merged
+}
+
+fn specialization_feedback_key(stable_values: &[StableScalarValueProfile]) -> Vec<(usize, u64)> {
+    let mut key = stable_values
+        .iter()
+        .map(|value| (value.index, value.raw_bits))
+        .collect::<Vec<_>>();
+    key.sort_unstable();
+    key.dedup();
+    key
 }
 
 fn weighted_avg_option(
@@ -880,6 +959,7 @@ mod tests {
                     }],
                     specialization_guard_hits: 1,
                     specialization_guard_fallbacks: 15,
+                    specialization_profiles: Vec::new(),
                     specialization_hint: CallCacheSpecializationHint::StableArguments {
                         slots: vec![0],
                     },
@@ -995,6 +1075,7 @@ mod tests {
                     }],
                     specialization_guard_hits: 1,
                     specialization_guard_fallbacks: 15,
+                    specialization_profiles: Vec::new(),
                     specialization_hint: CallCacheSpecializationHint::StableArguments {
                         slots: vec![0],
                     },
@@ -1004,6 +1085,83 @@ mod tests {
 
         let plans = recommended_specializations(&profile);
         assert!(plans.is_empty());
+    }
+
+    #[test]
+    fn recommended_specializations_skip_only_unfavorable_plan_feedback() {
+        let profile = PersistentCallCacheProfile {
+            schema_version: CALL_CACHE_PROFILE_SCHEMA_VERSION,
+            backend: "jit".into(),
+            runs: 2,
+            total_calls: 64,
+            total_hits: 48,
+            total_stores: 2,
+            functions: vec![PersistentCallCacheFunctionProfile {
+                name: "mixed".into(),
+                runs: 2,
+                total_calls: 32,
+                total_hits: 24,
+                total_stores: 1,
+                last_entries: 1,
+                profile: CallCacheFunctionProfile {
+                    unique_keys: 1,
+                    hottest_key_hits: 24,
+                    avg_reuse_distance: Some(1),
+                    max_reuse_distance: Some(1),
+                    stable_values: vec![
+                        StableScalarValueProfile {
+                            index: 0,
+                            raw_bits: 33,
+                            matches: 24,
+                        },
+                        StableScalarValueProfile {
+                            index: 1,
+                            raw_bits: 7,
+                            matches: 20,
+                        },
+                    ],
+                    specialization_guard_hits: 8,
+                    specialization_guard_fallbacks: 25,
+                    specialization_profiles: vec![
+                        CallCacheSpecializationFeedbackProfile {
+                            stable_values: vec![
+                                StableScalarValueProfile {
+                                    index: 0,
+                                    raw_bits: 33,
+                                    matches: 24,
+                                },
+                                StableScalarValueProfile {
+                                    index: 1,
+                                    raw_bits: 7,
+                                    matches: 20,
+                                },
+                            ],
+                            guard_hits: 0,
+                            guard_fallbacks: 25,
+                        },
+                        CallCacheSpecializationFeedbackProfile {
+                            stable_values: vec![StableScalarValueProfile {
+                                index: 0,
+                                raw_bits: 33,
+                                matches: 24,
+                            }],
+                            guard_hits: 8,
+                            guard_fallbacks: 0,
+                        },
+                    ],
+                    specialization_hint: CallCacheSpecializationHint::StableArguments {
+                        slots: vec![0, 1],
+                    },
+                },
+            }],
+        };
+
+        let plans = recommended_specializations(&profile);
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].name, "mixed");
+        assert_eq!(plans[0].stable_values.len(), 1);
+        assert_eq!(plans[0].stable_values[0].index, 0);
+        assert_eq!(plans[0].stable_values[0].raw_bits, 33);
     }
 
     #[test]
@@ -1041,6 +1199,7 @@ mod tests {
                     ],
                     specialization_guard_hits: 12,
                     specialization_guard_fallbacks: 4,
+                    specialization_profiles: Vec::new(),
                     specialization_hint: CallCacheSpecializationHint::StableArguments {
                         slots: vec![0, 1],
                     },
@@ -1136,6 +1295,15 @@ mod tests {
                         }],
                         specialization_guard_hits: 8,
                         specialization_guard_fallbacks: 2,
+                        specialization_profiles: vec![CallCacheSpecializationFeedbackProfile {
+                            stable_values: vec![StableScalarValueProfile {
+                                index: 0,
+                                raw_bits: 33,
+                                matches: 24,
+                            }],
+                            guard_hits: 8,
+                            guard_fallbacks: 2,
+                        }],
                         specialization_hint: CallCacheSpecializationHint::StableArguments {
                             slots: vec![0],
                         },
@@ -1179,5 +1347,6 @@ mod tests {
             .expect("missing merged hot profile");
         assert_eq!(function.profile.specialization_guard_hits, 0);
         assert_eq!(function.profile.specialization_guard_fallbacks, 0);
+        assert!(function.profile.specialization_profiles.is_empty());
     }
 }

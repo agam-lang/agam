@@ -13,8 +13,8 @@ use agam_mir::analysis::{
 };
 use agam_mir::ir::*;
 use agam_profile::{
-    CallCacheFunctionProfile, CallCacheSpecializationHint, CallCacheSpecializationPlan,
-    StableScalarValueProfile, specialization_hint,
+    CallCacheFunctionProfile, CallCacheSpecializationFeedbackProfile, CallCacheSpecializationHint,
+    CallCacheSpecializationPlan, StableScalarValueProfile, specialization_hint,
 };
 use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
@@ -317,8 +317,9 @@ struct CallCacheFunctionState {
     specialization_guard_fallbacks: u64,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct SpecializationFeedbackState {
+    stable_values: Vec<StableScalarValueProfile>,
     hits: u64,
     fallbacks: u64,
 }
@@ -481,6 +482,18 @@ impl CallCacheFunctionState {
                 }
             })
             .collect();
+        let specialization_profiles = self
+            .specialization_feedback
+            .iter()
+            .filter(|specialization| {
+                specialization.hits.saturating_add(specialization.fallbacks) > 0
+            })
+            .map(|specialization| CallCacheSpecializationFeedbackProfile {
+                stable_values: specialization.stable_values.clone(),
+                guard_hits: specialization.hits,
+                guard_fallbacks: specialization.fallbacks,
+            })
+            .collect();
 
         let mut profile = CallCacheFunctionProfile {
             unique_keys: self.observed_keys.len(),
@@ -494,6 +507,7 @@ impl CallCacheFunctionState {
             stable_values,
             specialization_guard_hits: self.specialization_guard_hits,
             specialization_guard_fallbacks: self.specialization_guard_fallbacks,
+            specialization_profiles,
             specialization_hint: CallCacheSpecializationHint::None,
         };
         profile.specialization_hint = specialization_hint(self.calls, &profile);
@@ -2825,14 +2839,19 @@ impl CallCacheRuntime {
                     reuse_distance_samples: 0,
                     max_reuse_distance: 0,
                     hottest_key: None,
-                    specialization_feedback: vec![
-                        SpecializationFeedbackState::default();
-                        specializations
-                            .by_function
-                            .get(name)
-                            .map(|entries| entries.len())
-                            .unwrap_or(0)
-                    ],
+                    specialization_feedback: specializations
+                        .by_function
+                        .get(name)
+                        .map(|entries| {
+                            entries
+                                .iter()
+                                .map(|specialization| SpecializationFeedbackState {
+                                    stable_values: specialization.stable_values.clone(),
+                                    ..Default::default()
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     specialization_guard_hits: 0,
                     specialization_guard_fallbacks: 0,
                 })

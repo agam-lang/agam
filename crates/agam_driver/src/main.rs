@@ -4978,6 +4978,7 @@ fn hot(n: i64) -> i64 { return n + 1; }
                     }],
                     specialization_guard_hits: 1,
                     specialization_guard_fallbacks: 15,
+                    specialization_profiles: Vec::new(),
                     specialization_hint:
                         agam_profile::CallCacheSpecializationHint::StableArgumentsAndHotKey {
                             slots: vec![0],
@@ -5023,6 +5024,7 @@ fn hot(n: i64) -> i64 { return n + 1; }
                     }],
                     specialization_guard_hits: 1,
                     specialization_guard_fallbacks: 15,
+                    specialization_profiles: Vec::new(),
                     specialization_hint:
                         agam_profile::CallCacheSpecializationHint::StableArguments {
                             slots: vec![0],
@@ -5073,6 +5075,7 @@ fn hot(n: i64) -> i64 { return n + 1; }
                     ],
                     specialization_guard_hits: 12,
                     specialization_guard_fallbacks: 4,
+                    specialization_profiles: Vec::new(),
                     specialization_hint:
                         agam_profile::CallCacheSpecializationHint::StableArguments {
                             slots: vec![0, 1],
