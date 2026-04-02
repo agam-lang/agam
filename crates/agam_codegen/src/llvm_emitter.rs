@@ -3212,6 +3212,7 @@ fn emit_call_cache_observe_key(
         "  store i64 {observed_reuse}, i64* {candidate_reuse_slot}"
     )
     .unwrap();
+    emit_call_cache_reuse_profile_update(out, next_temp, globals, &observed_reuse);
     writeln!(
         out,
         "  store i64 {calls_new}, i64* {observed_last_seen_ptr}"
@@ -4181,13 +4182,8 @@ fn emit_call_cache_reuse_profile_update(
     out: &mut String,
     next_temp: &mut usize,
     globals: &CallCacheGlobalNames,
-    age_ptr: &str,
-    calls_new: &str,
+    reuse: &str,
 ) {
-    let age_old = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {age_old} = load i64, i64* {age_ptr}").unwrap();
-    let reuse = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {reuse} = sub i64 {calls_new}, {age_old}").unwrap();
     let reuse_total_old = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
@@ -4251,6 +4247,20 @@ fn emit_call_cache_reuse_profile_update(
         globals.profile_reuse_max
     )
     .unwrap();
+}
+
+fn emit_call_cache_reuse_profile_update_from_age(
+    out: &mut String,
+    next_temp: &mut usize,
+    globals: &CallCacheGlobalNames,
+    age_ptr: &str,
+    calls_new: &str,
+) {
+    let age_old = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {age_old} = load i64, i64* {age_ptr}").unwrap();
+    let reuse = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {reuse} = sub i64 {calls_new}, {age_old}").unwrap();
+    emit_call_cache_reuse_profile_update(out, next_temp, globals, &reuse);
 }
 
 fn emit_basic_call_cache_wrapper_ir(
@@ -4397,7 +4407,13 @@ fn emit_basic_call_cache_wrapper_ir(
         capacity, capacity, globals.ages
     )
     .unwrap();
-    emit_call_cache_reuse_profile_update(out, &mut next_temp, &globals, &hit_age_ptr, &calls_new);
+    emit_call_cache_reuse_profile_update_from_age(
+        out,
+        &mut next_temp,
+        &globals,
+        &hit_age_ptr,
+        &calls_new,
+    );
     writeln!(out, "  store i64 {calls_new}, i64* {hit_age_ptr}").unwrap();
     emit_increment_call_cache_entry_hits(out, &mut next_temp, &globals, capacity, &scan_index_i64);
     let hit_count_ptr = fresh_call_cache_temp(&mut next_temp);
@@ -4682,7 +4698,13 @@ fn emit_optimized_call_cache_wrapper_ir(
         capacity, capacity, globals.ages
     )
     .unwrap();
-    emit_call_cache_reuse_profile_update(out, &mut next_temp, &globals, &hit_age_ptr, &calls_new);
+    emit_call_cache_reuse_profile_update_from_age(
+        out,
+        &mut next_temp,
+        &globals,
+        &hit_age_ptr,
+        &calls_new,
+    );
     writeln!(out, "  store i64 {calls_new}, i64* {hit_age_ptr}").unwrap();
     emit_increment_call_cache_entry_hits(out, &mut next_temp, &globals, capacity, &scan_index_i64);
     let hit_count_old = fresh_call_cache_temp(&mut next_temp);
@@ -5812,6 +5834,11 @@ fn main() -> i32:
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
         assert!(
             llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
+        );
+        assert!(
+            llvm.matches("load i64, i64* @agam_call_cache_hot_profile_reuse_total")
+                .count()
+                >= 2
         );
         assert!(llvm.contains("icmp uge i64"));
         assert!(llvm.contains("select i1"));
