@@ -18,11 +18,12 @@ use agam_profile::{CallCacheSpecializationPlan, StableScalarValueProfile};
 use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 
 const MAX_CALL_CACHE_ARGS: usize = 4;
+const MAX_PROFILED_CALL_CACHE_KEYS: usize = 64;
 const DEFAULT_CALL_CACHE_CAPACITY: usize = 256;
 const DEFAULT_CALL_CACHE_WARMUP: u64 = 32;
 const LLVM_CALL_CACHE_PROFILE_ENV: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_OUT";
-const LLVM_CALL_CACHE_PROFILE_HEADER: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_V4\n";
-const LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT: &str = "FN\t%s\t%llu\t%llu\t%llu\t%u\n";
+const LLVM_CALL_CACHE_PROFILE_HEADER: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_V5\n";
+const LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT: &str = "FN\t%s\t%llu\t%llu\t%llu\t%u\t%u\t%llu\n";
 const LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_LINE_FMT: &str = "SP\t%s\t%llu\t%llu\n";
 const LLVM_CALL_CACHE_PROFILE_STABLE_LINE_FMT: &str = "SV\t%s\t%u\t%llu\t%llu\n";
 const LLVM_CALL_CACHE_PROFILE_REUSE_LINE_FMT: &str = "RD\t%s\t%llu\t%llu\t%llu\n";
@@ -1425,6 +1426,48 @@ impl LlvmEmitter {
             .unwrap();
             writeln!(
                 out,
+                "{} = internal global [{} x i64] zeroinitializer, align 8",
+                globals.entry_hits, self.options.call_cache_capacity
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global i32 0, align 4",
+                globals.profile_unique_keys
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global i64 0, align 8",
+                globals.profile_hottest_key_hits
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x [{} x i64]] zeroinitializer, align 16",
+                globals.profile_observed_keys, MAX_PROFILED_CALL_CACHE_KEYS, MAX_CALL_CACHE_ARGS
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x i64] zeroinitializer, align 8",
+                globals.profile_observed_hits, MAX_PROFILED_CALL_CACHE_KEYS
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x i64] zeroinitializer, align 8",
+                globals.profile_observed_last_seen, MAX_PROFILED_CALL_CACHE_KEYS
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{} = internal global [{} x i64] zeroinitializer, align 8",
+                globals.profile_observed_reuse, MAX_PROFILED_CALL_CACHE_KEYS
+            )
+            .unwrap();
+            writeln!(
+                out,
                 "{} = internal global [{} x i64] zeroinitializer, align 16",
                 globals.profile_stable_values, MAX_CALL_CACHE_ARGS
             )
@@ -1582,6 +1625,8 @@ impl LlvmEmitter {
             let hits_tmp = fresh_call_cache_temp(&mut next_temp);
             let stores_tmp = fresh_call_cache_temp(&mut next_temp);
             let len_tmp = fresh_call_cache_temp(&mut next_temp);
+            let unique_keys_tmp = fresh_call_cache_temp(&mut next_temp);
+            let hottest_key_hits_tmp = fresh_call_cache_temp(&mut next_temp);
             let write_tmp = fresh_call_cache_temp(&mut next_temp);
             let specialization_hits_tmp = fresh_call_cache_temp(&mut next_temp);
             let specialization_fallbacks_tmp = fresh_call_cache_temp(&mut next_temp);
@@ -1597,6 +1642,18 @@ impl LlvmEmitter {
             writeln!(out, "  {hits_tmp} = load i64, i64* {}", globals.hits).unwrap();
             writeln!(out, "  {stores_tmp} = load i64, i64* {}", globals.stores).unwrap();
             writeln!(out, "  {len_tmp} = load i32, i32* {}", globals.len).unwrap();
+            writeln!(
+                out,
+                "  {unique_keys_tmp} = load i32, i32* {}",
+                globals.profile_unique_keys
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {hottest_key_hits_tmp} = load i64, i64* {}",
+                globals.profile_hottest_key_hits
+            )
+            .unwrap();
             writeln!(
                 out,
                 "  {specialization_hits_tmp} = load i64, i64* {}",
@@ -1644,7 +1701,7 @@ impl LlvmEmitter {
             .unwrap();
             writeln!(
                 out,
-                "  {write_tmp} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {function_line_fmt}, i8* {name_ptr}, i64 {calls_tmp}, i64 {hits_tmp}, i64 {stores_tmp}, i32 {len_tmp})"
+                "  {write_tmp} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {function_line_fmt}, i8* {name_ptr}, i64 {calls_tmp}, i64 {hits_tmp}, i64 {stores_tmp}, i32 {len_tmp}, i32 {unique_keys_tmp}, i64 {hottest_key_hits_tmp})"
             )
             .unwrap();
             writeln!(
@@ -2815,10 +2872,17 @@ struct CallCacheGlobalNames {
     values: String,
     scores: String,
     ages: String,
+    entry_hits: String,
     pending_valid: String,
     pending_count: String,
     pending_last_seen: String,
     pending_keys: String,
+    profile_unique_keys: String,
+    profile_hottest_key_hits: String,
+    profile_observed_keys: String,
+    profile_observed_hits: String,
+    profile_observed_last_seen: String,
+    profile_observed_reuse: String,
     profile_stable_values: String,
     profile_stable_scores: String,
     profile_reuse_total: String,
@@ -2843,10 +2907,17 @@ fn call_cache_global_names(name: &str) -> CallCacheGlobalNames {
         values: format!("@agam_call_cache_{}_values", base),
         scores: format!("@agam_call_cache_{}_scores", base),
         ages: format!("@agam_call_cache_{}_ages", base),
+        entry_hits: format!("@agam_call_cache_{}_entry_hits", base),
         pending_valid: format!("@agam_call_cache_{}_pending_valid", base),
         pending_count: format!("@agam_call_cache_{}_pending_count", base),
         pending_last_seen: format!("@agam_call_cache_{}_pending_last_seen", base),
         pending_keys: format!("@agam_call_cache_{}_pending_keys", base),
+        profile_unique_keys: format!("@agam_call_cache_{}_profile_unique_keys", base),
+        profile_hottest_key_hits: format!("@agam_call_cache_{}_profile_hottest_key_hits", base),
+        profile_observed_keys: format!("@agam_call_cache_{}_profile_observed_keys", base),
+        profile_observed_hits: format!("@agam_call_cache_{}_profile_observed_hits", base),
+        profile_observed_last_seen: format!("@agam_call_cache_{}_profile_observed_last_seen", base),
+        profile_observed_reuse: format!("@agam_call_cache_{}_profile_observed_reuse", base),
         profile_stable_values: format!("@agam_call_cache_{}_profile_stable_values", base),
         profile_stable_scores: format!("@agam_call_cache_{}_profile_stable_scores", base),
         profile_reuse_total: format!("@agam_call_cache_{}_profile_reuse_total", base),
@@ -2891,6 +2962,362 @@ fn emit_increment_i64_global(out: &mut String, next_temp: &mut usize, global: &s
     writeln!(out, "  {current} = load i64, i64* {global}").unwrap();
     writeln!(out, "  {next} = add i64 {current}, 1").unwrap();
     writeln!(out, "  store i64 {next}, i64* {global}").unwrap();
+}
+
+fn emit_update_i64_global_max(
+    out: &mut String,
+    next_temp: &mut usize,
+    global: &str,
+    candidate: &str,
+) {
+    let current = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {current} = load i64, i64* {global}").unwrap();
+    let better = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {better} = icmp ugt i64 {candidate}, {current}").unwrap();
+    let updated = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {updated} = select i1 {better}, i64 {candidate}, i64 {current}"
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {updated}, i64* {global}").unwrap();
+}
+
+fn emit_increment_call_cache_entry_hits(
+    out: &mut String,
+    next_temp: &mut usize,
+    globals: &CallCacheGlobalNames,
+    capacity: usize,
+    index_i64: &str,
+) {
+    let entry_hits_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {entry_hits_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {index_i64}",
+        capacity, capacity, globals.entry_hits
+    )
+    .unwrap();
+    let entry_hits_old = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {entry_hits_old} = load i64, i64* {entry_hits_ptr}").unwrap();
+    let entry_hits_new = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {entry_hits_new} = add i64 {entry_hits_old}, 1").unwrap();
+    writeln!(out, "  store i64 {entry_hits_new}, i64* {entry_hits_ptr}").unwrap();
+    emit_update_i64_global_max(
+        out,
+        next_temp,
+        &globals.profile_hottest_key_hits,
+        &entry_hits_new,
+    );
+}
+
+fn emit_store_call_cache_entry_hits(
+    out: &mut String,
+    next_temp: &mut usize,
+    globals: &CallCacheGlobalNames,
+    capacity: usize,
+    index_i64: &str,
+    hits: &str,
+) {
+    let entry_hits_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {entry_hits_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {index_i64}",
+        capacity, capacity, globals.entry_hits
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {hits}, i64* {entry_hits_ptr}").unwrap();
+    emit_update_i64_global_max(out, next_temp, &globals.profile_hottest_key_hits, hits);
+}
+
+fn emit_call_cache_observe_key(
+    out: &mut String,
+    next_temp: &mut usize,
+    globals: &CallCacheGlobalNames,
+    predecessor_label: &str,
+    encoded_args: &[String],
+    calls_new: &str,
+) -> (String, String) {
+    let scan_label = fresh_call_cache_label(next_temp, "observe_scan");
+    let check_label = fresh_call_cache_label(next_temp, "observe_check");
+    let hit_label = fresh_call_cache_label(next_temp, "observe_hit");
+    let next_label = fresh_call_cache_label(next_temp, "observe_next");
+    let insert_check_label = fresh_call_cache_label(next_temp, "observe_insert_check");
+    let insert_label = fresh_call_cache_label(next_temp, "observe_insert");
+    let done_label = fresh_call_cache_label(next_temp, "observe_done");
+
+    let candidate_hits_slot = fresh_call_cache_temp(next_temp);
+    let candidate_reuse_slot = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {candidate_hits_slot} = alloca i32").unwrap();
+    writeln!(out, "  {candidate_reuse_slot} = alloca i64").unwrap();
+    writeln!(out, "  store i32 1, i32* {candidate_hits_slot}").unwrap();
+    writeln!(out, "  store i64 0, i64* {candidate_reuse_slot}").unwrap();
+
+    let observed_len = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_len} = load i32, i32* {}",
+        globals.profile_unique_keys
+    )
+    .unwrap();
+    let has_observed = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {has_observed} = icmp ne i32 {observed_len}, 0").unwrap();
+    writeln!(
+        out,
+        "  br i1 {has_observed}, label %{scan_label}, label %{insert_check_label}"
+    )
+    .unwrap();
+
+    let next_index = fresh_call_cache_temp(next_temp);
+    writeln!(out, "{scan_label}:").unwrap();
+    let scan_index = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {scan_index} = phi i32 [ 0, %{predecessor_label} ], [ {next_index}, %{next_label} ]"
+    )
+    .unwrap();
+    let scan_done = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {scan_done} = icmp eq i32 {scan_index}, {observed_len}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  br i1 {scan_done}, label %{insert_check_label}, label %{check_label}"
+    )
+    .unwrap();
+
+    writeln!(out, "{check_label}:").unwrap();
+    let scan_index_i64 = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {scan_index_i64} = zext i32 {scan_index} to i64").unwrap();
+    if encoded_args.is_empty() {
+        writeln!(out, "  br label %{hit_label}").unwrap();
+    } else {
+        let mut combined_match = String::new();
+        for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+            let arg_ptr = fresh_call_cache_temp(next_temp);
+            writeln!(
+                out,
+                "  {arg_ptr} = getelementptr inbounds [{} x [{} x i64]], [{} x [{} x i64]]* {}, i64 0, i64 {scan_index_i64}, i64 {}",
+                MAX_PROFILED_CALL_CACHE_KEYS,
+                MAX_CALL_CACHE_ARGS,
+                MAX_PROFILED_CALL_CACHE_KEYS,
+                MAX_CALL_CACHE_ARGS,
+                globals.profile_observed_keys,
+                arg_index
+            )
+            .unwrap();
+            let arg_loaded = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {arg_loaded} = load i64, i64* {arg_ptr}").unwrap();
+            let arg_eq = fresh_call_cache_temp(next_temp);
+            writeln!(out, "  {arg_eq} = icmp eq i64 {arg_loaded}, {arg_bits}").unwrap();
+            if combined_match.is_empty() {
+                combined_match = arg_eq;
+            } else {
+                let new_match = fresh_call_cache_temp(next_temp);
+                writeln!(out, "  {new_match} = and i1 {combined_match}, {arg_eq}").unwrap();
+                combined_match = new_match;
+            }
+        }
+        writeln!(
+            out,
+            "  br i1 {combined_match}, label %{hit_label}, label %{next_label}"
+        )
+        .unwrap();
+    }
+
+    writeln!(out, "{hit_label}:").unwrap();
+    let observed_hits_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_hits_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {scan_index_i64}",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_hits
+    )
+    .unwrap();
+    let observed_hits_old = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_hits_old} = load i64, i64* {observed_hits_ptr}"
+    )
+    .unwrap();
+    let observed_hits_new = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_hits_new} = add i64 {observed_hits_old}, 1"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {observed_hits_new}, i64* {observed_hits_ptr}"
+    )
+    .unwrap();
+    let observed_hits_new_i32 = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_hits_new_i32} = trunc i64 {observed_hits_new} to i32"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i32 {observed_hits_new_i32}, i32* {candidate_hits_slot}"
+    )
+    .unwrap();
+    let observed_last_seen_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_last_seen_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {scan_index_i64}",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_last_seen
+    )
+    .unwrap();
+    let observed_last_seen_old = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_last_seen_old} = load i64, i64* {observed_last_seen_ptr}"
+    )
+    .unwrap();
+    let observed_reuse = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_reuse} = sub i64 {calls_new}, {observed_last_seen_old}"
+    )
+    .unwrap();
+    let observed_reuse_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_reuse_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {scan_index_i64}",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_reuse
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {observed_reuse}, i64* {observed_reuse_ptr}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {observed_reuse}, i64* {candidate_reuse_slot}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {calls_new}, i64* {observed_last_seen_ptr}"
+    )
+    .unwrap();
+    emit_update_i64_global_max(
+        out,
+        next_temp,
+        &globals.profile_hottest_key_hits,
+        &observed_hits_new,
+    );
+    writeln!(out, "  br label %{done_label}").unwrap();
+
+    writeln!(out, "{next_label}:").unwrap();
+    writeln!(out, "  {next_index} = add nuw i32 {scan_index}, 1").unwrap();
+    writeln!(out, "  br label %{scan_label}").unwrap();
+
+    writeln!(out, "{insert_check_label}:").unwrap();
+    let observed_has_room = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_has_room} = icmp ult i32 {observed_len}, {}",
+        MAX_PROFILED_CALL_CACHE_KEYS as u32
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  br i1 {observed_has_room}, label %{insert_label}, label %{done_label}"
+    )
+    .unwrap();
+
+    writeln!(out, "{insert_label}:").unwrap();
+    let observed_index_i64 = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_index_i64} = zext i32 {observed_len} to i64"
+    )
+    .unwrap();
+    for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
+        let arg_ptr = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {arg_ptr} = getelementptr inbounds [{} x [{} x i64]], [{} x [{} x i64]]* {}, i64 0, i64 {observed_index_i64}, i64 {}",
+            MAX_PROFILED_CALL_CACHE_KEYS,
+            MAX_CALL_CACHE_ARGS,
+            MAX_PROFILED_CALL_CACHE_KEYS,
+            MAX_CALL_CACHE_ARGS,
+            globals.profile_observed_keys,
+            arg_index
+        )
+        .unwrap();
+        writeln!(out, "  store i64 {arg_bits}, i64* {arg_ptr}").unwrap();
+    }
+    let observed_hits_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_hits_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {observed_index_i64}",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_hits
+    )
+    .unwrap();
+    writeln!(out, "  store i64 1, i64* {observed_hits_ptr}").unwrap();
+    writeln!(out, "  store i32 1, i32* {candidate_hits_slot}").unwrap();
+    let observed_last_seen_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_last_seen_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {observed_index_i64}",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_last_seen
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {calls_new}, i64* {observed_last_seen_ptr}"
+    )
+    .unwrap();
+    let observed_reuse_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_reuse_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {observed_index_i64}",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_reuse
+    )
+    .unwrap();
+    writeln!(out, "  store i64 0, i64* {observed_reuse_ptr}").unwrap();
+    writeln!(out, "  store i64 0, i64* {candidate_reuse_slot}").unwrap();
+    let observed_len_next = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {observed_len_next} = add nuw i32 {observed_len}, 1").unwrap();
+    writeln!(
+        out,
+        "  store i32 {observed_len_next}, i32* {}",
+        globals.profile_unique_keys
+    )
+    .unwrap();
+    emit_update_i64_global_max(out, next_temp, &globals.profile_hottest_key_hits, "1");
+    writeln!(out, "  br label %{done_label}").unwrap();
+
+    writeln!(out, "{done_label}:").unwrap();
+    let candidate_hits = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {candidate_hits} = load i32, i32* {candidate_hits_slot}"
+    )
+    .unwrap();
+    let candidate_reuse = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {candidate_reuse} = load i64, i64* {candidate_reuse_slot}"
+    )
+    .unwrap();
+    (candidate_hits, candidate_reuse)
 }
 
 fn emit_specialization_feedback_adjusted_score(
@@ -3196,14 +3623,15 @@ fn emit_optimized_admission_score(
     )
     .unwrap();
 
-    let candidate_hits_i64 = fresh_call_cache_temp(next_temp);
+    let hottest_key_hits = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
-        "  {candidate_hits_i64} = zext i32 {candidate_hits} to i64"
+        "  {hottest_key_hits} = load i64, i64* {}",
+        globals.profile_hottest_key_hits
     )
     .unwrap();
     let dominant_hits = fresh_call_cache_temp(next_temp);
-    writeln!(out, "  {dominant_hits} = mul i64 {candidate_hits_i64}, 2").unwrap();
+    writeln!(out, "  {dominant_hits} = mul i64 {hottest_key_hits}, 2").unwrap();
     let dominant_hot_key = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
@@ -3270,6 +3698,47 @@ fn emit_optimized_admission_score(
     )
     .unwrap();
 
+    let unique_keys = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {unique_keys} = load i32, i32* {}",
+        globals.profile_unique_keys
+    )
+    .unwrap();
+    let broad_unique_spread = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {broad_unique_spread} = icmp ugt i32 {unique_keys}, {}",
+        capacity.saturating_mul(2) as u32
+    )
+    .unwrap();
+    let spread_penalty_applies = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {spread_penalty_applies} = icmp uge i32 {score_after_stable}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_BROAD_KEY_SPREAD_PENALTY
+    )
+    .unwrap();
+    let spread_penalty_sub = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {spread_penalty_sub} = sub i32 {score_after_stable}, {}",
+        agam_profile::ADAPTIVE_ADMISSION_BROAD_KEY_SPREAD_PENALTY
+    )
+    .unwrap();
+    let spread_penalized = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {spread_penalized} = select i1 {spread_penalty_applies}, i32 {spread_penalty_sub}, i32 0"
+    )
+    .unwrap();
+    let score_after_spread = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {score_after_spread} = select i1 {broad_unique_spread}, i32 {spread_penalized}, i32 {score_after_stable}"
+    )
+    .unwrap();
+
     let score_after_capacity = if capacity > 0 {
         let cache_full = fresh_call_cache_temp(next_temp);
         writeln!(
@@ -3281,14 +3750,14 @@ fn emit_optimized_admission_score(
         let full_penalty_applies = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
-            "  {full_penalty_applies} = icmp uge i32 {score_after_stable}, {}",
+            "  {full_penalty_applies} = icmp uge i32 {score_after_spread}, {}",
             agam_profile::ADAPTIVE_ADMISSION_CACHE_FULL_PENALTY
         )
         .unwrap();
         let full_penalty_sub = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
-            "  {full_penalty_sub} = sub i32 {score_after_stable}, {}",
+            "  {full_penalty_sub} = sub i32 {score_after_spread}, {}",
             agam_profile::ADAPTIVE_ADMISSION_CACHE_FULL_PENALTY
         )
         .unwrap();
@@ -3301,12 +3770,12 @@ fn emit_optimized_admission_score(
         let score_after_capacity = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
-            "  {score_after_capacity} = select i1 {cache_full}, i32 {full_penalized}, i32 {score_after_stable}"
+            "  {score_after_capacity} = select i1 {cache_full}, i32 {full_penalized}, i32 {score_after_spread}"
         )
         .unwrap();
         score_after_capacity
     } else {
-        score_after_stable
+        score_after_spread
     };
 
     emit_specialization_feedback_adjusted_score(out, next_temp, globals, &score_after_capacity)
@@ -3448,7 +3917,8 @@ fn emit_call_cache_stable_value_profile_update(
     next_temp: &mut usize,
     globals: &CallCacheGlobalNames,
     encoded_args: &[String],
-) {
+) -> String {
+    let mut current_label = "entry".to_string();
     for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
         let seed_label = fresh_call_cache_label(next_temp, "stable_seed");
         let compare_label = fresh_call_cache_label(next_temp, "stable_compare");
@@ -3509,7 +3979,10 @@ fn emit_call_cache_stable_value_profile_update(
         writeln!(out, "  br label %{done_label}").unwrap();
 
         writeln!(out, "{done_label}:").unwrap();
+        current_label = done_label;
     }
+
+    current_label
 }
 
 fn emit_call_cache_reuse_profile_update(
@@ -3640,7 +4113,16 @@ fn emit_basic_call_cache_wrapper_ir(
             &format!("%p{index}"),
         )?);
     }
-    emit_call_cache_stable_value_profile_update(out, &mut next_temp, &globals, &encoded_args);
+    let observe_predecessor =
+        emit_call_cache_stable_value_profile_update(out, &mut next_temp, &globals, &encoded_args);
+    let _ = emit_call_cache_observe_key(
+        out,
+        &mut next_temp,
+        &globals,
+        &observe_predecessor,
+        &encoded_args,
+        &calls_new,
+    );
 
     let use_cache = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {use_cache} = icmp ule i64 {calls_new}, {warmup}").unwrap();
@@ -3725,6 +4207,7 @@ fn emit_basic_call_cache_wrapper_ir(
     .unwrap();
     emit_call_cache_reuse_profile_update(out, &mut next_temp, &globals, &hit_age_ptr, &calls_new);
     writeln!(out, "  store i64 {calls_new}, i64* {hit_age_ptr}").unwrap();
+    emit_increment_call_cache_entry_hits(out, &mut next_temp, &globals, capacity, &scan_index_i64);
     let hit_count_ptr = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {hit_count_ptr} = load i64, i64* {}", globals.hits).unwrap();
     let hit_count_new = fresh_call_cache_temp(&mut next_temp);
@@ -3805,6 +4288,14 @@ fn emit_basic_call_cache_wrapper_ir(
     )
     .unwrap();
     writeln!(out, "  store i64 {calls_new}, i64* {store_age_ptr}").unwrap();
+    emit_store_call_cache_entry_hits(
+        out,
+        &mut next_temp,
+        &globals,
+        capacity,
+        &store_index_i64,
+        "1",
+    );
     let store_count_old = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -3893,7 +4384,16 @@ fn emit_optimized_call_cache_wrapper_ir(
             &format!("%p{index}"),
         )?);
     }
-    emit_call_cache_stable_value_profile_update(out, &mut next_temp, &globals, &encoded_args);
+    let observe_predecessor =
+        emit_call_cache_stable_value_profile_update(out, &mut next_temp, &globals, &encoded_args);
+    let (observed_candidate_hits, observed_candidate_reuse) = emit_call_cache_observe_key(
+        out,
+        &mut next_temp,
+        &globals,
+        &observe_predecessor,
+        &encoded_args,
+        &calls_new,
+    );
 
     let use_cache = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {use_cache} = icmp ule i64 {calls_new}, {warmup}").unwrap();
@@ -3992,6 +4492,7 @@ fn emit_optimized_call_cache_wrapper_ir(
     .unwrap();
     emit_call_cache_reuse_profile_update(out, &mut next_temp, &globals, &hit_age_ptr, &calls_new);
     writeln!(out, "  store i64 {calls_new}, i64* {hit_age_ptr}").unwrap();
+    emit_increment_call_cache_entry_hits(out, &mut next_temp, &globals, capacity, &scan_index_i64);
     let hit_count_old = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {hit_count_old} = load i64, i64* {}", globals.hits).unwrap();
     let hit_count_new = fresh_call_cache_temp(&mut next_temp);
@@ -4096,19 +4597,6 @@ fn emit_optimized_call_cache_wrapper_ir(
     writeln!(out, "  br label %ret_miss").unwrap();
 
     writeln!(out, "admit_hit:").unwrap();
-    let pending_last_seen_old = fresh_call_cache_temp(&mut next_temp);
-    writeln!(
-        out,
-        "  {pending_last_seen_old} = load i64, i64* {}",
-        globals.pending_last_seen
-    )
-    .unwrap();
-    let pending_reuse_distance = fresh_call_cache_temp(&mut next_temp);
-    writeln!(
-        out,
-        "  {pending_reuse_distance} = sub i64 {calls_new}, {pending_last_seen_old}"
-    )
-    .unwrap();
     writeln!(
         out,
         "  store i64 {calls_new}, i64* {}",
@@ -4134,6 +4622,18 @@ fn emit_optimized_call_cache_wrapper_ir(
         globals.pending_count
     )
     .unwrap();
+    let pending_count_new_i64 = fresh_call_cache_temp(&mut next_temp);
+    writeln!(
+        out,
+        "  {pending_count_new_i64} = zext i32 {pending_count_new} to i64"
+    )
+    .unwrap();
+    emit_update_i64_global_max(
+        out,
+        &mut next_temp,
+        &globals.profile_hottest_key_hits,
+        &pending_count_new_i64,
+    );
     let store_len = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {store_len} = load i32, i32* {}", globals.len).unwrap();
     let candidate_score = emit_optimized_admission_score(
@@ -4144,13 +4644,13 @@ fn emit_optimized_call_cache_wrapper_ir(
         capacity,
         &calls_new,
         &store_len,
-        &pending_count_new,
-        &pending_reuse_distance,
+        &observed_candidate_hits,
+        &observed_candidate_reuse,
     );
     let repeated_enough = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
-        "  {repeated_enough} = icmp uge i32 {pending_count_new}, {}",
+        "  {repeated_enough} = icmp uge i32 {observed_candidate_hits}, {}",
         agam_profile::ADAPTIVE_ADMISSION_MIN_CANDIDATE_HITS as u32
     )
     .unwrap();
@@ -4231,6 +4731,14 @@ fn emit_optimized_call_cache_wrapper_ir(
     )
     .unwrap();
     writeln!(out, "  store i64 {calls_new}, i64* {store_age_ptr}").unwrap();
+    emit_store_call_cache_entry_hits(
+        out,
+        &mut next_temp,
+        &globals,
+        capacity,
+        &store_index_i64,
+        &pending_count_new_i64,
+    );
     let store_count_old = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -4447,6 +4955,14 @@ fn emit_optimized_call_cache_wrapper_ir(
     )
     .unwrap();
     writeln!(out, "  store i64 {calls_new}, i64* {replace_age_ptr}").unwrap();
+    emit_store_call_cache_entry_hits(
+        out,
+        &mut next_temp,
+        &globals,
+        capacity,
+        &victim_index_i64,
+        &pending_count_new_i64,
+    );
     let replace_store_old = fresh_call_cache_temp(&mut next_temp);
     writeln!(
         out,
@@ -4947,10 +5463,26 @@ fn main() -> i32:
                 "@agam_call_cache_hot_profile_specialization_hits = internal global i64 0"
             )
         );
+        assert!(llvm.contains("@agam_call_cache_hot_profile_unique_keys = internal global i32 0"));
+        assert!(
+            llvm.contains("@agam_call_cache_hot_profile_hottest_key_hits = internal global i64 0")
+        );
+        assert!(llvm.contains(
+            "@agam_call_cache_hot_profile_observed_keys = internal global [64 x [4 x i64]] zeroinitializer"
+        ));
+        assert!(llvm.contains(
+            "@agam_call_cache_hot_profile_observed_hits = internal global [64 x i64] zeroinitializer"
+        ));
+        assert!(llvm.contains(
+            "@agam_call_cache_hot_profile_observed_last_seen = internal global [64 x i64] zeroinitializer"
+        ));
+        assert!(llvm.contains(
+            "@agam_call_cache_hot_profile_observed_reuse = internal global [64 x i64] zeroinitializer"
+        ));
         assert!(llvm.contains(
             "@agam_call_cache_hot_profile_specialization_fallbacks = internal global i64 0"
         ));
-        assert!(llvm.contains("AGAM_LLVM_CALL_CACHE_PROFILE_V4"));
+        assert!(llvm.contains("AGAM_LLVM_CALL_CACHE_PROFILE_V5"));
         assert!(llvm.contains(
             "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_values"
         ));
@@ -5065,10 +5597,24 @@ fn main() -> i32:
                 ..LlvmEmitOptions::default()
             },
         );
-        assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_pending_last_seen"));
+        assert!(llvm.contains(
+            "getelementptr inbounds [64 x i64], [64 x i64]* @agam_call_cache_hot_profile_observed_last_seen"
+        ));
+        assert!(llvm.contains("phi i32 [ 0, %stable_done_"));
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_hits"));
         assert!(llvm.contains(
             "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_scores"
+        ));
+        assert!(llvm.contains("load i32, i32* @agam_call_cache_hot_profile_unique_keys"));
+        assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_hottest_key_hits"));
+        assert!(llvm.contains(
+            "getelementptr inbounds [64 x [4 x i64]], [64 x [4 x i64]]* @agam_call_cache_hot_profile_observed_keys"
+        ));
+        assert!(llvm.contains(
+            "getelementptr inbounds [64 x i64], [64 x i64]* @agam_call_cache_hot_profile_observed_hits"
+        ));
+        assert!(llvm.contains(
+            "getelementptr inbounds [64 x i64], [64 x i64]* @agam_call_cache_hot_profile_observed_reuse"
         ));
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
         assert!(

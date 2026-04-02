@@ -3261,6 +3261,7 @@ fn parse_llvm_call_cache_run_profile(
         && header != "AGAM_LLVM_CALL_CACHE_PROFILE_V2"
         && header != "AGAM_LLVM_CALL_CACHE_PROFILE_V3"
         && header != "AGAM_LLVM_CALL_CACHE_PROFILE_V4"
+        && header != "AGAM_LLVM_CALL_CACHE_PROFILE_V5"
     {
         return Err(format!(
             "unsupported LLVM call-cache profile header `{header}`"
@@ -3280,7 +3281,7 @@ fn parse_llvm_call_cache_run_profile(
         let parts: Vec<_> = line.split('\t').collect();
         match parts.first().copied() {
             Some("FN") => {
-                if parts.len() != 6 {
+                if parts.len() != 6 && parts.len() != 8 {
                     return Err(format!(
                         "invalid LLVM call-cache profile line {}: `{}`",
                         line_index + 2,
@@ -3316,6 +3317,25 @@ fn parse_llvm_call_cache_run_profile(
                         e
                     )
                 })?;
+                let (unique_keys, hottest_key_hits) = if parts.len() == 8 {
+                    let unique_keys = parts[6].parse::<usize>().map_err(|e| {
+                        format!(
+                            "invalid LLVM call-cache unique-key count on line {}: {}",
+                            line_index + 2,
+                            e
+                        )
+                    })?;
+                    let hottest_key_hits = parts[7].parse::<u64>().map_err(|e| {
+                        format!(
+                            "invalid LLVM call-cache hottest-key hit count on line {}: {}",
+                            line_index + 2,
+                            e
+                        )
+                    })?;
+                    (unique_keys, hottest_key_hits)
+                } else {
+                    (entries.max(stores as usize), 0)
+                };
 
                 total_calls = total_calls.saturating_add(calls);
                 total_hits = total_hits.saturating_add(hits);
@@ -3330,7 +3350,8 @@ fn parse_llvm_call_cache_run_profile(
                     stores,
                     entries,
                     profile: agam_profile::CallCacheFunctionProfile {
-                        unique_keys: entries.max(stores as usize),
+                        unique_keys,
+                        hottest_key_hits,
                         ..Default::default()
                     },
                 });
@@ -4789,7 +4810,7 @@ fn hot(n: i64) -> i64 { return n + 1; }
     #[test]
     fn test_parse_llvm_call_cache_run_profile() {
         let profile = parse_llvm_call_cache_run_profile(
-            "AGAM_LLVM_CALL_CACHE_PROFILE_V4\nFN\thot\t32\t24\t2\t1\nSP\thot\t12\t4\nSV\thot\t0\t33\t24\nRD\thot\t1\t3\t24\nFN\twarm\t8\t0\t0\t0\nSP\twarm\t0\t0\nSV\twarm\t0\t7\t0\nRD\twarm\t0\t0\t0\n",
+            "AGAM_LLVM_CALL_CACHE_PROFILE_V5\nFN\thot\t32\t24\t2\t1\t3\t24\nSP\thot\t12\t4\nSV\thot\t0\t33\t24\nRD\thot\t1\t3\t24\nFN\twarm\t8\t0\t0\t0\t0\t0\nSP\twarm\t0\t0\nSV\twarm\t0\t7\t0\nRD\twarm\t0\t0\t0\n",
         )
         .expect("profile should parse");
 
@@ -4800,6 +4821,8 @@ fn hot(n: i64) -> i64 { return n + 1; }
         assert_eq!(profile.functions.len(), 2);
         assert_eq!(profile.functions[0].name, "hot");
         assert_eq!(profile.functions[0].entries, 1);
+        assert_eq!(profile.functions[0].profile.unique_keys, 3);
+        assert_eq!(profile.functions[0].profile.hottest_key_hits, 24);
         assert_eq!(profile.functions[0].profile.stable_values.len(), 1);
         assert_eq!(profile.functions[0].profile.stable_values[0].raw_bits, 33);
         assert_eq!(profile.functions[0].profile.avg_reuse_distance, Some(1));
@@ -4809,6 +4832,19 @@ fn hot(n: i64) -> i64 { return n + 1; }
             profile.functions[0].profile.specialization_guard_fallbacks,
             4
         );
+    }
+
+    #[test]
+    fn test_parse_llvm_call_cache_run_profile_v4_compatibility() {
+        let profile = parse_llvm_call_cache_run_profile(
+            "AGAM_LLVM_CALL_CACHE_PROFILE_V4\nFN\thot\t32\t24\t2\t1\nSP\thot\t12\t4\nSV\thot\t0\t33\t24\nRD\thot\t1\t3\t24\n",
+        )
+        .expect("legacy profile should parse");
+
+        assert_eq!(profile.functions.len(), 1);
+        assert_eq!(profile.functions[0].profile.unique_keys, 2);
+        assert_eq!(profile.functions[0].profile.hottest_key_hits, 0);
+        assert_eq!(profile.functions[0].profile.avg_reuse_distance, Some(1));
     }
 
     #[test]
