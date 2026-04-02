@@ -5441,10 +5441,7 @@ fn build_specialization_registry(
     let mut by_function = HashMap::new();
 
     for plan in plans {
-        if !function_names.contains(plan.name.as_str())
-            || !call_cache_plan.contains(&plan.name)
-            || !call_cache_plan.is_optimized(&plan.name)
-        {
+        if !function_names.contains(plan.name.as_str()) || !call_cache_plan.contains(&plan.name) {
             continue;
         }
         let Some(layout) = layouts.get(&plan.name) else {
@@ -6026,6 +6023,42 @@ fn main() -> i32:
             llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
         );
         assert!(llvm.matches("call noundef i64 @agam_hot(").count() >= 2);
+    }
+
+    #[test]
+    fn test_emit_guarded_specialization_clone_for_basic_llvm_call_cache() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn hot(n: i64) -> i64:
+    return n + 1
+
+fn main() -> i32:
+    if hot(argc()) >= 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache_only: vec!["hot".into()],
+                call_cache_specializations: vec![CallCacheSpecializationPlan {
+                    name: "hot".into(),
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 7,
+                        matches: 16,
+                    }],
+                }],
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(llvm.contains("define noundef i64 @__agam_spec_hot_"));
+        assert!(llvm.contains("call noundef i64 @__agam_spec_hot_"));
+        assert!(llvm.contains("label %spec_guard_entry_"));
+        assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
+        assert!(
+            llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
+        );
+        assert!(llvm.contains("call noundef i64 @agam_hot("));
+        assert!(!llvm.contains("@agam_call_cache_hot_pending_count = internal global i32 0"));
     }
 
     #[test]
