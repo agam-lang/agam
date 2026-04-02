@@ -216,6 +216,7 @@ impl CallCachePlan {
 struct LlvmFunctionSpecialization {
     clone_name: String,
     stable_values: Vec<StableScalarValueProfile>,
+    feedback_index: usize,
 }
 
 impl LlvmFunctionSpecialization {
@@ -1514,6 +1515,28 @@ impl LlvmEmitter {
                 globals.profile_specialization_fallbacks
             )
             .unwrap();
+            if let Some(specializations) = self.specializations.by_function.get(name) {
+                for specialization in specializations {
+                    writeln!(
+                        out,
+                        "{} = internal global i64 0, align 8",
+                        call_cache_specialization_feedback_hits_global(
+                            name,
+                            specialization.feedback_index,
+                        )
+                    )
+                    .unwrap();
+                    writeln!(
+                        out,
+                        "{} = internal global i64 0, align 8",
+                        call_cache_specialization_feedback_fallbacks_global(
+                            name,
+                            specialization.feedback_index,
+                        )
+                    )
+                    .unwrap();
+                }
+            }
             if self.call_cache_plan.is_optimized(name) {
                 writeln!(
                     out,
@@ -2946,6 +2969,25 @@ fn call_cache_global_names(name: &str) -> CallCacheGlobalNames {
     }
 }
 
+fn call_cache_specialization_feedback_hits_global(name: &str, feedback_index: usize) -> String {
+    format!(
+        "@agam_call_cache_{}_profile_specialization_{}_hits",
+        sanitize_name(name),
+        feedback_index
+    )
+}
+
+fn call_cache_specialization_feedback_fallbacks_global(
+    name: &str,
+    feedback_index: usize,
+) -> String {
+    format!(
+        "@agam_call_cache_{}_profile_specialization_{}_fallbacks",
+        sanitize_name(name),
+        feedback_index
+    )
+}
+
 fn emit_call_cache_wrapper_ir(
     out: &mut String,
     name: &str,
@@ -3998,6 +4040,7 @@ fn emit_specialized_call_or_fallback(
     out: &mut String,
     next_temp: &mut usize,
     layout: &FunctionLayout,
+    function_name: &str,
     original: &str,
     call_args: &str,
     encoded_args: &[String],
@@ -4041,84 +4084,97 @@ fn emit_specialized_call_or_fallback(
     }
 
     let guard_entry_label = fresh_call_cache_label(next_temp, "spec_guard_entry");
-    let generic_disabled_label = fresh_call_cache_label(next_temp, "generic_call_disabled");
     let generic_label = fresh_call_cache_label(next_temp, "generic_call");
     let cont_label = fresh_call_cache_label(next_temp, "specialized_cont");
     let mut incoming_values = Vec::new();
-    let specialization_hits = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_hits} = load i64, i64* {}",
-        globals.profile_specialization_hits
-    )
-    .unwrap();
-    let specialization_fallbacks = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_fallbacks} = load i64, i64* {}",
-        globals.profile_specialization_fallbacks
-    )
-    .unwrap();
-    let specialization_attempts = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_attempts} = add i64 {specialization_hits}, {specialization_fallbacks}"
-    )
-    .unwrap();
-    let specialization_attempts_ready = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_attempts_ready} = icmp uge i64 {specialization_attempts}, {}",
-        agam_profile::SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS
-    )
-    .unwrap();
-    let specialization_hits_zero = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_hits_zero} = icmp eq i64 {specialization_hits}, 0"
-    )
-    .unwrap();
-    let specialization_hits_weighted = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_hits_weighted} = mul i64 {specialization_hits}, {}",
-        agam_profile::SPECIALIZATION_FEEDBACK_UNFAVORABLE_MULTIPLIER
-    )
-    .unwrap();
-    let specialization_underperforming = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_underperforming} = icmp ult i64 {specialization_hits_weighted}, {specialization_attempts}"
-    )
-    .unwrap();
-    let specialization_unfavorable = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_unfavorable} = or i1 {specialization_hits_zero}, {specialization_underperforming}"
-    )
-    .unwrap();
-    let specialization_disabled = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_disabled} = and i1 {specialization_attempts_ready}, {specialization_unfavorable}"
-    )
-    .unwrap();
-    let specialization_enabled = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {specialization_enabled} = xor i1 {specialization_disabled}, true"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  br i1 {specialization_enabled}, label %{guard_entry_label}, label %{generic_disabled_label}"
-    )
-    .unwrap();
+    writeln!(out, "  br label %{guard_entry_label}").unwrap();
 
     for (index, specialization) in applicable_specializations.iter().enumerate() {
         if index == 0 {
             writeln!(out, "{guard_entry_label}:").unwrap();
         }
+        let specialization_hits_global = call_cache_specialization_feedback_hits_global(
+            function_name,
+            specialization.feedback_index,
+        );
+        let specialization_fallbacks_global = call_cache_specialization_feedback_fallbacks_global(
+            function_name,
+            specialization.feedback_index,
+        );
+        let specialization_hits = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_hits} = load i64, i64* {specialization_hits_global}"
+        )
+        .unwrap();
+        let specialization_fallbacks = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_fallbacks} = load i64, i64* {specialization_fallbacks_global}"
+        )
+        .unwrap();
+        let specialization_attempts = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_attempts} = add i64 {specialization_hits}, {specialization_fallbacks}"
+        )
+        .unwrap();
+        let specialization_attempts_ready = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_attempts_ready} = icmp uge i64 {specialization_attempts}, {}",
+            agam_profile::SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS
+        )
+        .unwrap();
+        let specialization_hits_zero = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_hits_zero} = icmp eq i64 {specialization_hits}, 0"
+        )
+        .unwrap();
+        let specialization_hits_weighted = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_hits_weighted} = mul i64 {specialization_hits}, {}",
+            agam_profile::SPECIALIZATION_FEEDBACK_UNFAVORABLE_MULTIPLIER
+        )
+        .unwrap();
+        let specialization_underperforming = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_underperforming} = icmp ult i64 {specialization_hits_weighted}, {specialization_attempts}"
+        )
+        .unwrap();
+        let specialization_unfavorable = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_unfavorable} = or i1 {specialization_hits_zero}, {specialization_underperforming}"
+        )
+        .unwrap();
+        let specialization_disabled = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_disabled} = and i1 {specialization_attempts_ready}, {specialization_unfavorable}"
+        )
+        .unwrap();
+        let specialization_enabled = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {specialization_enabled} = xor i1 {specialization_disabled}, true"
+        )
+        .unwrap();
+        let enabled_label = fresh_call_cache_label(next_temp, "spec_enabled");
+        let fail_label = if index + 1 < applicable_specializations.len() {
+            fresh_call_cache_label(next_temp, "spec_next")
+        } else {
+            generic_label.clone()
+        };
+        writeln!(
+            out,
+            "  br i1 {specialization_enabled}, label %{enabled_label}, label %{fail_label}"
+        )
+        .unwrap();
+        writeln!(out, "{enabled_label}:").unwrap();
         let mut guard = String::new();
         for stable in &specialization.stable_values {
             let expected = llvm_i64_literal(stable.raw_bits);
@@ -4139,19 +4195,16 @@ fn emit_specialized_call_or_fallback(
         }
 
         let specialized_label = fresh_call_cache_label(next_temp, "spec_call");
-        let fail_label = if index + 1 < applicable_specializations.len() {
-            fresh_call_cache_label(next_temp, "spec_next")
-        } else {
-            generic_label.clone()
-        };
+        let fallback_label = fresh_call_cache_label(next_temp, "spec_fallback");
         writeln!(
             out,
-            "  br i1 {guard}, label %{specialized_label}, label %{fail_label}"
+            "  br i1 {guard}, label %{specialized_label}, label %{fallback_label}"
         )
         .unwrap();
 
         writeln!(out, "{specialized_label}:").unwrap();
         emit_increment_i64_global(out, next_temp, &globals.profile_specialization_hits);
+        emit_increment_i64_global(out, next_temp, &specialization_hits_global);
         let specialized_value = fresh_call_cache_temp(next_temp);
         writeln!(
             out,
@@ -4164,29 +4217,21 @@ fn emit_specialized_call_or_fallback(
         writeln!(out, "  br label %{cont_label}").unwrap();
         incoming_values.push((specialized_value, specialized_label));
 
+        writeln!(out, "{fallback_label}:").unwrap();
+        emit_increment_i64_global(out, next_temp, &globals.profile_specialization_fallbacks);
+        emit_increment_i64_global(out, next_temp, &specialization_fallbacks_global);
+        writeln!(out, "  br label %{fail_label}").unwrap();
+
         if fail_label != generic_label {
             writeln!(out, "{fail_label}:").unwrap();
         }
     }
 
     writeln!(out, "{generic_label}:").unwrap();
-    emit_increment_i64_global(out, next_temp, &globals.profile_specialization_fallbacks);
     let generic_value = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
         "  {generic_value} = call noundef {} @{}({})",
-        layout.return_ty.ir(),
-        original,
-        call_args
-    )
-    .unwrap();
-    writeln!(out, "  br label %{cont_label}").unwrap();
-
-    writeln!(out, "{generic_disabled_label}:").unwrap();
-    let generic_disabled_value = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {generic_disabled_value} = call noundef {} @{}({})",
         layout.return_ty.ir(),
         original,
         call_args
@@ -4201,9 +4246,6 @@ fn emit_specialized_call_or_fallback(
         .map(|(value, label)| format!("[ {value}, %{label} ]"))
         .collect::<Vec<_>>();
     phi_incoming.push(format!("[ {generic_value}, %{generic_label} ]"));
-    phi_incoming.push(format!(
-        "[ {generic_disabled_value}, %{generic_disabled_label} ]"
-    ));
     writeln!(
         out,
         "  {miss_value} = phi {} {}",
@@ -4567,6 +4609,7 @@ fn emit_basic_call_cache_wrapper_ir(
         out,
         &mut next_temp,
         layout,
+        name,
         &original,
         &call_args,
         &encoded_args,
@@ -4858,6 +4901,7 @@ fn emit_optimized_call_cache_wrapper_ir(
         out,
         &mut next_temp,
         layout,
+        name,
         &original,
         &call_args,
         &encoded_args,
@@ -5476,6 +5520,7 @@ fn build_specialization_registry(
             .push(LlvmFunctionSpecialization {
                 clone_name: llvm_specialization_clone_name(&plan.name, &stable_values),
                 stable_values,
+                feedback_index: 0,
             });
     }
 
@@ -5502,6 +5547,9 @@ fn build_specialization_registry(
                 .then_with(|| left.clone_name.cmp(&right.clone_name))
         });
         specializations.dedup_by(|left, right| left.stable_values == right.stable_values);
+        for (index, specialization) in specializations.iter_mut().enumerate() {
+            specialization.feedback_index = index;
+        }
     }
 
     SpecializationRegistry { by_function }
@@ -6022,7 +6070,9 @@ fn main() -> i32:
         assert!(
             llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
         );
-        assert!(llvm.matches("call noundef i64 @agam_hot(").count() >= 2);
+        assert!(llvm.contains("@agam_call_cache_hot_profile_specialization_0_hits"));
+        assert!(llvm.contains("@agam_call_cache_hot_profile_specialization_0_fallbacks"));
+        assert!(llvm.contains("call noundef i64 @agam_hot("));
     }
 
     #[test]
@@ -6057,6 +6107,8 @@ fn main() -> i32:
         assert!(
             llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_fallbacks")
         );
+        assert!(llvm.contains("@agam_call_cache_hot_profile_specialization_0_hits"));
+        assert!(llvm.contains("@agam_call_cache_hot_profile_specialization_0_fallbacks"));
         assert!(llvm.contains("call noundef i64 @agam_hot("));
         assert!(!llvm.contains("@agam_call_cache_hot_pending_count = internal global i32 0"));
     }
@@ -6112,6 +6164,10 @@ fn main() -> i32:
                 .count(),
             2
         );
+        assert!(llvm.contains("@agam_call_cache_hot_profile_specialization_0_hits"));
+        assert!(llvm.contains("@agam_call_cache_hot_profile_specialization_0_fallbacks"));
+        assert!(llvm.contains("@agam_call_cache_hot_profile_specialization_1_hits"));
+        assert!(llvm.contains("@agam_call_cache_hot_profile_specialization_1_fallbacks"));
         assert!(llvm.contains(&format!("call noundef i64 @{specific_clone}(")));
         assert!(llvm.contains(&format!("call noundef i64 @{broad_clone}(")));
         let specific_pos = llvm

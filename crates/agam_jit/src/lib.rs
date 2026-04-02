@@ -215,9 +215,12 @@ impl CompiledJitModule {
             .ok_or_else(|| format!("missing JIT handle for `{function_name}`"))?;
 
         with_runtime_args(args, || {
-            with_call_cache(&self.jit.call_cache_plan, &self.options, || unsafe {
-                call_zero_arg_function(func_ptr, layout)
-            })
+            with_call_cache(
+                &self.jit.call_cache_plan,
+                &self.jit.specializations,
+                &self.options,
+                || unsafe { call_zero_arg_function(func_ptr, layout) },
+            )
         })
     }
 }
@@ -263,6 +266,7 @@ struct SpecializationRegistry {
 struct JitFunctionSpecialization {
     clone_name: String,
     stable_values: Vec<StableScalarValueProfile>,
+    feedback_index: usize,
 }
 
 impl JitFunctionSpecialization {
@@ -308,8 +312,15 @@ struct CallCacheFunctionState {
     reuse_distance_samples: u64,
     max_reuse_distance: u64,
     hottest_key: Option<(CallCacheKey, u64)>,
+    specialization_feedback: Vec<SpecializationFeedbackState>,
     specialization_guard_hits: u64,
     specialization_guard_fallbacks: u64,
+}
+
+#[derive(Clone, Copy, Default)]
+struct SpecializationFeedbackState {
+    hits: u64,
+    fallbacks: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -1275,10 +1286,16 @@ impl AgamJit {
 
         let specialization_hit_id = self.runtime_func_id(
             RT_SPECIALIZATION_HIT,
-            &[JitType::Int {
-                bits: 32,
-                signed: true,
-            }],
+            &[
+                JitType::Int {
+                    bits: 32,
+                    signed: true,
+                },
+                JitType::Int {
+                    bits: 32,
+                    signed: true,
+                },
+            ],
             None,
         )?;
         let specialization_hit_ref = self
@@ -1286,10 +1303,16 @@ impl AgamJit {
             .declare_func_in_func(specialization_hit_id, builder.func);
         let specialization_fallback_id = self.runtime_func_id(
             RT_SPECIALIZATION_FALLBACK,
-            &[JitType::Int {
-                bits: 32,
-                signed: true,
-            }],
+            &[
+                JitType::Int {
+                    bits: 32,
+                    signed: true,
+                },
+                JitType::Int {
+                    bits: 32,
+                    signed: true,
+                },
+            ],
             None,
         )?;
         let specialization_fallback_ref = self
@@ -1297,10 +1320,16 @@ impl AgamJit {
             .declare_func_in_func(specialization_fallback_id, builder.func);
         let specialization_enabled_id = self.runtime_func_id(
             RT_SPECIALIZATION_ENABLED,
-            &[JitType::Int {
-                bits: 32,
-                signed: true,
-            }],
+            &[
+                JitType::Int {
+                    bits: 32,
+                    signed: true,
+                },
+                JitType::Int {
+                    bits: 32,
+                    signed: true,
+                },
+            ],
             Some(JitType::Bool),
         )?;
         let specialization_enabled_ref = self
@@ -1308,45 +1337,43 @@ impl AgamJit {
             .declare_func_in_func(specialization_enabled_id, builder.func);
         let slot_value = builder.ins().iconst(types::I32, slot as i64);
         let guard_entry_block = builder.create_block();
-        let generic_disabled_block = builder.create_block();
-        let generic_fallback_block = builder.create_block();
+        let generic_block = builder.create_block();
         let cont_block = builder.create_block();
         builder.append_block_param(cont_block, result_ty.clif_type(pointer_type));
-        let enabled_call = builder
-            .ins()
-            .call(specialization_enabled_ref, &[slot_value]);
-        let enabled = builder.inst_results(enabled_call)[0];
-        let enabled_guard = builder.ins().icmp_imm(IntCC::NotEqual, enabled, 0);
-        builder.ins().brif(
-            enabled_guard,
-            guard_entry_block,
-            &[],
-            generic_disabled_block,
-            &[],
-        );
+        builder.ins().jump(guard_entry_block, &[]);
         builder.seal_block(guard_entry_block);
-        builder.seal_block(generic_disabled_block);
-        let mut next_guard_block = None;
-        builder.switch_to_block(guard_entry_block);
+        let mut current_guard_block = guard_entry_block;
 
         for (index, (specialization, specialized_id)) in
             applicable_specializations.iter().enumerate()
         {
-            if let Some(guard_block) = next_guard_block.take() {
-                builder.switch_to_block(guard_block);
-            }
+            builder.switch_to_block(current_guard_block);
 
             let specialized_func_ref = self
                 .module
                 .declare_func_in_func(*specialized_id, builder.func);
+            let specialization_index_value = builder
+                .ins()
+                .iconst(types::I32, specialization.feedback_index as i64);
+            let enabled_call = builder.ins().call(
+                specialization_enabled_ref,
+                &[slot_value, specialization_index_value],
+            );
+            let enabled = builder.inst_results(enabled_call)[0];
+            let enabled_guard = builder.ins().icmp_imm(IntCC::NotEqual, enabled, 0);
+            let enabled_block = builder.create_block();
             let specialized_block = builder.create_block();
-            let fail_block = if index + 1 < applicable_specializations.len() {
-                let guard_block = builder.create_block();
-                next_guard_block = Some(guard_block);
-                guard_block
+            let fallback_block = builder.create_block();
+            let next_block = if index + 1 < applicable_specializations.len() {
+                builder.create_block()
             } else {
-                generic_fallback_block
+                generic_block
             };
+            builder
+                .ins()
+                .brif(enabled_guard, enabled_block, &[], next_block, &[]);
+            builder.seal_block(enabled_block);
+            builder.switch_to_block(enabled_block);
 
             let mut guard = None;
             for stable in &specialization.stable_values {
@@ -1364,16 +1391,15 @@ impl AgamJit {
 
             builder
                 .ins()
-                .brif(guard, specialized_block, &[], fail_block, &[]);
+                .brif(guard, specialized_block, &[], fallback_block, &[]);
             builder.seal_block(specialized_block);
-            if fail_block == generic_fallback_block {
-                builder.seal_block(generic_fallback_block);
-            } else {
-                builder.seal_block(fail_block);
-            }
+            builder.seal_block(fallback_block);
 
             builder.switch_to_block(specialized_block);
-            builder.ins().call(specialization_hit_ref, &[slot_value]);
+            builder.ins().call(
+                specialization_hit_ref,
+                &[slot_value, specialization_index_value],
+            );
             let specialized_value = self.emit_direct_call_result(
                 builder,
                 specialized_func_ref,
@@ -1382,22 +1408,26 @@ impl AgamJit {
             );
             let specialized_args = [cranelift_codegen::ir::BlockArg::Value(specialized_value)];
             builder.ins().jump(cont_block, &specialized_args);
+
+            builder.switch_to_block(fallback_block);
+            builder.ins().call(
+                specialization_fallback_ref,
+                &[slot_value, specialization_index_value],
+            );
+            builder.ins().jump(next_block, &[]);
+
+            if next_block != generic_block {
+                builder.seal_block(next_block);
+                current_guard_block = next_block;
+            }
         }
 
-        builder.switch_to_block(generic_fallback_block);
-        builder
-            .ins()
-            .call(specialization_fallback_ref, &[slot_value]);
+        builder.switch_to_block(generic_block);
         let generic_value =
             self.emit_direct_call_result(builder, generic_func_ref, lowered_args, result_ty);
         let generic_args = [cranelift_codegen::ir::BlockArg::Value(generic_value)];
         builder.ins().jump(cont_block, &generic_args);
-
-        builder.switch_to_block(generic_disabled_block);
-        let generic_value =
-            self.emit_direct_call_result(builder, generic_func_ref, lowered_args, result_ty);
-        let generic_args = [cranelift_codegen::ir::BlockArg::Value(generic_value)];
-        builder.ins().jump(cont_block, &generic_args);
+        builder.seal_block(generic_block);
 
         builder.switch_to_block(cont_block);
         builder.seal_block(cont_block);
@@ -1928,6 +1958,7 @@ fn build_specialization_registry(
             .push(JitFunctionSpecialization {
                 clone_name: specialization_clone_name(&plan.name, &stable_values),
                 stable_values,
+                feedback_index: 0,
             });
     }
 
@@ -1954,6 +1985,9 @@ fn build_specialization_registry(
                 .then_with(|| left.clone_name.cmp(&right.clone_name))
         });
         specializations.dedup_by(|left, right| left.stable_values == right.stable_values);
+        for (index, specialization) in specializations.iter_mut().enumerate() {
+            specialization.feedback_index = index;
+        }
     }
 
     SpecializationRegistry { by_function }
@@ -2711,7 +2745,12 @@ fn with_runtime_args<T>(args: &[String], f: impl FnOnce() -> T) -> T {
     })
 }
 
-fn with_call_cache<T>(plan: &CallCachePlan, options: &JitOptions, f: impl FnOnce() -> T) -> T {
+fn with_call_cache<T>(
+    plan: &CallCachePlan,
+    specializations: &SpecializationRegistry,
+    options: &JitOptions,
+    f: impl FnOnce() -> T,
+) -> T {
     if !options.call_cache
         && !options.call_cache_optimize
         && options.call_cache_only.is_empty()
@@ -2730,6 +2769,7 @@ fn with_call_cache<T>(plan: &CallCachePlan, options: &JitOptions, f: impl FnOnce
         state.active = Some(CallCacheRuntime::new(
             &plan.function_names,
             &plan.function_modes,
+            specializations,
             options.call_cache_capacity,
             options.call_cache_warmup,
         ));
@@ -2754,6 +2794,7 @@ impl CallCacheRuntime {
     fn new(
         function_names: &[String],
         function_modes: &[CallCacheMode],
+        specializations: &SpecializationRegistry,
         capacity: usize,
         warmup: u64,
     ) -> Self {
@@ -2784,6 +2825,14 @@ impl CallCacheRuntime {
                     reuse_distance_samples: 0,
                     max_reuse_distance: 0,
                     hottest_key: None,
+                    specialization_feedback: vec![
+                        SpecializationFeedbackState::default();
+                        specializations
+                            .by_function
+                            .get(name)
+                            .map(|entries| entries.len())
+                            .unwrap_or(0)
+                    ],
                     specialization_guard_hits: 0,
                     specialization_guard_fallbacks: 0,
                 })
@@ -2923,26 +2972,44 @@ impl CallCacheRuntime {
         }
     }
 
-    fn record_specialization_hit(&mut self, slot: i32) {
+    fn record_specialization_hit(&mut self, slot: i32, specialization: i32) {
         if let Some(function) = self.functions.get_mut(slot as usize) {
             function.specialization_guard_hits =
                 function.specialization_guard_hits.saturating_add(1);
+            if let Some(feedback) = function
+                .specialization_feedback
+                .get_mut(specialization as usize)
+            {
+                feedback.hits = feedback.hits.saturating_add(1);
+            }
         }
     }
 
-    fn record_specialization_fallback(&mut self, slot: i32) {
+    fn record_specialization_fallback(&mut self, slot: i32, specialization: i32) {
         if let Some(function) = self.functions.get_mut(slot as usize) {
             function.specialization_guard_fallbacks =
                 function.specialization_guard_fallbacks.saturating_add(1);
+            if let Some(feedback) = function
+                .specialization_feedback
+                .get_mut(specialization as usize)
+            {
+                feedback.fallbacks = feedback.fallbacks.saturating_add(1);
+            }
         }
     }
 
-    fn specialization_guard_enabled(&self, slot: i32) -> bool {
+    fn specialization_guard_enabled(&self, slot: i32, specialization: i32) -> bool {
         let Some(function) = self.functions.get(slot as usize) else {
             return true;
         };
-        let hits = function.specialization_guard_hits;
-        let fallbacks = function.specialization_guard_fallbacks;
+        let Some(feedback) = function
+            .specialization_feedback
+            .get(specialization as usize)
+        else {
+            return true;
+        };
+        let hits = feedback.hits;
+        let fallbacks = feedback.fallbacks;
         let attempts = hits.saturating_add(fallbacks);
         if attempts < agam_profile::SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS {
             return true;
@@ -3150,31 +3217,31 @@ extern "C" fn rt_memo_store(slot: i32, args_ptr: *const u64, arg_count: i32, res
     });
 }
 
-extern "C" fn rt_specialization_hit(slot: i32) {
+extern "C" fn rt_specialization_hit(slot: i32, specialization: i32) {
     JIT_CALL_CACHE.with(|cell| {
         let mut state = cell.borrow_mut();
         if let Some(runtime) = state.active.as_mut() {
-            runtime.record_specialization_hit(slot);
+            runtime.record_specialization_hit(slot, specialization);
         }
     });
 }
 
-extern "C" fn rt_specialization_fallback(slot: i32) {
+extern "C" fn rt_specialization_fallback(slot: i32, specialization: i32) {
     JIT_CALL_CACHE.with(|cell| {
         let mut state = cell.borrow_mut();
         if let Some(runtime) = state.active.as_mut() {
-            runtime.record_specialization_fallback(slot);
+            runtime.record_specialization_fallback(slot, specialization);
         }
     });
 }
 
-extern "C" fn rt_specialization_enabled(slot: i32) -> u8 {
+extern "C" fn rt_specialization_enabled(slot: i32, specialization: i32) -> u8 {
     JIT_CALL_CACHE.with(|cell| {
         let state = cell.borrow();
         state
             .active
             .as_ref()
-            .map(|runtime| u8::from(runtime.specialization_guard_enabled(slot)))
+            .map(|runtime| u8::from(runtime.specialization_guard_enabled(slot, specialization)))
             .unwrap_or(1)
     })
 }
@@ -3852,6 +3919,79 @@ fn main() -> i32:
     }
 
     #[test]
+    fn test_jit_disables_only_unfavorable_narrow_specialization_clone() {
+        let source = r#"
+fn hot(a: i64, b: i64) -> i64:
+    let total: i64 = 0
+    let i: i64 = 0
+    while i < 32:
+        total = total + ((a * 5) + (b * 3) + i) % 23
+        i = i + 1
+    return total
+
+fn main() -> i32:
+    let acc: i64 = 0
+    let i: i64 = 0
+    while i < 16:
+        acc = acc + hot(7, i + 32)
+        i = i + 1
+    if acc > 0:
+        return 0
+    return 1
+"#;
+        let (result, stats) = run_source_with_options(
+            source,
+            &[],
+            JitOptions {
+                call_cache_only: vec!["hot".into()],
+                call_cache_specializations: vec![
+                    CallCacheSpecializationPlan {
+                        name: "hot".into(),
+                        stable_values: vec![
+                            StableScalarValueProfile {
+                                index: 0,
+                                raw_bits: 7,
+                                matches: 24,
+                            },
+                            StableScalarValueProfile {
+                                index: 1,
+                                raw_bits: 9,
+                                matches: 20,
+                            },
+                        ],
+                    },
+                    CallCacheSpecializationPlan {
+                        name: "hot".into(),
+                        stable_values: vec![StableScalarValueProfile {
+                            index: 0,
+                            raw_bits: 7,
+                            matches: 16,
+                        }],
+                    },
+                ],
+                call_cache_warmup: 0,
+                ..Default::default()
+            },
+        );
+        assert_eq!(result, 0);
+        let stats = stats.expect("expected specialization stats");
+        let hot = stats
+            .functions
+            .iter()
+            .find(|function| function.name == "hot")
+            .expect("missing hot specialization stats");
+        assert_eq!(
+            hot.profile.specialization_guard_hits, 16,
+            "expected the broad clone to keep matching after the narrow clone disables itself: {hot:?}"
+        );
+        assert_eq!(
+            hot.profile.specialization_guard_fallbacks,
+            agam_profile::SPECIALIZATION_FEEDBACK_MIN_ATTEMPTS,
+            "expected only the narrow clone to accumulate fallback noise before disablement: {hot:?}"
+        );
+    }
+
+    #[test]
     fn test_call_cache_optimize_mode_works_without_basic_flag() {
         let source = r#"
 fn hot(n: i64) -> i64:
@@ -3901,8 +4041,13 @@ fn main() -> i32:
 
     #[test]
     fn test_call_cache_optimize_pending_candidates_stay_bounded() {
-        let mut runtime =
-            CallCacheRuntime::new(&["hot".to_string()], &[CallCacheMode::Optimize], 4, 0);
+        let mut runtime = CallCacheRuntime::new(
+            &["hot".to_string()],
+            &[CallCacheMode::Optimize],
+            &SpecializationRegistry::default(),
+            4,
+            0,
+        );
         for value in 0..64u64 {
             let key = CallCacheKey {
                 len: 1,
@@ -3927,10 +4072,15 @@ fn main() -> i32:
 
     #[test]
     fn test_optimize_mode_uses_favorable_specialization_feedback_for_admission() {
-        let mut runtime =
-            CallCacheRuntime::new(&["hot".to_string()], &[CallCacheMode::Optimize], 4, 0);
+        let mut runtime = CallCacheRuntime::new(
+            &["hot".to_string()],
+            &[CallCacheMode::Optimize],
+            &SpecializationRegistry::default(),
+            4,
+            0,
+        );
         for _ in 0..8 {
-            runtime.record_specialization_hit(0);
+            runtime.record_specialization_hit(0, 0);
         }
         let key = CallCacheKey {
             len: 1,
@@ -3947,10 +4097,15 @@ fn main() -> i32:
 
     #[test]
     fn test_optimize_mode_rejects_unfavorable_specialization_feedback() {
-        let mut runtime =
-            CallCacheRuntime::new(&["hot".to_string()], &[CallCacheMode::Optimize], 4, 0);
+        let mut runtime = CallCacheRuntime::new(
+            &["hot".to_string()],
+            &[CallCacheMode::Optimize],
+            &SpecializationRegistry::default(),
+            4,
+            0,
+        );
         for _ in 0..8 {
-            runtime.record_specialization_fallback(0);
+            runtime.record_specialization_fallback(0, 0);
         }
         let key = CallCacheKey {
             len: 1,
@@ -3970,6 +4125,7 @@ fn main() -> i32:
         let mut runtime = CallCacheRuntime::new(
             &["cold".to_string(), "hot".to_string()],
             &[CallCacheMode::Optimize, CallCacheMode::Optimize],
+            &SpecializationRegistry::default(),
             2,
             0,
         );
