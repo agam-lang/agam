@@ -292,6 +292,8 @@ scripts/     helper scripts for packaging and maintenance
 
 - [`info.md`](./info.md)
   - concise architecture and program summary
+- [`.agent/policy/package-ecosystem.md`](./.agent/policy/package-ecosystem.md)
+  - canonical package, registry, lockfile, environment, and first-party distribution direction
 - [`AGENTS.md`](./AGENTS.md)
   - agent entrypoint for repo-specific workflow
 - [`.agent/`](./.agent/)
