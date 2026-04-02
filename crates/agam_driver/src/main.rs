@@ -3273,6 +3273,7 @@ fn parse_llvm_call_cache_run_profile(
         && header != "AGAM_LLVM_CALL_CACHE_PROFILE_V3"
         && header != "AGAM_LLVM_CALL_CACHE_PROFILE_V4"
         && header != "AGAM_LLVM_CALL_CACHE_PROFILE_V5"
+        && header != "AGAM_LLVM_CALL_CACHE_PROFILE_V6"
     {
         return Err(format!(
             "unsupported LLVM call-cache profile header `{header}`"
@@ -3487,6 +3488,54 @@ fn parse_llvm_call_cache_run_profile(
                 functions[function_index]
                     .profile
                     .specialization_guard_fallbacks = guard_fallbacks;
+            }
+            Some("SC") => {
+                if parts.len() != 5 {
+                    return Err(format!(
+                        "invalid LLVM call-cache specialization-clone line {}: `{}`",
+                        line_index + 2,
+                        line
+                    ));
+                }
+                let Some(function_index) = function_indexes.get(parts[1]).copied() else {
+                    return Err(format!(
+                        "LLVM call-cache specialization-clone line {} references unknown function `{}`",
+                        line_index + 2,
+                        parts[1]
+                    ));
+                };
+                let stable_values = agam_profile::parse_specialization_feedback_signature(parts[2])
+                    .map_err(|e| {
+                        format!(
+                            "invalid LLVM call-cache specialization-clone signature on line {}: {}",
+                            line_index + 2,
+                            e
+                        )
+                    })?;
+                let guard_hits = parts[3].parse::<u64>().map_err(|e| {
+                    format!(
+                        "invalid LLVM call-cache specialization-clone hit count on line {}: {}",
+                        line_index + 2,
+                        e
+                    )
+                })?;
+                let guard_fallbacks = parts[4].parse::<u64>().map_err(|e| {
+                    format!(
+                        "invalid LLVM call-cache specialization-clone fallback count on line {}: {}",
+                        line_index + 2,
+                        e
+                    )
+                })?;
+                if !stable_values.is_empty() && guard_hits.saturating_add(guard_fallbacks) > 0 {
+                    functions[function_index]
+                        .profile
+                        .specialization_profiles
+                        .push(agam_profile::CallCacheSpecializationFeedbackProfile {
+                            stable_values,
+                            guard_hits,
+                            guard_fallbacks,
+                        });
+                }
             }
             _ => {
                 return Err(format!(
@@ -4913,7 +4962,7 @@ fn hot(n: i64) -> i64 { return n + 1; }
     #[test]
     fn test_parse_llvm_call_cache_run_profile() {
         let profile = parse_llvm_call_cache_run_profile(
-            "AGAM_LLVM_CALL_CACHE_PROFILE_V5\nFN\thot\t32\t24\t2\t1\t3\t24\nSP\thot\t12\t4\nSV\thot\t0\t33\t24\nRD\thot\t1\t3\t24\nFN\twarm\t8\t0\t0\t0\t0\t0\nSP\twarm\t0\t0\nSV\twarm\t0\t7\t0\nRD\twarm\t0\t0\t0\n",
+            "AGAM_LLVM_CALL_CACHE_PROFILE_V6\nFN\thot\t32\t24\t2\t1\t3\t24\nSP\thot\t12\t4\nSC\thot\t0=33\t12\t0\nSC\thot\t0=33,1=7\t0\t4\nSV\thot\t0\t33\t24\nRD\thot\t1\t3\t24\nFN\twarm\t8\t0\t0\t0\t0\t0\nSP\twarm\t0\t0\nSV\twarm\t0\t7\t0\nRD\twarm\t0\t0\t0\n",
         )
         .expect("profile should parse");
 
@@ -4934,6 +4983,18 @@ fn hot(n: i64) -> i64 { return n + 1; }
         assert_eq!(
             profile.functions[0].profile.specialization_guard_fallbacks,
             4
+        );
+        assert_eq!(
+            profile.functions[0].profile.specialization_profiles.len(),
+            2
+        );
+        assert_eq!(
+            profile.functions[0].profile.specialization_profiles[0].stable_values[0].index,
+            0
+        );
+        assert_eq!(
+            profile.functions[0].profile.specialization_profiles[0].stable_values[0].raw_bits,
+            33
         );
     }
 

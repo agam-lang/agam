@@ -179,6 +179,44 @@ pub struct CallCacheSpecializationPlan {
     pub stable_values: Vec<StableScalarValueProfile>,
 }
 
+pub fn specialization_feedback_signature(stable_values: &[StableScalarValueProfile]) -> String {
+    specialization_feedback_key(stable_values)
+        .into_iter()
+        .map(|(index, raw_bits)| format!("{index}={raw_bits}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub fn parse_specialization_feedback_signature(
+    text: &str,
+) -> Result<Vec<StableScalarValueProfile>, String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut values = Vec::new();
+    for part in trimmed.split(',') {
+        let Some((index, raw_bits)) = part.split_once('=') else {
+            return Err(format!(
+                "invalid specialization feedback signature segment `{part}`"
+            ));
+        };
+        values.push(StableScalarValueProfile {
+            index: index
+                .parse::<usize>()
+                .map_err(|e| format!("invalid specialization feedback index `{index}`: {e}"))?,
+            raw_bits: raw_bits.parse::<u64>().map_err(|e| {
+                format!("invalid specialization feedback raw bits `{raw_bits}`: {e}")
+            })?,
+            matches: 0,
+        });
+    }
+    values.sort_by_key(|value| value.index);
+    values.dedup_by(|left, right| left.index == right.index && left.raw_bits == right.raw_bits);
+    Ok(values)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReuseDistanceSignal {
     Favorable,

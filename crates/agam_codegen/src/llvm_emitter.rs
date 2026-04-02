@@ -14,7 +14,9 @@ use agam_mir::analysis::{
     CallCacheAnalysis, CallCacheMode as MirCallCacheMode, CallCacheRejectReason, CallCacheRequest,
 };
 use agam_mir::ir::*;
-use agam_profile::{CallCacheSpecializationPlan, StableScalarValueProfile};
+use agam_profile::{
+    CallCacheSpecializationPlan, StableScalarValueProfile, specialization_feedback_signature,
+};
 use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 
 const MAX_CALL_CACHE_ARGS: usize = 4;
@@ -22,9 +24,10 @@ const MAX_PROFILED_CALL_CACHE_KEYS: usize = 64;
 const DEFAULT_CALL_CACHE_CAPACITY: usize = 256;
 const DEFAULT_CALL_CACHE_WARMUP: u64 = 32;
 const LLVM_CALL_CACHE_PROFILE_ENV: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_OUT";
-const LLVM_CALL_CACHE_PROFILE_HEADER: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_V5\n";
+const LLVM_CALL_CACHE_PROFILE_HEADER: &str = "AGAM_LLVM_CALL_CACHE_PROFILE_V6\n";
 const LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT: &str = "FN\t%s\t%llu\t%llu\t%llu\t%u\t%u\t%llu\n";
 const LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_LINE_FMT: &str = "SP\t%s\t%llu\t%llu\n";
+const LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_CLONE_LINE_FMT: &str = "SC\t%s\t%s\t%llu\t%llu\n";
 const LLVM_CALL_CACHE_PROFILE_STABLE_LINE_FMT: &str = "SV\t%s\t%u\t%llu\t%llu\n";
 const LLVM_CALL_CACHE_PROFILE_REUSE_LINE_FMT: &str = "RD\t%s\t%llu\t%llu\t%llu\n";
 
@@ -1599,11 +1602,19 @@ impl LlvmEmitter {
         let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_HEADER);
         let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT);
         let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_LINE_FMT);
+        let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_CLONE_LINE_FMT);
         let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_STABLE_LINE_FMT);
         let _ = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_REUSE_LINE_FMT);
         let cacheable_names = self.call_cache_plan.cacheable_functions.clone();
         for name in &cacheable_names {
             let _ = self.intern_string_constant(name);
+            if let Some(specializations) = self.specializations.by_function.get(name).cloned() {
+                for specialization in specializations {
+                    let _ = self.intern_string_constant(&specialization_feedback_signature(
+                        &specialization.stable_values,
+                    ));
+                }
+            }
         }
     }
 
@@ -1619,6 +1630,8 @@ impl LlvmEmitter {
             self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_FUNCTION_LINE_FMT);
         let specialization_line_fmt =
             self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_LINE_FMT);
+        let specialization_clone_line_fmt =
+            self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_SPECIALIZATION_CLONE_LINE_FMT);
         let stable_line_fmt = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_STABLE_LINE_FMT);
         let reuse_line_fmt = self.intern_string_constant(LLVM_CALL_CACHE_PROFILE_REUSE_LINE_FMT);
 
@@ -1647,9 +1660,13 @@ impl LlvmEmitter {
         for name in &cacheable_names {
             let globals = call_cache_global_names(name);
             let name_ptr = self.intern_string_constant(name);
-            let layout = self.layouts.get(name).ok_or_else(|| {
-                format!("missing LLVM layout for call-cache profile export `{name}`")
-            })?;
+            let param_count = self
+                .layouts
+                .get(name)
+                .map(|layout| layout.params.len())
+                .ok_or_else(|| {
+                    format!("missing LLVM layout for call-cache profile export `{name}`")
+                })?;
             let calls_tmp = fresh_call_cache_temp(&mut next_temp);
             let hits_tmp = fresh_call_cache_temp(&mut next_temp);
             let stores_tmp = fresh_call_cache_temp(&mut next_temp);
@@ -1738,7 +1755,40 @@ impl LlvmEmitter {
                 "  {specialization_write_tmp} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {specialization_line_fmt}, i8* {name_ptr}, i64 {specialization_hits_tmp}, i64 {specialization_fallbacks_tmp})"
             )
             .unwrap();
-            for arg_index in 0..layout.params.len() {
+            if let Some(specializations) = self.specializations.by_function.get(name).cloned() {
+                for specialization in specializations {
+                    let specialization_key_ptr = self.intern_string_constant(
+                        &specialization_feedback_signature(&specialization.stable_values),
+                    );
+                    let specialization_hits_tmp = fresh_call_cache_temp(&mut next_temp);
+                    let specialization_fallbacks_tmp = fresh_call_cache_temp(&mut next_temp);
+                    let specialization_write_tmp = fresh_call_cache_temp(&mut next_temp);
+                    writeln!(
+                        out,
+                        "  {specialization_hits_tmp} = load i64, i64* {}",
+                        call_cache_specialization_feedback_hits_global(
+                            name,
+                            specialization.feedback_index,
+                        )
+                    )
+                    .unwrap();
+                    writeln!(
+                        out,
+                        "  {specialization_fallbacks_tmp} = load i64, i64* {}",
+                        call_cache_specialization_feedback_fallbacks_global(
+                            name,
+                            specialization.feedback_index,
+                        )
+                    )
+                    .unwrap();
+                    writeln!(
+                        out,
+                        "  {specialization_write_tmp} = call i32 (i8*, i8*, ...) @fprintf(i8* %p2, i8* {specialization_clone_line_fmt}, i8* {name_ptr}, i8* {specialization_key_ptr}, i64 {specialization_hits_tmp}, i64 {specialization_fallbacks_tmp})"
+                    )
+                    .unwrap();
+                }
+            }
+            for arg_index in 0..param_count {
                 let stable_value_ptr = fresh_call_cache_temp(&mut next_temp);
                 let stable_value = fresh_call_cache_temp(&mut next_temp);
                 let stable_matches_ptr = fresh_call_cache_temp(&mut next_temp);
@@ -5881,7 +5931,7 @@ fn main() -> i32:
         assert!(llvm.contains(
             "@agam_call_cache_hot_profile_specialization_fallbacks = internal global i64 0"
         ));
-        assert!(llvm.contains("AGAM_LLVM_CALL_CACHE_PROFILE_V5"));
+        assert!(llvm.contains("AGAM_LLVM_CALL_CACHE_PROFILE_V6"));
         assert!(llvm.contains(
             "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_values"
         ));
