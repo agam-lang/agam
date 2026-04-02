@@ -1,0 +1,27 @@
+@lang.advance
+
+fn matrix_checksum(size: i64) -> i64 {
+    let sum: i64 = 0;
+    let row: i64 = 0;
+    while row < size {
+        let col: i64 = 0;
+        while col < size {
+            let inner: i64 = 0;
+            let cell: i64 = 0;
+            while inner < size {
+                cell = cell + (((row * inner) + 3) * ((inner * col) + 5));
+                inner = inner + 1;
+            }
+            sum = sum + (cell % 104729);
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+    return sum;
+}
+
+fn main() -> i32 {
+    print_int(matrix_checksum(64));
+    return 0;
+}
+

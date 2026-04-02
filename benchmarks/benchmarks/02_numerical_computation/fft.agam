@@ -1,0 +1,23 @@
+@lang.advance
+
+fn butterfly_cost(size: i64) -> i64 {
+    let total: i64 = 0;
+    let stage: i64 = 1;
+    while stage < size {
+        let i: i64 = 0;
+        while i < size {
+            let left: i64 = ((i * 19) + stage) % 65521;
+            let right: i64 = ((i * 23) + (stage * 3)) % 65521;
+            total = total + (left + right) - (left - right);
+            i = i + (stage * 2);
+        }
+        stage = stage * 2;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(butterfly_cost(16384));
+    return 0;
+}
+

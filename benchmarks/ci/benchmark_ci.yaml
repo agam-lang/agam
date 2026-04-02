@@ -1,0 +1,24 @@
+{
+  "workflow": {
+    "name": "benchmarks",
+    "file": "benchmarks.yml",
+    "artifact_name": "benchmark-results"
+  },
+  "smoke_profile": {
+    "suites": [
+      "01_algorithms"
+    ],
+    "languages": [
+      "python"
+    ],
+    "include_comparisons": true,
+    "warmups": 1,
+    "runs": 3,
+    "max_benchmarks": 2
+  },
+  "thresholds": {
+    "runtime_regression_percent": 5.0,
+    "compile_regression_percent": 5.0
+  }
+}
+

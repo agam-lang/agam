@@ -7,6 +7,8 @@
 .vscode/
 *.swp
 *.swo
+__pycache__/
+*.pyc
 
 # OS
 .DS_Store
@@ -15,6 +17,42 @@ Thumbs.db
 # Agam compiler outputs
 *.o
 *.exe
+/.agam_cache/
+/dist/
+/CLAUDE.local.md
+/.claude/settings.local.json
 
 # AI tracking
-.agent/
+.agent/*
+!.agent/README.md
+!.agent/include/
+!.agent/include/**
+!.agent/rules/
+!.agent/rules/**
+!.agent/commands/
+!.agent/commands/**
+!.agent/agents/
+!.agent/agents/**
+!.agent/policy/
+!.agent/policy/**
+!.agent/phases/
+!.agent/phases/**
+!.agent/skills/
+!.agent/skills/**
+!.agent/research/
+!.agent/research/**
+!.agent/tests/
+!.agent/tests/README.md
+!.agent/test/
+!.agent/test/**
+
+# Benchmark workspace outputs
+/benchmarks/results/raw/*
+!/benchmarks/results/raw/.gitkeep
+/benchmarks/results/aggregated/*
+!/benchmarks/results/aggregated/.gitkeep
+/benchmarks/results/reports/*
+!/benchmarks/results/reports/.gitkeep
+/benchmarks/results/plots/*
+!/benchmarks/results/plots/.gitkeep
+/benchmarks/results/github/

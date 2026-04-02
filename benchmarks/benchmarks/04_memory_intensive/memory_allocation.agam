@@ -1,0 +1,21 @@
+@lang.advance
+
+fn allocation_pressure(chunks: i64, width: i64) -> i64 {
+    let checksum: i64 = 0;
+    let chunk: i64 = 0;
+    while chunk < chunks {
+        let lane: i64 = 0;
+        while lane < width {
+            checksum = checksum + (((chunk * 17) + lane) % 8191);
+            lane = lane + 1;
+        }
+        chunk = chunk + 1;
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(allocation_pressure(250000, 64));
+    return 0;
+}
+

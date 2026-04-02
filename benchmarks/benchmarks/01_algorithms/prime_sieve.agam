@@ -1,0 +1,31 @@
+@lang.advance
+
+fn is_prime(n: i64) -> i64 {
+    if n < 2 {
+        return 0;
+    }
+    let d: i64 = 2;
+    while d * d <= n {
+        if n % d == 0 {
+            return 0;
+        }
+        d = d + 1;
+    }
+    return 1;
+}
+
+fn prime_count(limit: i64) -> i64 {
+    let total: i64 = 0;
+    let n: i64 = 2;
+    while n <= limit {
+        total = total + is_prime(n);
+        n = n + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(prime_count(25000));
+    return 0;
+}
+

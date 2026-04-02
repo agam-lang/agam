@@ -1,0 +1,18 @@
+@lang.advance
+
+// File-reading benchmark scaffold using deterministic chunk accounting.
+fn read_cost(chunks: i64, bytes_per_chunk: i64) -> i64 {
+    let total: i64 = 0;
+    let chunk: i64 = 0;
+    while chunk < chunks {
+        total = total + ((chunk * bytes_per_chunk) % 8191);
+        chunk = chunk + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(read_cost(2000000, 4096));
+    return 0;
+}
+

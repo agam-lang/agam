@@ -1,0 +1,19 @@
+@lang.advance
+
+fn hashmap_probe_cost(slots: i64, rounds: i64) -> i64 {
+    let total: i64 = 0;
+    let round: i64 = 0;
+    while round < rounds {
+        let key: i64 = (round * 2654435761) % 2147483647;
+        let slot: i64 = key % slots;
+        total = total + ((slot * 37) % 4099);
+        round = round + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(hashmap_probe_cost(65536, 5000000));
+    return 0;
+}
+

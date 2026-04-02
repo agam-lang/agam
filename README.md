@@ -311,7 +311,7 @@ Agam is building toward one language that can scale from scripting to systems wo
 
 ## How To Code With Agam: Complete Guide A-Z
 
-This section is a repo-grounded guide to the Agam surface that is actually present in this workspace today. It is intentionally based on `examples/`, `.agent/test/`, and the compiler/runtime crates instead of on future language ideas.
+This section is a repo-grounded guide to the Agam surface that is actually present in this workspace today. It is intentionally based on `examples/`, `benchmarks/benchmarks/`, `.agent/test/`, and the compiler/runtime crates instead of on future language ideas.
 
 ### 1. Pick A Source Mode First
 
@@ -433,9 +433,24 @@ See [`examples/smoke_tests.agam`](./examples/smoke_tests.agam) for the current t
 
 Agam is real and runnable today, but it is still under active compiler development. The safest way to write believable Agam code is:
 
-- follow the examples already in `examples/` and `.agent/test/`
+- follow the examples already in `examples/`, `benchmarks/benchmarks/`, and `.agent/test/`
 - prefer the language constructs already proven by the parser, MIR, JIT, and LLVM paths
 - treat not-yet-documented or not-yet-exampled surface area as in progress rather than assumed
+
+## Benchmark Workspace
+
+The organized benchmark workspace now lives under `benchmarks/`:
+
+- `benchmarks/benchmarks/`
+  - categorized Agam and comparison-language suites
+- `benchmarks/infrastructure/` and `benchmarks/harness/`
+  - discovery, execution, profiling, statistics, and language runners
+- `benchmarks/ci/`
+  - baseline management, regression detection, and `gh` workflow helpers
+- `benchmarks/METHODOLOGY.md`
+  - the measurement contract for runtime, compile time, memory, baselines, and reporting
+
+Use `.agent/test/` for narrow phase-work microbenchmarks and generated inspection artifacts tied to active optimization slices.
 
 ## Agam Syntax For Development: Complete Guide A-Z
 

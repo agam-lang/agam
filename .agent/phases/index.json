@@ -1467,7 +1467,8 @@
       "already_done": [
         "Shipped `agamc doctor` as the first native backend and SDK readiness command.",
         "Added `agamc new`, `agamc dev`, and `agamc cache status`.",
-        "Defined the first explicit first-party workspace contract around `agam.toml`, `src/main.agam`, `tests/*.agam`, and `.agam_cache/`."
+        "Defined the first explicit first-party workspace contract around `agam.toml`, `src/main.agam`, `tests/*.agam`, and `.agam_cache/`.",
+        "Added a structured benchmark workspace under `benchmarks/` with categorized suites, harnesses, CI helpers, result roots, and methodology docs, while keeping `.agent/test/` as the localized phase-work microbenchmark area."
       ],
       "remaining_work": [
         "Unify `agam_lsp`, `agam_fmt`, `agam_test`, package/runtime metadata, and the future daemon behind the same stable workspace contract instead of per-tool discovery."

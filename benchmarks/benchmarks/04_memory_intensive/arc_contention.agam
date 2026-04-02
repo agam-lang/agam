@@ -1,0 +1,21 @@
+@lang.advance
+
+fn refcount_contention(workers: i64, handoffs: i64) -> i64 {
+    let score: i64 = 0;
+    let worker: i64 = 0;
+    while worker < workers {
+        let step: i64 = 0;
+        while step < handoffs {
+            score = score + (((worker * 29) + step) % 1021);
+            step = step + 1;
+        }
+        worker = worker + 1;
+    }
+    return score;
+}
+
+fn main() -> i32 {
+    print_int(refcount_contention(16, 400000));
+    return 0;
+}
+

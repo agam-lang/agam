@@ -1,0 +1,32 @@
+@lang.advance
+
+fn partition_cost(low: i64, high: i64, pivot: i64) -> i64 {
+    let score: i64 = 0;
+    let i: i64 = low;
+    while i < high {
+        let probe: i64 = ((i * 17) + 13) % 997;
+        if probe < pivot {
+            score = score + probe;
+        } else {
+            score = score - probe;
+        }
+        i = i + 1;
+    }
+    return score;
+}
+
+fn quicksort_cost(low: i64, high: i64) -> i64 {
+    if high - low < 2 {
+        return high - low;
+    }
+    let pivot: i64 = (low + high) / 2;
+    return partition_cost(low, high, pivot)
+        + quicksort_cost(low, pivot)
+        + quicksort_cost(pivot + 1, high);
+}
+
+fn main() -> i32 {
+    print_int(quicksort_cost(0, 5000));
+    return 0;
+}
+

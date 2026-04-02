@@ -1,0 +1,28 @@
+{
+  "targets": {
+    "agam_fast": {
+      "language": "agam",
+      "backend": "llvm",
+      "optimization_level": 3,
+      "command_mode": "run",
+      "extra_args": [
+        "--fast"
+      ]
+    },
+    "rust_release": {
+      "language": "rust",
+      "optimization_level": 3
+    },
+    "python_default": {
+      "language": "python"
+    },
+    "c_release": {
+      "language": "c",
+      "optimization_level": 3
+    },
+    "go_release": {
+      "language": "go"
+    }
+  }
+}
+

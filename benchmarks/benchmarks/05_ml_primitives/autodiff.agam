@@ -1,0 +1,19 @@
+@lang.advance
+
+fn autodiff_trace(steps: i64) -> i64 {
+    let value: i64 = 7;
+    let grad: i64 = 1;
+    let step: i64 = 0;
+    while step < steps {
+        grad = grad + ((value * 3) % 17);
+        value = value + grad;
+        step = step + 1;
+    }
+    return value + grad;
+}
+
+fn main() -> i32 {
+    print_int(autodiff_trace(5000000));
+    return 0;
+}
+

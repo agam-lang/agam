@@ -1,0 +1,59 @@
+name: benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: "Comma-separated benchmark suites"
+        required: false
+        default: "01_algorithms"
+  pull_request:
+    paths:
+      - "benchmarks/**"
+      - ".github/workflows/benchmarks.yml"
+
+jobs:
+  benchmark-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Run benchmark workspace tests
+        run: |
+          python -m unittest discover benchmarks/tests
+
+      - name: Run benchmark smoke profile
+        run: |
+          python -m benchmarks.infrastructure.benchmark_harness \
+            --suite "${{ github.event.inputs.suites || '01_algorithms' }}" \
+            --language python \
+            --include-comparisons \
+            --warmups 1 \
+            --runs 3 \
+            --max-benchmarks 2
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmarks/results

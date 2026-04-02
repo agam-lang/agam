@@ -30,7 +30,8 @@ The canonical shared source of truth lives under `.agent/`.
 
 - `crates/`: compiler, runtime, tooling, and packaging crates
 - `examples/`: runnable source examples
-- `.agent/test/`: benchmark sources and generated benchmark artifacts
+- `benchmarks/`: organized benchmark suites, harnesses, CI helpers, and generated result roots
+- `.agent/test/`: localized phase-work benchmark sources and generated inspection artifacts
 - `.agent/tests/`: lightweight policy and documentation validation notes
 - `.agent/skills/`: Antigravity-facing project skills and the canonical skill shelf
 - `.claude/`, `.gemini/`, `.codex/`: tool-specific commands, agents, skill mirrors, and local config helpers

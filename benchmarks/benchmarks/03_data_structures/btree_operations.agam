@@ -1,0 +1,20 @@
+@lang.advance
+
+fn branch_walk(depth: i64, fanout: i64) -> i64 {
+    if depth == 0 {
+        return fanout;
+    }
+    let total: i64 = 0;
+    let child: i64 = 0;
+    while child < fanout {
+        total = total + branch_walk(depth - 1, fanout - 1) + child;
+        child = child + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(branch_walk(5, 6));
+    return 0;
+}
+

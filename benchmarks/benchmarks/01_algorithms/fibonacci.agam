@@ -1,0 +1,22 @@
+@lang.advance
+
+fn fib(n: i64) -> i64 {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn arg_or(index: i32, fallback: i64) -> i64 {
+    if argc() > index {
+        return parse_int(argv(index));
+    }
+    return fallback;
+}
+
+fn main() -> i32 {
+    let n: i64 = arg_or(1, 32);
+    print_int(fib(n));
+    return 0;
+}
+

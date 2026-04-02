@@ -1,0 +1,21 @@
+@lang.advance
+
+fn conv_score(width: i64, height: i64) -> i64 {
+    let total: i64 = 0;
+    let y: i64 = 1;
+    while y < height - 1 {
+        let x: i64 = 1;
+        while x < width - 1 {
+            total = total + (((x * 3) + (y * 5)) % 97);
+            x = x + 1;
+        }
+        y = y + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(conv_score(512, 512));
+    return 0;
+}
+

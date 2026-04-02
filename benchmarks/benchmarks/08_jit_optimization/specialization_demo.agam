@@ -1,0 +1,21 @@
+@lang.advance
+
+fn specialize(signal: i64, rounds: i64) -> i64 {
+    let total: i64 = 0;
+    let round: i64 = 0;
+    while round < rounds {
+        if signal < 16 {
+            total = total + ((signal * round) % 97);
+        } else {
+            total = total + ((signal + round) % 193);
+        }
+        round = round + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(specialize(7, 8000000) + specialize(31, 8000000));
+    return 0;
+}
+

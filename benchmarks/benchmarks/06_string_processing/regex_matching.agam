@@ -1,0 +1,27 @@
+@lang.advance
+
+// Regex-style branch benchmark scaffold.
+fn match_cost(tokens: i64) -> i64 {
+    let score: i64 = 0;
+    let i: i64 = 0;
+    while i < tokens {
+        let class_id: i64 = (i * 29) % 11;
+        if class_id < 3 {
+            score = score + 5;
+        } else {
+            if class_id < 7 {
+                score = score + 3;
+            } else {
+                score = score + 1;
+            }
+        }
+        i = i + 1;
+    }
+    return score;
+}
+
+fn main() -> i32 {
+    print_int(match_cost(6000000));
+    return 0;
+}
+

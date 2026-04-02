@@ -1,0 +1,25 @@
+@lang.advance
+
+fn binary_search(limit: i64, target: i64) -> i64 {
+    let low: i64 = 0;
+    let high: i64 = limit;
+    while low < high {
+        let mid: i64 = low + ((high - low) / 2);
+        let value: i64 = (mid * 3) + 7;
+        if value == target {
+            return mid;
+        }
+        if value < target {
+            low = mid + 1;
+        } else {
+            high = mid;
+        }
+    }
+    return -1;
+}
+
+fn main() -> i32 {
+    print_int(binary_search(10000000, 2999998));
+    return 0;
+}
+

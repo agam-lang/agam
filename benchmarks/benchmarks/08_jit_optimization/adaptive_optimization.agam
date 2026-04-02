@@ -1,0 +1,22 @@
+@lang.advance
+
+fn adaptive_score(samples: i64) -> i64 {
+    let score: i64 = 0;
+    let i: i64 = 0;
+    while i < samples {
+        let branch: i64 = (i * 23) % 10;
+        if branch < 2 {
+            score = score + 11;
+        } else {
+            score = score + 3;
+        }
+        i = i + 1;
+    }
+    return score;
+}
+
+fn main() -> i32 {
+    print_int(adaptive_score(12000000));
+    return 0;
+}
+

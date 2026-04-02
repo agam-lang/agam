@@ -1,0 +1,21 @@
+@lang.advance
+
+fn retention_churn(objects: i64, generations: i64) -> i64 {
+    let total: i64 = 0;
+    let g: i64 = 0;
+    while g < generations {
+        let object_id: i64 = 0;
+        while object_id < objects {
+            total = total + ((object_id + g) % 13);
+            object_id = object_id + 1;
+        }
+        g = g + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(retention_churn(200000, 24));
+    return 0;
+}
+

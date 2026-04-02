@@ -1,0 +1,17 @@
+{
+  "defaults": {
+    "warmup_runs": 2,
+    "measured_runs": 7,
+    "runtime_regression_percent": 5.0,
+    "compile_regression_percent": 5.0,
+    "coefficient_of_variation_warning_percent": 10.0,
+    "capture_memory": true,
+    "capture_compilation_metrics": true,
+    "include_comparisons": false
+  },
+  "paths": {
+    "benchmark_root": "benchmarks/benchmarks",
+    "results_root": "benchmarks/results"
+  }
+}
+

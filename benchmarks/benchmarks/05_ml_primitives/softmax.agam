@@ -1,0 +1,23 @@
+@lang.advance
+
+fn softmax_like(width: i64, rounds: i64) -> i64 {
+    let total: i64 = 0;
+    let round: i64 = 0;
+    while round < rounds {
+        let lane: i64 = 0;
+        let partial: i64 = 0;
+        while lane < width {
+            partial = partial + (((lane * 11) + round) % 251);
+            lane = lane + 1;
+        }
+        total = total + partial;
+        round = round + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(softmax_like(4096, 4000));
+    return 0;
+}
+

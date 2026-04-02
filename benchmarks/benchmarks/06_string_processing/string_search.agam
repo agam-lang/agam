@@ -1,0 +1,20 @@
+@lang.advance
+
+// String-search benchmark scaffold using explicit scalar loops until the first-party string API settles.
+fn search_cost(haystack: i64, needle: i64) -> i64 {
+    let hits: i64 = 0;
+    let i: i64 = 0;
+    while i < haystack {
+        if ((i * 17) % 257) == needle {
+            hits = hits + 1;
+        }
+        i = i + 1;
+    }
+    return hits;
+}
+
+fn main() -> i32 {
+    print_int(search_cost(5000000, 41));
+    return 0;
+}
+

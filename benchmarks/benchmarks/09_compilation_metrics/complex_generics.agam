@@ -1,0 +1,17 @@
+@lang.advance
+
+// Generic-shape compile benchmark scaffold until the stable generic benchmark surface is frozen.
+fn generic_shape(seed: i64, rounds: i64) -> i64 {
+    let total: i64 = 0;
+    let round: i64 = 0;
+    while round < rounds {
+        total = total + ((seed + round) % 257);
+        round = round + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(generic_shape(17, 5000000));
+    return 0;
+}

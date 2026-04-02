@@ -1,0 +1,22 @@
+@lang.advance
+
+// JSON-parsing benchmark scaffold using token and branch pressure rather than a future parser surface.
+fn json_token_cost(objects: i64, fields: i64) -> i64 {
+    let total: i64 = 0;
+    let object_id: i64 = 0;
+    while object_id < objects {
+        let field_id: i64 = 0;
+        while field_id < fields {
+            total = total + (((object_id * 13) + field_id) % 101);
+            field_id = field_id + 1;
+        }
+        object_id = object_id + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(json_token_cost(500000, 12));
+    return 0;
+}
+

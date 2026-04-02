@@ -1,0 +1,19 @@
+@lang.advance
+
+fn pointer_chase(nodes: i64, rounds: i64) -> i64 {
+    let cursor: i64 = 1;
+    let checksum: i64 = 0;
+    let step: i64 = 0;
+    while step < rounds {
+        cursor = ((cursor * 1103515245) + 12345) % nodes;
+        checksum = checksum + cursor;
+        step = step + 1;
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(pointer_chase(1000003, 8000000));
+    return 0;
+}
+

@@ -58,6 +58,28 @@ flowchart LR
     Frontend --> Analysis --> Execution
 ```
 
+```mermaid
+flowchart TD
+    Dev[Developer Machine]
+    Agamc[agamc]
+    Doctor[agamc doctor]
+    Package[Portable Package]
+    LlvmBundle[Bundled LLVM]
+    Driver[clang/clang++ Driver]
+    Binary[Native Binary]
+    Android[Android Sysroot Pack]
+    Jit[Cranelift JIT]
+
+    Dev --> Agamc
+    Dev --> Doctor
+    Agamc --> Package
+    Agamc --> LlvmBundle --> Driver --> Binary
+    Doctor --> Driver
+    Doctor --> LlvmBundle
+    Android --> Driver
+    Agamc --> Jit
+```
+
 1. **Frontend**: `agam_lexer` and `agam_parser` support `@lang.base`, `@lang.base.dynamic`, and `@lang.advance`.
 2. **Semantic Layer**: `agam_sema` handles typing, effects, ownership, lifetimes, traits, and compile-time checks.
 3. **IR Pipeline**: `agam_hir` lowers into `agam_mir`, which is the optimization and backend handoff layer.
@@ -65,6 +87,7 @@ flowchart LR
 5. **Runtime**: `agam_runtime` carries ARC, SIMD, hardware detection, and runtime helpers used by native execution paths.
 6. **Diagnostics**: `agam_errors` is the canonical path for span-based reporting.
 7. **Profiling**: `agam_profile` is the required benchmarking and optimization-validation path.
+8. **Distribution Contract**: `agam_pkg` currently defines portable package metadata and the SDK distribution manifest used by `agamc package sdk`, and it is the planned home for the future source-package, lockfile, registry, and environment contracts.
 
 ## 3. Implemented Features
 
@@ -84,8 +107,20 @@ flowchart LR
 2. **Peak-Speed Goal**: LLVM/C AOT builds remain the path for target-specific maximum native speed.
 3. **Runtime Goal**: JIT plus persistent native cache should remove repeated startup compilation and accelerate hot code adaptively.
 4. **Safety Goal**: Performance features must preserve Agam semantics instead of depending on C/C++ undefined behavior contracts.
+5. **Distribution Goal**: Ship a small `agamc` core plus host/target SDK packs instead of one giant universal installer.
+6. **Delivery Goal**: Treat SDK packaging as a first-class compiler capability, with local scripts and CI workflows producing the same distribution layout.
+7. **Size Goal**: Keep platform-heavy LLVM/toolchain payloads outside the core compiler binary so Agam stays normal-sized relative to other language frontends.
+8. **Supportability Goal**: Keep backend readiness self-diagnosable through `agamc doctor` so teams can distinguish missing SDK/toolchain inputs from compiler regressions quickly.
 
-## 5. Engineering Rules
+## 5. VS Community 2026 Toolchain Inventory
+
+1. **Desktop C++ Host Toolchain**: MSVC build tools, Windows SDK, Clang tools for Windows, AddressSanitizer, profiling tools, CMake, and vcpkg are the canonical Win11-side toolchain surface.
+2. **Linux and macOS Cross-Workflows**: Linux/Mac CMake and remote workflows are the reference path for Linux validation and future native Apple-target bring-up planning.
+3. **Android and Mobile C++**: Android NDK and OpenJDK are the reference path for Android target work and SDK sysroot packaging. iOS planning stays toolchain-aware but must not be over-claimed before native Apple validation hardware is available.
+4. **Game and 3D Graphics Tooling**: Unreal tooling, HLSL tools, Unity tooling, and related graphics/runtime surfaces are part of the expected Agam toolchain context for `agam_game`, shader flows, and future GPU-oriented work.
+5. **Extension Tooling**: Visual Studio SDK and Roslyn tooling remain relevant for first-party IDE and editor integration.
+
+## 6. Engineering Rules
 
 1. **WSL as Primary Linux Environment**: Use WSL Ubuntu 24.04 LTS for LLVM-adjacent, Unix-native, and Linux verification workflows. Keep Git add/commit on Win11. Do not store local credentials in tracked files.
 2. **Crate-Level Isolation**: Modify the smallest responsible crate first and avoid unnecessary root-workspace blast radius.
@@ -98,24 +133,35 @@ flowchart LR
 9. **AST/MIR Traceability**: Preserve `SourceId`, `Span`, and debug metadata through lowering and optimization.
 10. **Benchmarking Mandate**: Before marking an optimization module complete, run a localized benchmark using `agam_profile` and record the measured delta.
 11. **Zero-Regression Tolerance**: If an optimization increases compile time by more than 5 percent or reduces runtime speed against the current baseline, reject and rewrite that implementation before calling the phase complete.
+12. **Benchmark Workspace Contract**: Keep the organized suite, harness, CI, and methodology under `benchmarks/`; keep `.agent/test/` for localized phase-work microbenchmarks and generated inspection artifacts.
 
-## 6. Immediate Next Phases
+## 7. Immediate Next Phases
 
-1. **Phase 15A: Portable Agam Package + Tiered Runtime**
-   - Define a platform-independent package format.
-   - Load portable packages through the runtime and JIT hot code on the target machine.
-2. **Phase 15B: Persistent Native Code Cache**
-   - Add an on-disk native cache keyed by package hash, backend version, runtime ABI, OS, architecture, and CPU features.
-   - Keep cache capacity bounded and invalidation version-aware.
-3. **Phase 15C: Whole-Program Purity and Effect Metadata**
-   - Prove purity and effects in the compiler.
-   - Reuse that data for safer inlining, CSE, LICM, and auto-memoization.
-4. **Phase 15D: Value Profiling + Adaptive Specialization**
-   - Record hot argument/value patterns.
-   - Specialize only when measured payoff is real.
-5. **Phase 15E: Escape Analysis + Stack Promotion**
-   - Move non-escaping values off the heap.
-   - Reduce ARC and allocation pressure on hot paths.
-6. **Phase 15F: Incremental Daemon + Parallel Compilation**
+1. **Phase 15F: Incremental Daemon + Parallel Compilation**
    - Keep typed/lowered state warm across edits.
    - Parallelize independent compiler work with deterministic diagnostics.
+2. **Phase 15G: First-Party Premium Experience Layer**
+   - Finish one stable workspace contract across tooling.
+   - Unify package/runtime/cache/tooling conventions behind the same first-party manifest and project layout instead of per-command discovery.
+3. **Phase 15H: Native LLVM SDK Distribution & Toolchain Bundles**
+   - Keep `agamc package sdk` and `agamc doctor` aligned around one SDK readiness contract.
+   - Produce CI-built Windows and Linux SDK packs with bundled LLVM.
+   - Add Android target-pack packaging and validation on top of the host SDK flow.
+4. **Phase 17A: Workspace Contract and Dependency Manifests**
+   - Freeze the stable `agam.toml` package/workspace contract before building resolver or registry complexity.
+   - Separate source-package metadata from portable runtime packages and SDK distributions.
+5. **Phase 17B: Deterministic Resolver and Lockfile**
+   - Land deterministic dependency resolution and `agam.lock`.
+   - Make reproducibility and content addressing the default.
+7. **Phase 17C: Registry Index and Publish Protocol**
+   - Define a thin central registry-index protocol and immutable publish contract.
+   - Keep package identity registry-based instead of repo-name-based.
+8. **Phase 17D: Environments and SDK Linking**
+   - Build named Agam environments that pin compiler, SDK packs, target packs, runtime expectations, and dependencies together.
+   - Keep environment selection explicit and reproducible instead of shell-global.
+9. **Phase 17E: First-Party Base Distributions and Official Packages**
+   - Ship curated first-party package profiles and official package governance.
+   - Keep foreign-language interop as layered packs, not the base package-manager contract.
+10. **Phase 17F: Standard Library and Native I/O Expansion**
+    - Grow `agam_std` and native I/O on top of the new package ecosystem.
+    - Keep standard-library growth aligned with the effects model and official package governance.

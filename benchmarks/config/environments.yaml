@@ -1,0 +1,42 @@
+{
+  "local_windows": {
+    "python": "python",
+    "c_compiler": "clang",
+    "rustc": "rustc",
+    "go": "go",
+    "agam_driver": [
+      "cargo",
+      "run",
+      "-p",
+      "agam_driver",
+      "--"
+    ]
+  },
+  "local_linux": {
+    "python": "python3",
+    "c_compiler": "clang",
+    "rustc": "rustc",
+    "go": "go",
+    "agam_driver": [
+      "cargo",
+      "run",
+      "-p",
+      "agam_driver",
+      "--"
+    ]
+  },
+  "github_actions_linux": {
+    "python": "python3",
+    "c_compiler": "clang",
+    "rustc": "rustc",
+    "go": "go",
+    "agam_driver": [
+      "cargo",
+      "run",
+      "-p",
+      "agam_driver",
+      "--"
+    ]
+  }
+}
+

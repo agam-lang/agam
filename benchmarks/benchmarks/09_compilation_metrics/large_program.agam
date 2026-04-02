@@ -1,0 +1,23 @@
+@lang.advance
+
+fn block(seed: i64, width: i64) -> i64 {
+    let total: i64 = 0;
+    let i: i64 = 0;
+    while i < width {
+        total = total + (((seed * 31) + i) % 4099);
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    let total: i64 = 0;
+    let stage: i64 = 0;
+    while stage < 2000 {
+        total = total + block(stage, 128);
+        stage = stage + 1;
+    }
+    print_int(total);
+    return 0;
+}
+

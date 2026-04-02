@@ -1,0 +1,27 @@
+@lang.advance
+
+fn sum(limit: i64) -> i64 {
+    let total: i64 = 0;
+    let i: i64 = 0;
+    while i < limit {
+        total = total + i;
+        i = i + 1;
+    }
+    return total;
+}
+
+fn squares(limit: i64) -> i64 {
+    let total: i64 = 0;
+    let i: i64 = 0;
+    while i < limit {
+        total = total + (i * i);
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(sum(10000) + squares(10000));
+    return 0;
+}
+
