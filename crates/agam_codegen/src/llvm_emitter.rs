@@ -3047,8 +3047,16 @@ fn emit_call_cache_observe_key(
 
     let candidate_hits_slot = fresh_call_cache_temp(next_temp);
     let candidate_reuse_slot = fresh_call_cache_temp(next_temp);
+    let victim_index_slot = fresh_call_cache_temp(next_temp);
+    let victim_hits_slot = fresh_call_cache_temp(next_temp);
+    let victim_last_seen_slot = fresh_call_cache_temp(next_temp);
+    let victim_scan_index_slot = fresh_call_cache_temp(next_temp);
     writeln!(out, "  {candidate_hits_slot} = alloca i32").unwrap();
     writeln!(out, "  {candidate_reuse_slot} = alloca i64").unwrap();
+    writeln!(out, "  {victim_index_slot} = alloca i32").unwrap();
+    writeln!(out, "  {victim_hits_slot} = alloca i64").unwrap();
+    writeln!(out, "  {victim_last_seen_slot} = alloca i64").unwrap();
+    writeln!(out, "  {victim_scan_index_slot} = alloca i32").unwrap();
     writeln!(out, "  store i32 1, i32* {candidate_hits_slot}").unwrap();
     writeln!(out, "  store i64 0, i64* {candidate_reuse_slot}").unwrap();
 
@@ -3223,6 +3231,13 @@ fn emit_call_cache_observe_key(
 
     writeln!(out, "{insert_check_label}:").unwrap();
     let observed_has_room = fresh_call_cache_temp(next_temp);
+    let victim_init_label = fresh_call_cache_label(next_temp, "observe_victim_init");
+    let victim_scan_label = fresh_call_cache_label(next_temp, "observe_victim_scan");
+    let victim_check_label = fresh_call_cache_label(next_temp, "observe_victim_check");
+    let victim_replace_label = fresh_call_cache_label(next_temp, "observe_victim_replace");
+    let victim_next_label = fresh_call_cache_label(next_temp, "observe_victim_next");
+    let victim_done_label = fresh_call_cache_label(next_temp, "observe_victim_done");
+    let insert_commit_label = fresh_call_cache_label(next_temp, "observe_insert_commit");
     writeln!(
         out,
         "  {observed_has_room} = icmp ult i32 {observed_len}, {}",
@@ -3231,15 +3246,185 @@ fn emit_call_cache_observe_key(
     .unwrap();
     writeln!(
         out,
-        "  br i1 {observed_has_room}, label %{insert_label}, label %{done_label}"
+        "  br i1 {observed_has_room}, label %{insert_label}, label %{victim_init_label}"
     )
     .unwrap();
 
+    writeln!(out, "{victim_init_label}:").unwrap();
+    writeln!(out, "  store i32 0, i32* {victim_index_slot}").unwrap();
+    let first_hits_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {first_hits_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 0",
+        MAX_PROFILED_CALL_CACHE_KEYS, MAX_PROFILED_CALL_CACHE_KEYS, globals.profile_observed_hits
+    )
+    .unwrap();
+    let first_hits = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {first_hits} = load i64, i64* {first_hits_ptr}").unwrap();
+    writeln!(out, "  store i64 {first_hits}, i64* {victim_hits_slot}").unwrap();
+    let first_last_seen_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {first_last_seen_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 0",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_last_seen
+    )
+    .unwrap();
+    let first_last_seen = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {first_last_seen} = load i64, i64* {first_last_seen_ptr}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i64 {first_last_seen}, i64* {victim_last_seen_slot}"
+    )
+    .unwrap();
+    writeln!(out, "  store i32 1, i32* {victim_scan_index_slot}").unwrap();
+    writeln!(out, "  br label %{victim_scan_label}").unwrap();
+
+    writeln!(out, "{victim_scan_label}:").unwrap();
+    let victim_scan_index = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {victim_scan_index} = load i32, i32* {victim_scan_index_slot}"
+    )
+    .unwrap();
+    let victim_scan_done = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {victim_scan_done} = icmp eq i32 {victim_scan_index}, {observed_len}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  br i1 {victim_scan_done}, label %{victim_done_label}, label %{victim_check_label}"
+    )
+    .unwrap();
+
+    writeln!(out, "{victim_check_label}:").unwrap();
+    let victim_scan_index_i64 = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {victim_scan_index_i64} = zext i32 {victim_scan_index} to i64"
+    )
+    .unwrap();
+    let victim_hits_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {victim_hits_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {victim_scan_index_i64}",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_hits
+    )
+    .unwrap();
+    let victim_hits = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {victim_hits} = load i64, i64* {victim_hits_ptr}").unwrap();
+    let best_hits = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {best_hits} = load i64, i64* {victim_hits_slot}").unwrap();
+    let lower_hits = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {lower_hits} = icmp ult i64 {victim_hits}, {best_hits}"
+    )
+    .unwrap();
+    let same_hits = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {same_hits} = icmp eq i64 {victim_hits}, {best_hits}"
+    )
+    .unwrap();
+    let victim_last_seen_ptr = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {victim_last_seen_ptr} = getelementptr inbounds [{} x i64], [{} x i64]* {}, i64 0, i64 {victim_scan_index_i64}",
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        MAX_PROFILED_CALL_CACHE_KEYS,
+        globals.profile_observed_last_seen
+    )
+    .unwrap();
+    let victim_last_seen = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {victim_last_seen} = load i64, i64* {victim_last_seen_ptr}"
+    )
+    .unwrap();
+    let best_last_seen = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {best_last_seen} = load i64, i64* {victim_last_seen_slot}"
+    )
+    .unwrap();
+    let older_victim = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {older_victim} = icmp ult i64 {victim_last_seen}, {best_last_seen}"
+    )
+    .unwrap();
+    let same_hits_older = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {same_hits_older} = and i1 {same_hits}, {older_victim}"
+    )
+    .unwrap();
+    let replace_victim = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {replace_victim} = or i1 {lower_hits}, {same_hits_older}"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  br i1 {replace_victim}, label %{victim_replace_label}, label %{victim_next_label}"
+    )
+    .unwrap();
+
+    writeln!(out, "{victim_replace_label}:").unwrap();
+    writeln!(
+        out,
+        "  store i32 {victim_scan_index}, i32* {victim_index_slot}"
+    )
+    .unwrap();
+    writeln!(out, "  store i64 {victim_hits}, i64* {victim_hits_slot}").unwrap();
+    writeln!(
+        out,
+        "  store i64 {victim_last_seen}, i64* {victim_last_seen_slot}"
+    )
+    .unwrap();
+    writeln!(out, "  br label %{victim_next_label}").unwrap();
+
+    writeln!(out, "{victim_next_label}:").unwrap();
+    let next_victim_index = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {next_victim_index} = add nuw i32 {victim_scan_index}, 1"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  store i32 {next_victim_index}, i32* {victim_scan_index_slot}"
+    )
+    .unwrap();
+    writeln!(out, "  br label %{victim_scan_label}").unwrap();
+
+    writeln!(out, "{victim_done_label}:").unwrap();
+    let victim_index = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {victim_index} = load i32, i32* {victim_index_slot}").unwrap();
+    writeln!(out, "  br label %{insert_label}").unwrap();
+
     writeln!(out, "{insert_label}:").unwrap();
+    let observed_index = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {observed_index} = phi i32 [ {observed_len}, %{insert_check_label} ], [ {victim_index}, %{victim_done_label} ]"
+    )
+    .unwrap();
     let observed_index_i64 = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
-        "  {observed_index_i64} = zext i32 {observed_len} to i64"
+        "  {observed_index_i64} = zext i32 {observed_index} to i64"
     )
     .unwrap();
     for (arg_index, arg_bits) in encoded_args.iter().enumerate() {
@@ -3293,6 +3478,14 @@ fn emit_call_cache_observe_key(
     .unwrap();
     writeln!(out, "  store i64 0, i64* {observed_reuse_ptr}").unwrap();
     writeln!(out, "  store i64 0, i64* {candidate_reuse_slot}").unwrap();
+    emit_update_i64_global_max(out, next_temp, &globals.profile_hottest_key_hits, "1");
+    writeln!(
+        out,
+        "  br i1 {observed_has_room}, label %{insert_commit_label}, label %{done_label}"
+    )
+    .unwrap();
+
+    writeln!(out, "{insert_commit_label}:").unwrap();
     let observed_len_next = fresh_call_cache_temp(next_temp);
     writeln!(out, "  {observed_len_next} = add nuw i32 {observed_len}, 1").unwrap();
     writeln!(
@@ -3301,7 +3494,6 @@ fn emit_call_cache_observe_key(
         globals.profile_unique_keys
     )
     .unwrap();
-    emit_update_i64_global_max(out, next_temp, &globals.profile_hottest_key_hits, "1");
     writeln!(out, "  br label %{done_label}").unwrap();
 
     writeln!(out, "{done_label}:").unwrap();
@@ -5601,6 +5793,7 @@ fn main() -> i32:
             "getelementptr inbounds [64 x i64], [64 x i64]* @agam_call_cache_hot_profile_observed_last_seen"
         ));
         assert!(llvm.contains("phi i32 [ 0, %stable_done_"));
+        assert!(llvm.contains("observe_victim_init"));
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_hits"));
         assert!(llvm.contains(
             "getelementptr inbounds [4 x i64], [4 x i64]* @agam_call_cache_hot_profile_stable_scores"
