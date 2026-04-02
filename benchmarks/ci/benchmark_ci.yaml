@@ -5,15 +5,25 @@
     "artifact_name": "benchmark-results"
   },
   "smoke_profile": {
+    "environments": [
+      "github_actions_linux",
+      "github_actions_windows"
+    ],
     "suites": [
       "01_algorithms"
     ],
-    "languages": [
-      "python"
+    "targets": [
+      "python_cpython",
+      "c_clang_o3",
+      "cpp_clangxx_o3",
+      "rust_release",
+      "go_release",
+      "agam_llvm_o3_call_cache_off",
+      "agam_jit_o2_call_cache_off"
     ],
     "include_comparisons": true,
     "warmups": 1,
-    "runs": 3,
+    "runs": 2,
     "max_benchmarks": 2
   },
   "thresholds": {
@@ -21,4 +31,3 @@
     "compile_regression_percent": 5.0
   }
 }
-

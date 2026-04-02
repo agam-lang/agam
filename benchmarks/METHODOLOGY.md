@@ -17,6 +17,7 @@ This workspace follows a measurement-first process. The benchmark result is part
 3. Use medians for central tendency and coefficient of variation for noise detection.
 4. Compare against a declared baseline rather than against memory.
 5. Separate Agam-native runs from comparison-language runs in reporting, then show side-by-side deltas.
+6. Compare like with like: platform, backend, compiler/runtime target, and call-cache state are all part of the experiment key.
 
 ## Runtime Measurements
 
@@ -40,6 +41,34 @@ The compile-time contract stores the compile command, wall-clock duration, exit 
 When the host platform supports live RSS sampling, capture peak resident set size during execution.
 On hosts without a supported sampler, record that memory capture was unavailable instead of inventing a number.
 
+The benchmark workspace also records a space profile for each case:
+
+- SSD footprint
+  - produced binary size when a standalone artifact exists
+  - source/runtime entrypoint size for interpreted targets
+- RAM footprint
+  - peak RSS / working-set size during execution
+- cache and register context
+  - host L1/L2/L3 cache capacity
+  - cache-line size
+  - pointer width
+  - SIMD register width
+  - estimated register-file size budget by architecture
+
+Important limitation:
+
+- L3 cache occupancy and live register allocation are not measured precisely in a portable way by this workspace today.
+- The current report exposes host cache capacity plus register-budget estimates so cross-platform comparisons remain explicit instead of silently omitted.
+- If precise cache-miss or register-pressure counters are needed, add platform-specific perf tooling as a follow-up slice.
+
+## Complexity Annotations
+
+Each benchmark row carries declared algorithmic time and space complexity.
+
+- These complexity tags describe the benchmark workload shape.
+- They are not substitutes for measured wall-clock or RSS data.
+- If the implementation shape changes, update the complexity hint in the benchmark workspace in the same change.
+
 ## Regression Thresholds
 
 Use these defaults unless a narrower benchmark contract documents stricter thresholds:
@@ -61,7 +90,7 @@ CI should favor a smoke profile by default:
 
 - small suite selection
 - limited benchmark count
-- stable comparison targets
+- explicit target subsets across both Linux and Windows runners
 - regression detection against a checked-in or downloaded baseline summary
 
 Full benchmark sweeps belong on `workflow_dispatch`, scheduled runs, or explicit release validation.
@@ -74,10 +103,10 @@ Each benchmark run should produce:
 - aggregated CSV and JSON summaries
 - human-readable Markdown reports
 - metadata that makes reruns reproducible
+- explicit platform/backend/target identity in every row
 
 ## Agam-Specific Rules
 
 - Keep `.agam` benchmark sources grounded in syntax already visible in `examples/`, `.agent/test/`, and the active parser.
 - Treat `benchmarks/` as the organized benchmark workspace.
 - Keep `.agent/test/` for localized phase-work microbenchmarks, legacy generated artifacts, and inspection outputs tied to active optimization slices.
-

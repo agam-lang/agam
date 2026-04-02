@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Dispatch the benchmark workflow")
     run_parser.add_argument("--ref", default="main", help="Git ref to benchmark")
     run_parser.add_argument("--suite", action="append", help="Optional suite filter")
+    run_parser.add_argument("--target", action="append", help="Optional target filter")
 
     list_parser = subparsers.add_parser("list", help="List recent benchmark workflow runs")
     list_parser.add_argument("--limit", type=int, default=10, help="Number of runs to show")
@@ -51,6 +52,8 @@ def main() -> int:
         ]
         if args.suite:
             command.extend(["-f", f"suites={','.join(args.suite)}"])
+        if args.target:
+            command.extend(["-f", f"targets={','.join(args.target)}"])
         return subprocess.run(command, check=False).returncode
 
     if args.command == "list":
@@ -78,4 +81,3 @@ def main() -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
-

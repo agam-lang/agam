@@ -6,9 +6,9 @@ from pathlib import Path
 from benchmarks.harness.base_harness import BaseHarness, PreparedBenchmark
 
 
-class RustHarness(BaseHarness):
-    language = "rust"
-    suffixes = (".rs",)
+class CppHarness(BaseHarness):
+    language = "cpp"
+    suffixes = (".cpp", ".cc", ".cxx")
 
     def prepare(
         self,
@@ -18,15 +18,16 @@ class RustHarness(BaseHarness):
         target_spec: dict[str, object],
     ) -> PreparedBenchmark:
         binary = build_target.with_suffix(".exe" if os.name == "nt" else "")
-        rustc = str(self.environment["rustc"])
-        rust_flags = [str(flag) for flag in target_spec.get("rust_flags", ["-C", "opt-level=3"])]
-        compile_command = [rustc, *rust_flags, "-o", str(binary), str(source)]
+        compiler_key = str(target_spec.get("compiler_key", "cpp_compiler"))
+        compiler = str(self.environment[compiler_key])
+        compile_args = [str(flag) for flag in target_spec.get("compile_args", ["-O3", "-std=c++20"])]
+        compile_command = [compiler, *compile_args, "-o", str(binary), str(source)]
         return PreparedBenchmark(
             target_id=target_id,
             target_name=str(target_spec.get("name", target_id)),
             language=self.language,
             backend="native",
-            compiler=str(target_spec.get("compiler", rustc)),
+            compiler=str(target_spec.get("compiler", compiler)),
             call_cache_enabled=False,
             compile_command=compile_command,
             run_command=[str(binary)],

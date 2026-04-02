@@ -1,7 +1,15 @@
 {
-  "local_windows": {
+  "local_windows_win11": {
+    "platform_name": "win11",
+    "platform_tags": [
+      "windows",
+      "win11",
+      "native"
+    ],
     "python": "python",
+    "cpython": "python",
     "c_compiler": "clang",
+    "cpp_compiler": "clang++",
     "rustc": "rustc",
     "go": "go",
     "agam_driver": [
@@ -12,9 +20,37 @@
       "--"
     ]
   },
-  "local_linux": {
+  "local_linux_native": {
+    "platform_name": "linux",
+    "platform_tags": [
+      "linux",
+      "native"
+    ],
     "python": "python3",
+    "cpython": "python3",
     "c_compiler": "clang",
+    "cpp_compiler": "clang++",
+    "rustc": "rustc",
+    "go": "go",
+    "agam_driver": [
+      "cargo",
+      "run",
+      "-p",
+      "agam_driver",
+      "--"
+    ]
+  },
+  "wsl_ubuntu_24_04": {
+    "platform_name": "wsl-ubuntu-24.04",
+    "platform_tags": [
+      "linux",
+      "wsl",
+      "ubuntu-24.04"
+    ],
+    "python": "python3",
+    "cpython": "python3",
+    "c_compiler": "clang",
+    "cpp_compiler": "clang++",
     "rustc": "rustc",
     "go": "go",
     "agam_driver": [
@@ -26,8 +62,35 @@
     ]
   },
   "github_actions_linux": {
+    "platform_name": "github-actions-linux",
+    "platform_tags": [
+      "linux",
+      "ci"
+    ],
     "python": "python3",
+    "cpython": "python3",
     "c_compiler": "clang",
+    "cpp_compiler": "clang++",
+    "rustc": "rustc",
+    "go": "go",
+    "agam_driver": [
+      "cargo",
+      "run",
+      "-p",
+      "agam_driver",
+      "--"
+    ]
+  },
+  "github_actions_windows": {
+    "platform_name": "github-actions-windows",
+    "platform_tags": [
+      "windows",
+      "ci"
+    ],
+    "python": "python",
+    "cpython": "python",
+    "c_compiler": "clang",
+    "cpp_compiler": "clang++",
     "rustc": "rustc",
     "go": "go",
     "agam_driver": [
@@ -39,4 +102,3 @@
     ]
   }
 }
-

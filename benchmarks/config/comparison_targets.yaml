@@ -1,28 +1,98 @@
 {
   "targets": {
-    "agam_fast": {
+    "agam_llvm_o3_call_cache_off": {
+      "name": "Agam LLVM O3",
       "language": "agam",
       "backend": "llvm",
       "optimization_level": 3,
-      "command_mode": "run",
-      "extra_args": [
-        "--fast"
-      ]
+      "build_then_run": true,
+      "call_cache": false,
+      "compiler": "agamc"
+    },
+    "agam_llvm_o3_call_cache_on": {
+      "name": "Agam LLVM O3 + Call Cache",
+      "language": "agam",
+      "backend": "llvm",
+      "optimization_level": 3,
+      "build_then_run": true,
+      "call_cache": true,
+      "compiler": "agamc"
+    },
+    "agam_c_o3_call_cache_off": {
+      "name": "Agam C O3",
+      "language": "agam",
+      "backend": "c",
+      "optimization_level": 3,
+      "build_then_run": true,
+      "call_cache": false,
+      "compiler": "agamc"
+    },
+    "agam_c_o3_call_cache_on": {
+      "name": "Agam C O3 + Call Cache",
+      "language": "agam",
+      "backend": "c",
+      "optimization_level": 3,
+      "build_then_run": true,
+      "call_cache": true,
+      "compiler": "agamc"
+    },
+    "agam_jit_o2_call_cache_off": {
+      "name": "Agam JIT O2",
+      "language": "agam",
+      "backend": "jit",
+      "optimization_level": 2,
+      "build_then_run": false,
+      "call_cache": false,
+      "compiler": "agamc"
+    },
+    "agam_jit_o2_call_cache_on": {
+      "name": "Agam JIT O2 + Call Cache",
+      "language": "agam",
+      "backend": "jit",
+      "optimization_level": 2,
+      "build_then_run": false,
+      "call_cache": true,
+      "compiler": "agamc"
     },
     "rust_release": {
+      "name": "Rust release",
       "language": "rust",
-      "optimization_level": 3
+      "compiler": "rustc",
+      "optimization_level": 3,
+      "rust_flags": [
+        "-C",
+        "opt-level=3"
+      ]
     },
-    "python_default": {
-      "language": "python"
+    "python_cpython": {
+      "name": "CPython",
+      "language": "python",
+      "compiler": "cpython",
+      "interpreter_key": "cpython"
     },
-    "c_release": {
+    "c_clang_o3": {
+      "name": "Clang C O3",
       "language": "c",
-      "optimization_level": 3
+      "compiler": "clang",
+      "compiler_key": "c_compiler",
+      "compile_args": [
+        "-O3"
+      ]
+    },
+    "cpp_clangxx_o3": {
+      "name": "Clang++ O3",
+      "language": "cpp",
+      "compiler": "clang++",
+      "compiler_key": "cpp_compiler",
+      "compile_args": [
+        "-O3",
+        "-std=c++20"
+      ]
     },
     "go_release": {
-      "language": "go"
+      "name": "Go release",
+      "language": "go",
+      "compiler": "go"
     }
   }
 }
-

@@ -43,17 +43,68 @@ class ResultFormatter:
         self._write_csv(
             aggregated_root / "performance_summary.csv",
             performance,
-            ("suite", "case", "language", "median_ms", "mean_ms", "delta_percent"),
+            (
+                "platform",
+                "suite",
+                "case",
+                "target_id",
+                "target_name",
+                "language",
+                "backend",
+                "compiler",
+                "call_cache_enabled",
+                "median_ms",
+                "mean_ms",
+                "delta_percent",
+                "time_complexity",
+                "space_complexity",
+            ),
         )
         self._write_csv(
             aggregated_root / "memory_summary.csv",
             memory,
-            ("suite", "case", "language", "peak_rss_bytes"),
+            (
+                "platform",
+                "suite",
+                "case",
+                "target_id",
+                "target_name",
+                "language",
+                "backend",
+                "compiler",
+                "call_cache_enabled",
+                "peak_rss_bytes",
+                "ssd_footprint_bytes",
+                "artifact_size_bytes",
+                "runtime_executable_size_bytes",
+                "l1_data_cache_bytes",
+                "l2_cache_bytes",
+                "l3_cache_bytes",
+                "l3_pressure_ratio_estimate",
+                "register_file_bytes_estimate",
+                "simd_register_width_bytes",
+                "pointer_width_bits",
+                "time_complexity",
+                "space_complexity",
+            ),
         )
         self._write_csv(
             aggregated_root / "compilation_summary.csv",
             compilation,
-            ("suite", "case", "language", "duration_ms", "return_code"),
+            (
+                "platform",
+                "suite",
+                "case",
+                "target_id",
+                "target_name",
+                "language",
+                "backend",
+                "compiler",
+                "call_cache_enabled",
+                "duration_ms",
+                "return_code",
+                "artifact_size_bytes",
+            ),
         )
         (aggregated_root / "statistical_analysis.json").write_text(
             json.dumps(performance, indent=2) + "\n",
@@ -64,24 +115,56 @@ class ResultFormatter:
             reports_root / "PERFORMANCE_REPORT.md",
             "Performance Report",
             performance,
+            [
+                "platform",
+                "suite",
+                "case",
+                "target_name",
+                "backend",
+                "call_cache_enabled",
+                "median_ms",
+                "mean_ms",
+                "time_complexity",
+            ],
         )
         self._write_report(
             reports_root / "MEMORY_REPORT.md",
             "Memory Report",
             memory,
+            [
+                "platform",
+                "suite",
+                "case",
+                "target_name",
+                "peak_rss_bytes",
+                "ssd_footprint_bytes",
+                "l3_cache_bytes",
+                "register_file_bytes_estimate",
+                "space_complexity",
+            ],
         )
         self._write_report(
             reports_root / "COMPILATION_REPORT.md",
             "Compilation Report",
             compilation,
+            [
+                "platform",
+                "suite",
+                "case",
+                "target_name",
+                "duration_ms",
+                "artifact_size_bytes",
+            ],
         )
         executive_lines = [
             "# Executive Summary",
             "",
-            f"- Recorded cases: {len(performance)}",
-            f"- Memory observations: {len(memory)}",
-            f"- Compilation observations: {len(compilation)}",
+            f"- Recorded performance rows: {len(performance)}",
+            f"- Recorded space rows: {len(memory)}",
+            f"- Recorded compilation rows: {len(compilation)}",
             f"- Environment: {metadata.get('environment')}",
+            f"- Platform: {metadata.get('platform_name')}",
+            f"- Selected targets: {', '.join(metadata.get('selected_targets', []))}",
         ]
         (reports_root / "EXECUTIVE_SUMMARY.md").write_text(
             "\n".join(executive_lines) + "\n",
@@ -97,16 +180,17 @@ class ResultFormatter:
                 writer.writerow({field: row.get(field) for field in fieldnames})
 
     @staticmethod
-    def _write_report(path: Path, title: str, rows: list[dict[str, Any]]) -> None:
+    def _write_report(
+        path: Path,
+        title: str,
+        rows: list[dict[str, Any]],
+        keys: list[str],
+    ) -> None:
         lines = [f"# {title}", ""]
         if not rows:
             lines.append("- No rows recorded.")
         else:
             for row in rows:
-                case = row.get("case", "unknown")
-                suite = row.get("suite", "unknown")
-                language = row.get("language", "unknown")
-                lines.append(
-                    f"- `{suite}` / `{case}` / `{language}`: {json.dumps(row, sort_keys=True)}"
-                )
+                payload = {key: row.get(key) for key in keys}
+                lines.append(f"- {json.dumps(payload, sort_keys=True)}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")

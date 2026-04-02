@@ -7,6 +7,10 @@ on:
         description: "Comma-separated benchmark suites"
         required: false
         default: "01_algorithms"
+      targets:
+        description: "Comma-separated benchmark targets"
+        required: false
+        default: "agam_llvm_o3_call_cache_off,agam_llvm_o3_call_cache_on,agam_jit_o2_call_cache_off,agam_jit_o2_call_cache_on,python_cpython,c_clang_o3,cpp_clangxx_o3,rust_release,go_release"
   pull_request:
     paths:
       - "benchmarks/**"
@@ -14,7 +18,15 @@ on:
 
 jobs:
   benchmark-smoke:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            environment: github_actions_linux
+          - os: windows-latest
+            environment: github_actions_windows
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -34,9 +46,39 @@ jobs:
           go-version: "1.22"
 
       - name: Install clang
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang
+          sudo apt-get install -y clang g++
+
+      - name: Install clang on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found"
+          }
+          $installPath = & $vswhere -latest -products * -property installationPath
+          if (-not $installPath) {
+            throw "Visual Studio installation not found"
+          }
+          $llvmBin = Join-Path $installPath 'VC\Tools\Llvm\x64\bin'
+          $clang = Join-Path $llvmBin 'clang.exe'
+          $clangxx = Join-Path $llvmBin 'clang++.exe'
+          if (-not (Test-Path $clang) -or -not (Test-Path $clangxx)) {
+            $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vs_installer.exe'
+            if (-not (Test-Path $installer)) {
+              throw "Visual Studio Installer not found"
+            }
+            & $installer modify --installPath $installPath --add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang --quiet --wait --norestart --nocache
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to install Visual Studio LLVM tools"
+            }
+          }
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          clang --version
+          clang++ --version
 
       - name: Run benchmark workspace tests
         run: |
@@ -45,15 +87,16 @@ jobs:
       - name: Run benchmark smoke profile
         run: |
           python -m benchmarks.infrastructure.benchmark_harness \
+            --environment "${{ matrix.environment }}" \
             --suite "${{ github.event.inputs.suites || '01_algorithms' }}" \
-            --language python \
+            --target "${{ github.event.inputs.targets || 'agam_llvm_o3_call_cache_off,agam_llvm_o3_call_cache_on,agam_jit_o2_call_cache_off,agam_jit_o2_call_cache_on,python_cpython,c_clang_o3,cpp_clangxx_o3,rust_release,go_release' }}" \
             --include-comparisons \
             --warmups 1 \
-            --runs 3 \
+            --runs 2 \
             --max-benchmarks 2
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-results
+          name: benchmark-results-${{ matrix.environment }}
           path: benchmarks/results

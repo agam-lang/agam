@@ -25,7 +25,12 @@ class BenchmarkWorkspaceShapeTests(unittest.TestCase):
         present = {path.name for path in SUITE_ROOT.iterdir() if path.is_dir()}
         self.assertTrue(expected.issubset(present))
 
+    def test_cpp_comparisons_exist(self) -> None:
+        self.assertTrue((SUITE_ROOT / "01_algorithms" / "comparisons" / "fibonacci.cpp").is_file())
+        self.assertTrue(
+            (SUITE_ROOT / "02_numerical_computation" / "comparisons" / "matrix_multiply.cpp").is_file()
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-

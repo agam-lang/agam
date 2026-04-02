@@ -15,13 +15,13 @@ It complements the localized phase-work microbenchmarks under `.agent/test/` wit
 - `METHODOLOGY.md`
   - scientific measurement rules, baselines, and reporting expectations
 - `config/`
-  - global benchmark settings, execution environments, and comparison targets
+  - global benchmark settings, execution environments, and comparison/backend targets
 - `infrastructure/`
   - discovery, execution, profiling, statistics, and result formatting
 - `benchmarks/`
   - benchmark suites grouped by workload class
 - `harness/`
-  - language-specific runners for Agam, Rust, Python, C, and Go
+  - language-specific runners for Agam, Rust, CPython, Clang C, Clang++, and Go
 - `results/`
   - raw runs, aggregated summaries, reports, and plots
 - `ci/`
@@ -49,6 +49,39 @@ Run a narrow suite directly:
 python -m benchmarks.infrastructure.benchmark_harness --suite 01_algorithms --max-benchmarks 3
 ```
 
+Run explicit Agam backend and call-cache comparisons:
+
+```bash
+python -m benchmarks.infrastructure.benchmark_harness \
+  --suite 08_jit_optimization \
+  --target agam_llvm_o3_call_cache_off \
+  --target agam_llvm_o3_call_cache_on \
+  --target agam_jit_o2_call_cache_off \
+  --target agam_jit_o2_call_cache_on
+```
+
+Run explicit compiler/runtime comparisons:
+
+```bash
+python -m benchmarks.infrastructure.benchmark_harness \
+  --suite 01_algorithms \
+  --include-comparisons \
+  --target python_cpython \
+  --target c_clang_o3 \
+  --target cpp_clangxx_o3 \
+  --target rust_release \
+  --target go_release
+```
+
+Select an environment profile:
+
+```bash
+python -m benchmarks.infrastructure.benchmark_harness \
+  --environment local_windows_win11 \
+  --suite 01_algorithms \
+  --target agam_llvm_o3_call_cache_off
+```
+
 Include comparison-language sources:
 
 ```bash
@@ -62,7 +95,7 @@ The repo workflow lives at `.github/workflows/benchmarks.yml`.
 Dispatch a remote benchmark run:
 
 ```bash
-python -m benchmarks.ci.gh_benchmark_cli run --ref main --suite 08_jit_optimization
+python -m benchmarks.ci.gh_benchmark_cli run --ref main --suite 08_jit_optimization --target agam_jit_o2_call_cache_on
 ```
 
 List recent benchmark runs:
@@ -86,6 +119,14 @@ Each run writes:
 - `results/raw/<timestamp>/compilation.json`
 - `results/raw/<timestamp>/metadata.json`
 
+`memory.json` now carries the space-profile view:
+
+- peak RSS in RAM
+- on-disk SSD footprint of the produced artifact or source/runtime entrypoint
+- host L1/L2/L3 cache capacity metadata
+- pointer width, SIMD register width, and register-file budget estimates
+- declared time/space complexity tags for each benchmark
+
 Aggregated outputs land in:
 
 - `results/aggregated/performance_summary.csv`
@@ -102,3 +143,24 @@ Reports land in:
 
 Plot generation is optional. If `matplotlib` is available, the formatter can fill `results/plots/`.
 
+## Platform And Backend Matrix
+
+The benchmark workspace is designed to compare:
+
+- platforms:
+  - local Win11
+  - local native Linux
+  - WSL Ubuntu 24.04
+  - GitHub Actions Linux
+  - GitHub Actions Windows
+- Agam backends:
+  - LLVM `-O3`
+  - C backend `-O3`
+  - JIT `-O2`
+  - call-cache on and off where the CLI supports `--call-cache`
+- comparison targets:
+  - CPython
+  - Clang C `-O3`
+  - Clang++ `-O3`
+  - Rust release
+  - Go release

@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from benchmarks.infrastructure.utils import sanitize_preview
+from benchmarks.infrastructure.utils import file_size_bytes, sanitize_preview
 
 
 class CompilationAnalyzer:
@@ -14,6 +14,7 @@ class CompilationAnalyzer:
         command: list[str] | None,
         cwd: Path,
         env: dict[str, str] | None = None,
+        artifact_path: Path | None = None,
     ) -> dict[str, Any] | None:
         if not command:
             return None
@@ -33,5 +34,5 @@ class CompilationAnalyzer:
             "duration_ms": round(duration_ms, 3),
             "return_code": completed.returncode,
             "stderr_preview": sanitize_preview(completed.stderr),
+            "artifact_size_bytes": file_size_bytes(artifact_path),
         }
-

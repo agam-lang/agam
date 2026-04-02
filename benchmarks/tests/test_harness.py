@@ -12,6 +12,7 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(workspace.harness_for(Path("sample.agam")).language, "agam")
         self.assertEqual(workspace.harness_for(Path("sample.py")).language, "python")
         self.assertEqual(workspace.harness_for(Path("sample.rs")).language, "rust")
+        self.assertEqual(workspace.harness_for(Path("sample.cpp")).language, "cpp")
 
     def test_dry_run_writes_metadata(self) -> None:
         workspace = BenchmarkWorkspace()
@@ -19,6 +20,7 @@ class HarnessTests(unittest.TestCase):
             suites=["01_algorithms"],
             include_comparisons=True,
             language_filters={"python"},
+            target_filters=["python_cpython"],
             warmups=0,
             runs=1,
             max_benchmarks=1,
@@ -26,8 +28,8 @@ class HarnessTests(unittest.TestCase):
         )
         self.assertIn("run_root", result)
         self.assertEqual(result["performance_rows"], 0)
+        self.assertEqual(result["memory_rows"], 1)
 
 
 if __name__ == "__main__":
     unittest.main()
-

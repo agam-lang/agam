@@ -7,11 +7,24 @@
     "coefficient_of_variation_warning_percent": 10.0,
     "capture_memory": true,
     "capture_compilation_metrics": true,
-    "include_comparisons": false
+    "capture_space_profile": true,
+    "include_comparisons": false,
+    "default_targets": [
+      "agam_llvm_o3_call_cache_off",
+      "agam_llvm_o3_call_cache_on",
+      "agam_c_o3_call_cache_off",
+      "agam_c_o3_call_cache_on",
+      "agam_jit_o2_call_cache_off",
+      "agam_jit_o2_call_cache_on",
+      "rust_release",
+      "c_clang_o3",
+      "cpp_clangxx_o3",
+      "python_cpython",
+      "go_release"
+    ]
   },
   "paths": {
     "benchmark_root": "benchmarks/benchmarks",
     "results_root": "benchmarks/results"
   }
 }
-
