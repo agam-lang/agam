@@ -497,6 +497,43 @@ All rows in this snapshot measure the same recursive Fibonacci shape: time compl
 
 On this specific recursive workload, LLVM plus call cache is the fastest Agam configuration in the current snapshot. Agam LLVM without call cache lands in the same runtime range as the C, C++, and Rust native comparison targets on the same host.
 
+### Snapshot Scorecard
+
+To make the same-host snapshot easier to scan, the benchmark workspace now also supports a simple scorecard for constant-workload runs. This published score uses `60` points for runtime, `20` for peak RAM, `10` for SSD footprint, and `10` for ahead-of-time compile latency. Targets without an AOT compile row, such as JIT and CPython, get `0` compile points in this delivery-oriented score.
+
+| Target | Overall points | Slower than winner |
+| --- | ---: | ---: |
+| Agam LLVM O3 + Call Cache | 93.5 | 0.0% |
+| Clang C O3 | 69.5 | 88.1% |
+| Agam LLVM O3 | 66.0 | 82.7% |
+| Rust release | 63.8 | 90.7% |
+| Agam C O3 + Call Cache | 60.9 | 86.9% |
+| Agam C O3 | 60.7 | 86.6% |
+| Clang++ O3 | 57.9 | 82.3% |
+| Go release | 41.6 | 171.0% |
+| CPython | 18.3 | 2777.8% |
+| Agam JIT O2 | 11.3 | 1004.1% |
+| Agam JIT O2 + Call Cache | 11.0 | 1082.1% |
+
+Current winner: `Agam LLVM O3 + Call Cache`.
+
+Why it wins in this snapshot:
+
+- it is the fastest runtime on the same host by a large margin
+- it stays in the same low-RAM band as the native C, C++, and Rust binaries
+- its artifact size stays modest instead of ballooning like Go or JIT output
+- its compile time is competitive enough that the runtime advantage dominates the overall score
+
+Why the others trail:
+
+- `Agam LLVM O3` loses the call-cache speedup, so it is `82.7%` slower than the winner on this workload
+- `Clang C O3`, `Clang++ O3`, and `Rust release` stay near-native in memory and binary size, but they are still roughly `82%` to `91%` slower in runtime than the winner here
+- `Agam C O3` stays close to the native runtime pack, but its current compile path costs more, which drags down the overall score
+- `Agam JIT O2` pays startup and JIT overhead, which hurts badly on a small recursive benchmark like this
+- `CPython` keeps the smallest SSD footprint, but interpreter overhead dominates runtime on this benchmark shape
+
+Agam is still under active development. Treat these numbers and rankings as a current snapshot of one fair same-host benchmark situation, not as the final ceiling for the language or its backends.
+
 Cache and register columns still exist in the raw benchmark outputs, but they are host-capacity context rather than exact live L3 occupancy or exact register allocation counts. If you need precise cache-miss or register-pressure counters, add platform-specific perf tooling on top of this workspace.
 
 ### Published Plots

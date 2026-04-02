@@ -144,6 +144,7 @@ Aggregated outputs land in:
 - `results/aggregated/performance_summary.csv`
 - `results/aggregated/memory_summary.csv`
 - `results/aggregated/compilation_summary.csv`
+- `results/aggregated/scorecard_summary.csv`
 - `results/aggregated/statistical_analysis.json`
 
 Reports land in:

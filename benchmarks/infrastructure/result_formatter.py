@@ -114,6 +114,34 @@ class ResultFormatter:
                 "artifact_size_bytes",
             ),
         )
+        scorecard = self._build_scorecard(performance, memory, compilation)
+        self._write_csv(
+            aggregated_root / "scorecard_summary.csv",
+            scorecard,
+            (
+                "platform",
+                "suite",
+                "case",
+                "target_id",
+                "target_name",
+                "language",
+                "backend",
+                "compiler",
+                "call_cache_enabled",
+                "overall_score",
+                "runtime_score",
+                "compile_score",
+                "ram_score",
+                "ssd_score",
+                "median_ms",
+                "compile_time_ms",
+                "peak_rss_bytes",
+                "ssd_footprint_bytes",
+                "slowdown_vs_winner_percent",
+                "winner",
+                "score_notes",
+            ),
+        )
         (aggregated_root / "statistical_analysis.json").write_text(
             json.dumps(performance, indent=2) + "\n",
             encoding="utf-8",
@@ -171,10 +199,16 @@ class ResultFormatter:
             f"- Recorded performance rows: {len(performance)}",
             f"- Recorded space rows: {len(memory)}",
             f"- Recorded compilation rows: {len(compilation)}",
+            f"- Recorded score rows: {len(scorecard)}",
             f"- Environment: {metadata.get('environment')}",
             f"- Platform: {metadata.get('platform_name')}",
             f"- Selected targets: {', '.join(metadata.get('selected_targets', []))}",
         ]
+        if scorecard:
+            winner = scorecard[0]
+            executive_lines.append(
+                f"- Scorecard winner: {winner.get('target_name')} ({winner.get('overall_score'):.2f} points)"
+            )
         (reports_root / "EXECUTIVE_SUMMARY.md").write_text(
             "\n".join(executive_lines) + "\n",
             encoding="utf-8",
@@ -203,6 +237,109 @@ class ResultFormatter:
                 payload = {key: row.get(key) for key in keys}
                 lines.append(f"- {json.dumps(payload, sort_keys=True)}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    @staticmethod
+    def _build_scorecard(
+        performance: list[dict[str, Any]],
+        memory: list[dict[str, Any]],
+        compilation: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        def row_key(row: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+            return (
+                row.get("platform"),
+                row.get("suite"),
+                row.get("case"),
+                row.get("target_id"),
+            )
+
+        memory_by_key = {row_key(row): row for row in memory}
+        compilation_by_key = {row_key(row): row for row in compilation}
+        candidates: list[dict[str, Any]] = []
+
+        for perf_row in performance:
+            key = row_key(perf_row)
+            mem_row = memory_by_key.get(key)
+            if mem_row is None:
+                continue
+
+            runtime_ms = perf_row.get("median_ms")
+            peak_rss_bytes = mem_row.get("peak_rss_bytes")
+            ssd_footprint_bytes = mem_row.get("ssd_footprint_bytes")
+            if not all(isinstance(value, (int, float)) for value in (runtime_ms, peak_rss_bytes, ssd_footprint_bytes)):
+                continue
+
+            comp_row = compilation_by_key.get(key)
+            compile_time_ms = comp_row.get("duration_ms") if comp_row else None
+            candidates.append(
+                {
+                    "performance": perf_row,
+                    "memory": mem_row,
+                    "compilation": comp_row,
+                    "runtime_ms": float(runtime_ms),
+                    "peak_rss_bytes": float(peak_rss_bytes),
+                    "ssd_footprint_bytes": float(ssd_footprint_bytes),
+                    "compile_time_ms": float(compile_time_ms) if isinstance(compile_time_ms, (int, float)) else None,
+                }
+            )
+
+        if not candidates:
+            return []
+
+        runtime_best = min(row["runtime_ms"] for row in candidates)
+        ram_best = min(row["peak_rss_bytes"] for row in candidates)
+        ssd_best = min(row["ssd_footprint_bytes"] for row in candidates)
+        compile_candidates = [row["compile_time_ms"] for row in candidates if row["compile_time_ms"] is not None]
+        compile_best = min(compile_candidates) if compile_candidates else None
+
+        score_rows: list[dict[str, Any]] = []
+        for candidate in candidates:
+            perf_row = candidate["performance"]
+            mem_row = candidate["memory"]
+            compile_time_ms = candidate["compile_time_ms"]
+
+            runtime_score = 60.0 * runtime_best / candidate["runtime_ms"]
+            ram_score = 20.0 * ram_best / candidate["peak_rss_bytes"]
+            ssd_score = 10.0 * ssd_best / candidate["ssd_footprint_bytes"]
+            if compile_time_ms is not None and compile_best is not None:
+                compile_score = 10.0 * compile_best / compile_time_ms
+                score_notes = "AOT compile included."
+            else:
+                compile_score = 0.0
+                score_notes = "No AOT compile row; runtime, RAM, and SSD only."
+
+            overall_score = runtime_score + compile_score + ram_score + ssd_score
+            score_rows.append(
+                {
+                    "platform": perf_row.get("platform"),
+                    "suite": perf_row.get("suite"),
+                    "case": perf_row.get("case"),
+                    "target_id": perf_row.get("target_id"),
+                    "target_name": perf_row.get("target_name"),
+                    "language": perf_row.get("language"),
+                    "backend": perf_row.get("backend"),
+                    "compiler": perf_row.get("compiler"),
+                    "call_cache_enabled": perf_row.get("call_cache_enabled"),
+                    "overall_score": round(overall_score, 4),
+                    "runtime_score": round(runtime_score, 4),
+                    "compile_score": round(compile_score, 4),
+                    "ram_score": round(ram_score, 4),
+                    "ssd_score": round(ssd_score, 4),
+                    "median_ms": round(candidate["runtime_ms"], 4),
+                    "compile_time_ms": round(compile_time_ms, 4) if compile_time_ms is not None else None,
+                    "peak_rss_bytes": int(candidate["peak_rss_bytes"]),
+                    "ssd_footprint_bytes": int(candidate["ssd_footprint_bytes"]),
+                    "slowdown_vs_winner_percent": round(
+                        ((candidate["runtime_ms"] / runtime_best) - 1.0) * 100.0,
+                        4,
+                    ),
+                    "winner": False,
+                    "score_notes": score_notes,
+                }
+            )
+
+        score_rows.sort(key=lambda row: (-float(row["overall_score"]), float(row["median_ms"])))
+        score_rows[0]["winner"] = True
+        return score_rows
 
     def _write_plots(
         self,

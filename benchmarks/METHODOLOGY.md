@@ -111,6 +111,19 @@ Each benchmark run should produce:
 - metadata that makes reruns reproducible
 - explicit platform/backend/target identity in every row
 
+## Reader Scorecard
+
+For same-host, same-workload comparison runs, the workspace can also emit a reader-facing scorecard.
+
+- Use it only when the run holds the workload constant across targets, typically with `--match` or a single benchmark case.
+- The current public score uses:
+  - `60` points for runtime speed
+  - `20` points for peak RAM
+  - `10` points for SSD footprint
+  - `10` points for ahead-of-time compile latency
+- Targets without an ahead-of-time compile row get `0` compile points in that delivery-oriented score.
+- The scorecard is a communication layer for public summaries. Raw runtime, compile, and memory rows remain the source of truth.
+
 ## Agam-Specific Rules
 
 - Keep `.agam` benchmark sources grounded in syntax already visible in `examples/`, `.agent/test/`, and the active parser.

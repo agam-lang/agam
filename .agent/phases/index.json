@@ -1471,7 +1471,8 @@
         "Added a structured benchmark workspace under `benchmarks/` with categorized suites, harnesses, CI helpers, result roots, and methodology docs, while keeping `.agent/test/` as the localized phase-work microbenchmark area.",
         "Expanded the benchmark workspace with explicit Win11/Linux/WSL environment profiles, Agam LLVM/JIT/C target variants, call-cache on/off comparisons, Clang++/Clang/Rust/CPython/Go comparison targets, and richer space-profile reporting for SSD, RAM, cache capacity, and register-budget context.",
         "Tightened benchmark fairness by running Agam through the built driver binary instead of `cargo run`, compiling emitted C backend output to a native executable before runtime measurement, and adding a compile warmup pass before measured AOT compile timing.",
-        "Published the first same-host README benchmark snapshot and plot set for the `01_algorithms/fibonacci` comparison matrix so public docs show a concrete Win11 run instead of just the benchmark scaffold."
+        "Published the first same-host README benchmark snapshot and plot set for the `01_algorithms/fibonacci` comparison matrix so public docs show a concrete Win11 run instead of just the benchmark scaffold.",
+        "Added a reproducible benchmark scorecard output plus README winner summary so the public benchmark section can rank targets and explain the current snapshot without hiding the underlying raw metrics."
       ],
       "remaining_work": [
         "Unify `agam_lsp`, `agam_fmt`, `agam_test`, package/runtime metadata, and the future daemon behind the same stable workspace contract instead of per-tool discovery."
