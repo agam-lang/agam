@@ -365,14 +365,11 @@ pub fn recommended_optimize_functions(profile: &PersistentCallCacheProfile) -> V
                 reuse_distance_signal(function),
                 Some(ReuseDistanceSignal::Favorable)
             );
-            let specialization_feedback_is_unfavorable =
-                specialization_feedback_is_unfavorable(&function.profile);
+            let specialization_feedback_is_favorable =
+                specialization_feedback_is_favorable(&function.profile);
             hit_rate_per_thousand >= 200
                 || reuse_is_favorable
-                || (!matches!(
-                    function.profile.specialization_hint,
-                    CallCacheSpecializationHint::None
-                ) && !specialization_feedback_is_unfavorable)
+                || specialization_feedback_is_favorable
         })
         .map(|function| function.name.clone())
         .collect()
@@ -886,6 +883,44 @@ mod tests {
                     specialization_hint: CallCacheSpecializationHint::StableArguments {
                         slots: vec![0],
                     },
+                },
+            }],
+        };
+
+        let recommended = recommended_optimize_functions(&profile);
+        assert!(recommended.is_empty());
+    }
+
+    #[test]
+    fn recommended_optimize_functions_skip_neutral_specialization_only_signal() {
+        let profile = PersistentCallCacheProfile {
+            schema_version: CALL_CACHE_PROFILE_SCHEMA_VERSION,
+            backend: "jit".into(),
+            runs: 2,
+            total_calls: 64,
+            total_hits: 0,
+            total_stores: 2,
+            functions: vec![PersistentCallCacheFunctionProfile {
+                name: "steady".into(),
+                runs: 2,
+                total_calls: 32,
+                total_hits: 0,
+                total_stores: 1,
+                last_entries: 1,
+                profile: CallCacheFunctionProfile {
+                    unique_keys: 1,
+                    hottest_key_hits: 24,
+                    avg_reuse_distance: None,
+                    max_reuse_distance: None,
+                    stable_values: vec![StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 24,
+                    }],
+                    specialization_hint: CallCacheSpecializationHint::StableArguments {
+                        slots: vec![0],
+                    },
+                    ..Default::default()
                 },
             }],
         };

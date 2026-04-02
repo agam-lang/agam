@@ -112,6 +112,17 @@ impl CallCacheSelection {
     fn optimized_functions(&self) -> Vec<String> {
         self.optimize_functions.iter().cloned().collect()
     }
+
+    fn caches_function(&self, function: &str) -> bool {
+        if self.exclude_functions.contains(function) {
+            return false;
+        }
+
+        self.resolved_enable_all()
+            || self.optimize_all
+            || self.include_functions.contains(function)
+            || self.optimize_functions.contains(function)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -3512,14 +3523,7 @@ fn apply_persisted_optimize_profile(
     let mut merged = selection.clone();
     let mut promoted = Vec::new();
     for function in agam_profile::recommended_optimize_functions(profile) {
-        if merged.exclude_functions.contains(&function) {
-            continue;
-        }
-        let selectable = merged.optimize_all
-            || merged.resolved_enable_all()
-            || merged.include_functions.contains(&function)
-            || merged.optimize_functions.contains(&function);
-        if !selectable {
+        if !merged.caches_function(&function) {
             continue;
         }
         if merged.optimize_functions.insert(function.clone()) {
@@ -3539,8 +3543,7 @@ fn apply_persisted_specialization_profile(
 
     agam_profile::recommended_specializations(profile)
         .into_iter()
-        .filter(|plan| !selection.exclude_functions.contains(&plan.name))
-        .filter(|plan| selection.optimize_all || selection.optimize_functions.contains(&plan.name))
+        .filter(|plan| selection.caches_function(&plan.name))
         .collect()
 }
 
@@ -4753,26 +4756,26 @@ fn hot(n: i64) -> i64 { return n + 1; }
     }
 
     #[test]
-    fn test_persisted_profile_builds_specialization_plans_for_optimized_functions() {
+    fn test_persisted_profile_builds_specialization_plans_for_cache_enabled_functions() {
         let profile = agam_profile::PersistentCallCacheProfile {
             schema_version: agam_profile::CALL_CACHE_PROFILE_SCHEMA_VERSION,
             backend: "jit".into(),
             runs: 2,
             total_calls: 64,
-            total_hits: 48,
+            total_hits: 0,
             total_stores: 2,
             functions: vec![agam_profile::PersistentCallCacheFunctionProfile {
                 name: "hot".into(),
                 runs: 2,
                 total_calls: 32,
-                total_hits: 24,
+                total_hits: 0,
                 total_stores: 1,
                 last_entries: 1,
                 profile: agam_profile::CallCacheFunctionProfile {
                     unique_keys: 1,
                     hottest_key_hits: 32,
-                    avg_reuse_distance: Some(1),
-                    max_reuse_distance: Some(1),
+                    avg_reuse_distance: None,
+                    max_reuse_distance: None,
                     stable_values: vec![
                         agam_profile::StableScalarValueProfile {
                             index: 0,
@@ -4796,15 +4799,115 @@ fn hot(n: i64) -> i64 { return n + 1; }
             }],
         };
 
-        let (selection, _) =
+        let (selection, promoted) =
             apply_persisted_optimize_profile(&CallCacheSelection::default(), Some(&profile));
         let plans = apply_persisted_specialization_profile(&selection, Some(&profile));
 
+        assert!(promoted.is_empty());
+        assert!(selection.optimize_functions.is_empty());
         assert_eq!(plans.len(), 2);
         assert_eq!(plans[0].name, "hot");
         assert_eq!(plans[0].stable_values.len(), 2);
         assert_eq!(plans[1].stable_values.len(), 1);
         assert_eq!(plans[1].stable_values[0].raw_bits, 33);
+    }
+
+    #[test]
+    fn test_persisted_profile_builds_specialization_plans_for_explicit_basic_selection() {
+        let profile = agam_profile::PersistentCallCacheProfile {
+            schema_version: agam_profile::CALL_CACHE_PROFILE_SCHEMA_VERSION,
+            backend: "jit".into(),
+            runs: 2,
+            total_calls: 64,
+            total_hits: 0,
+            total_stores: 2,
+            functions: vec![agam_profile::PersistentCallCacheFunctionProfile {
+                name: "hot".into(),
+                runs: 2,
+                total_calls: 32,
+                total_hits: 0,
+                total_stores: 1,
+                last_entries: 1,
+                profile: agam_profile::CallCacheFunctionProfile {
+                    unique_keys: 1,
+                    hottest_key_hits: 32,
+                    avg_reuse_distance: None,
+                    max_reuse_distance: None,
+                    stable_values: vec![agam_profile::StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 24,
+                    }],
+                    specialization_hint:
+                        agam_profile::CallCacheSpecializationHint::StableArgumentsAndHotKey {
+                            slots: vec![0],
+                            hits: 32,
+                            unique_keys: 1,
+                        },
+                    ..Default::default()
+                },
+            }],
+        };
+
+        let selection = CallCacheSelection {
+            disable_all: true,
+            include_functions: ["hot".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        let (selection, promoted) = apply_persisted_optimize_profile(&selection, Some(&profile));
+        let plans = apply_persisted_specialization_profile(&selection, Some(&profile));
+
+        assert!(promoted.is_empty());
+        assert!(selection.optimize_functions.is_empty());
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].name, "hot");
+        assert_eq!(plans[0].stable_values[0].raw_bits, 33);
+    }
+
+    #[test]
+    fn test_persisted_profile_skips_specialization_plans_when_cache_disabled() {
+        let profile = agam_profile::PersistentCallCacheProfile {
+            schema_version: agam_profile::CALL_CACHE_PROFILE_SCHEMA_VERSION,
+            backend: "jit".into(),
+            runs: 2,
+            total_calls: 64,
+            total_hits: 48,
+            total_stores: 2,
+            functions: vec![agam_profile::PersistentCallCacheFunctionProfile {
+                name: "hot".into(),
+                runs: 2,
+                total_calls: 32,
+                total_hits: 24,
+                total_stores: 1,
+                last_entries: 1,
+                profile: agam_profile::CallCacheFunctionProfile {
+                    unique_keys: 1,
+                    hottest_key_hits: 32,
+                    avg_reuse_distance: Some(1),
+                    max_reuse_distance: Some(1),
+                    stable_values: vec![agam_profile::StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 33,
+                        matches: 24,
+                    }],
+                    specialization_hint:
+                        agam_profile::CallCacheSpecializationHint::StableArgumentsAndHotKey {
+                            slots: vec![0],
+                            hits: 32,
+                            unique_keys: 1,
+                        },
+                    ..Default::default()
+                },
+            }],
+        };
+
+        let selection = CallCacheSelection {
+            disable_all: true,
+            ..Default::default()
+        };
+        let plans = apply_persisted_specialization_profile(&selection, Some(&profile));
+
+        assert!(plans.is_empty());
     }
 
     #[test]
