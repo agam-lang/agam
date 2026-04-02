@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from benchmarks.harness.base_harness import BaseHarness, PreparedBenchmark
+from benchmarks.infrastructure.utils import resolve_command_path
 
 
 class GoHarness(BaseHarness):
@@ -18,7 +19,7 @@ class GoHarness(BaseHarness):
         target_spec: dict[str, object],
     ) -> PreparedBenchmark:
         binary = build_target.with_suffix(".exe" if os.name == "nt" else "")
-        go = str(self.environment["go"])
+        go = str(resolve_command_path(str(self.environment["go"])) or self.environment["go"])
         compile_command = [go, "build", "-o", str(binary), str(source)]
         return PreparedBenchmark(
             target_id=target_id,

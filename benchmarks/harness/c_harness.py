@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from benchmarks.harness.base_harness import BaseHarness, PreparedBenchmark
+from benchmarks.infrastructure.utils import resolve_command_path
 
 
 class CHarness(BaseHarness):
@@ -19,7 +20,7 @@ class CHarness(BaseHarness):
     ) -> PreparedBenchmark:
         binary = build_target.with_suffix(".exe" if os.name == "nt" else "")
         compiler_key = str(target_spec.get("compiler_key", "c_compiler"))
-        compiler = str(self.environment[compiler_key])
+        compiler = str(resolve_command_path(str(self.environment[compiler_key])) or self.environment[compiler_key])
         compile_args = [str(flag) for flag in target_spec.get("compile_args", ["-O3"])]
         compile_command = [compiler, *compile_args, "-o", str(binary), str(source)]
         return PreparedBenchmark(

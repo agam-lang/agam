@@ -6,6 +6,7 @@ import os
 import platform
 import re
 import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -208,9 +209,11 @@ def discover_benchmarks(
     suite_filters: list[str] | None = None,
     include_comparisons: bool = False,
     language_filters: set[str] | None = None,
+    match_filters: list[str] | None = None,
 ) -> list[Path]:
     paths: list[Path] = []
     suite_filter_set = set(suite_filters or [])
+    match_values = [value.lower() for value in (match_filters or [])]
     for path in sorted(SUITE_ROOT.rglob("*")):
         if not path.is_file():
             continue
@@ -223,6 +226,9 @@ def discover_benchmarks(
         if suite_filter_set and suite_name not in suite_filter_set:
             continue
         if language_filters and language not in language_filters:
+            continue
+        relative_text = path.relative_to(SUITE_ROOT).as_posix().lower()
+        if match_values and not any(value in relative_text for value in match_values):
             continue
         paths.append(path)
     return paths
@@ -284,7 +290,52 @@ def resolve_command_path(command: str | None) -> Path | None:
     if not command:
         return None
     resolved = shutil.which(command)
-    return Path(resolved) if resolved else None
+    if resolved:
+        return Path(resolved)
+    fallback = resolve_windows_vs_llvm_tool(command)
+    return fallback
+
+
+def resolve_windows_vs_llvm_tool(command: str) -> Path | None:
+    if os.name != "nt":
+        return None
+    if command not in {"clang", "clang++", "clang.exe", "clang++.exe"}:
+        return None
+
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    if not program_files_x86:
+        return None
+    vswhere = Path(program_files_x86) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.exists():
+        return None
+
+    try:
+        completed = subprocess.run(
+            [str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+
+    install_root = Path(completed.stdout.strip())
+    executable = "clang++.exe" if "++" in command else "clang.exe"
+    candidate = install_root / "VC" / "Tools" / "Llvm" / "x64" / "bin" / executable
+    return candidate if candidate.exists() else None
+
+
+def resolve_agam_driver_command(configured: list[str]) -> list[str]:
+    candidate_names = ["agamc.exe", "agamc"] if os.name == "nt" else ["agamc"]
+    for profile in ("debug", "release"):
+        for name in candidate_names:
+            candidate = REPO_ROOT / "target" / profile / name
+            if candidate.exists():
+                return [str(candidate)]
+    return configured
 
 
 def parse_csv_arguments(values: list[str] | None) -> list[str] | None:

@@ -452,6 +452,65 @@ The organized benchmark workspace now lives under `benchmarks/`:
 
 Use `.agent/test/` for narrow phase-work microbenchmarks and generated inspection artifacts tied to active optimization slices.
 
+### Same-Host Comparison Snapshot
+
+The current published snapshot was captured on `2026-04-02` from one `benchmark_harness` invocation on the same Win11 host and environment profile: `local_windows_win11` (`Windows-11-10.0.26200-SP0`, AMD64, 8 physical cores / 16 logical cores). Every row below ran the same `01_algorithms/fibonacci` workload with `--match fibonacci`, runtime warmups `2`, measured runs `7`, and compile warmup runs `1`.
+
+Agam targets in this snapshot were launched through the built `agamc` binary instead of `cargo run`, so Cargo startup did not contaminate runtime or compile-time measurements. The Agam C backend path also compiled the emitted C to a native executable before timing runtime, so the runtime rows stay like-for-like with Clang/Rust/Go native binaries.
+
+```bash
+python -m benchmarks.infrastructure.benchmark_harness \
+  --environment local_windows_win11 \
+  --suite 01_algorithms \
+  --match fibonacci \
+  --include-comparisons \
+  --target agam_llvm_o3_call_cache_off \
+  --target agam_llvm_o3_call_cache_on \
+  --target agam_c_o3_call_cache_off \
+  --target agam_c_o3_call_cache_on \
+  --target agam_jit_o2_call_cache_off \
+  --target agam_jit_o2_call_cache_on \
+  --target rust_release \
+  --target python_cpython \
+  --target c_clang_o3 \
+  --target cpp_clangxx_o3 \
+  --target go_release \
+  --warmups 2 \
+  --runs 7
+```
+
+All rows in this snapshot measure the same recursive Fibonacci shape: time complexity `O(phi^n)` and space complexity `O(n)`.
+
+| Target | Backend | Runtime median (ms) | Compile time (ms) | SSD footprint | Peak RSS |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Agam LLVM O3 | LLVM | 22.805 | 183.0 | 150.50 KiB | 3.63 MiB |
+| Agam LLVM O3 + Call Cache | LLVM | 12.482 | 173.0 | 150.50 KiB | 3.63 MiB |
+| Agam C O3 | C | 23.287 | 505.7 | 163.50 KiB | 3.62 MiB |
+| Agam C O3 + Call Cache | C | 23.327 | 450.0 | 163.50 KiB | 3.62 MiB |
+| Agam JIT O2 | JIT | 137.818 | n/a | 16.04 MiB | 12.36 MiB |
+| Agam JIT O2 + Call Cache | JIT | 147.551 | n/a | 16.04 MiB | 12.36 MiB |
+| Clang++ O3 | native | 22.753 | 801.0 | 257.00 KiB | 3.69 MiB |
+| Clang C O3 | native | 23.479 | 118.3 | 135.00 KiB | 3.61 MiB |
+| Rust release | native | 23.800 | 190.2 | 126.00 KiB | 4.02 MiB |
+| Go release | native | 33.822 | 192.9 | 2.35 MiB | 5.61 MiB |
+| CPython | interpreted | 359.203 | n/a | 101.96 KiB | 11.66 MiB |
+
+On this specific recursive workload, LLVM plus call cache is the fastest Agam configuration in the current snapshot. Agam LLVM without call cache lands in the same runtime range as the C, C++, and Rust native comparison targets on the same host.
+
+Cache and register columns still exist in the raw benchmark outputs, but they are host-capacity context rather than exact live L3 occupancy or exact register allocation counts. If you need precise cache-miss or register-pressure counters, add platform-specific perf tooling on top of this workspace.
+
+### Published Plots
+
+The generated raw plots live under `benchmarks/results/plots/`; the checked-in snapshots below are copied from the latest same-host run so the README always shows concrete output instead of a schematic placeholder.
+
+![Runtime comparison](docs/benchmarks/performance_comparison.png)
+
+![Memory comparison](docs/benchmarks/memory_usage.png)
+
+![Compile-time comparison](docs/benchmarks/compile_time.png)
+
+![Scaling analysis](docs/benchmarks/scaling_analysis.png)
+
 ## Agam Syntax For Development: Complete Guide A-Z
 
 This syntax guide is intentionally grounded in the current repo examples and parser-facing code. It documents the surface that is already visible in this workspace.

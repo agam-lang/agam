@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from benchmarks.harness.base_harness import BaseHarness, PreparedBenchmark
+from benchmarks.infrastructure.utils import resolve_command_path
 
 
 class RustHarness(BaseHarness):
@@ -18,7 +19,7 @@ class RustHarness(BaseHarness):
         target_spec: dict[str, object],
     ) -> PreparedBenchmark:
         binary = build_target.with_suffix(".exe" if os.name == "nt" else "")
-        rustc = str(self.environment["rustc"])
+        rustc = str(resolve_command_path(str(self.environment["rustc"])) or self.environment["rustc"])
         rust_flags = [str(flag) for flag in target_spec.get("rust_flags", ["-C", "opt-level=3"])]
         compile_command = [rustc, *rust_flags, "-o", str(binary), str(source)]
         return PreparedBenchmark(

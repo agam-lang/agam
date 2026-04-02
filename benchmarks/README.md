@@ -49,6 +49,18 @@ Run a narrow suite directly:
 python -m benchmarks.infrastructure.benchmark_harness --suite 01_algorithms --max-benchmarks 3
 ```
 
+Run one benchmark shape across every backend/runtime target from the same harness invocation:
+
+```bash
+python -m benchmarks.infrastructure.benchmark_harness \
+  --environment local_windows_win11 \
+  --suite 01_algorithms \
+  --match fibonacci \
+  --include-comparisons
+```
+
+The `--match` filter is the easiest way to hold the workload constant across Agam backends and comparison-language targets when you want a same-host, same-situation comparison.
+
 Run explicit Agam backend and call-cache comparisons:
 
 ```bash
@@ -142,6 +154,8 @@ Reports land in:
 - `results/reports/EXECUTIVE_SUMMARY.md`
 
 Plot generation is optional. If `matplotlib` is available, the formatter can fill `results/plots/`.
+
+The default config also applies one unmeasured compile warmup (`compile_warmup_runs: 1`) before recording AOT compile-time metrics so one-time driver/toolchain startup costs do not dominate the published numbers.
 
 ## Platform And Backend Matrix
 

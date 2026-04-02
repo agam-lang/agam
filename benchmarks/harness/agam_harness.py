@@ -3,8 +3,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from shutil import which
+import sys
 
 from benchmarks.harness.base_harness import BaseHarness, PreparedBenchmark
+from benchmarks.infrastructure.utils import resolve_agam_driver_command
 
 
 class AgamHarness(BaseHarness):
@@ -18,7 +20,7 @@ class AgamHarness(BaseHarness):
         target_id: str,
         target_spec: dict[str, object],
     ) -> PreparedBenchmark:
-        driver = self.environment["agam_driver"]
+        driver = resolve_agam_driver_command(self.environment["agam_driver"])
         backend = str(target_spec["backend"])
         opt_level = int(target_spec.get("optimization_level", 2))
         call_cache_enabled = bool(target_spec.get("call_cache", False))
@@ -30,19 +32,34 @@ class AgamHarness(BaseHarness):
         artifact_path: Path | None
 
         if build_then_run:
-            compile_command = [
-                *driver,
-                "build",
-                str(source),
-                "--backend",
-                backend,
-                "-O",
-                str(opt_level),
-                "--output",
-                str(binary),
-            ]
-            if call_cache_enabled:
-                compile_command.append("--call-cache")
+            if backend == "c":
+                compile_command = [
+                    sys.executable,
+                    "-m",
+                    "benchmarks.infrastructure.compile_agam_c_backend",
+                    "--source",
+                    str(source),
+                    "--output",
+                    str(binary),
+                    "--opt-level",
+                    str(opt_level),
+                ]
+                if call_cache_enabled:
+                    compile_command.append("--call-cache")
+            else:
+                compile_command = [
+                    *driver,
+                    "build",
+                    str(source),
+                    "--backend",
+                    backend,
+                    "-O",
+                    str(opt_level),
+                    "--output",
+                    str(binary),
+                ]
+                if call_cache_enabled:
+                    compile_command.append("--call-cache")
             run_command = [str(binary)]
             artifact_path = binary
             runtime_executable = binary

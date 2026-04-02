@@ -7,6 +7,14 @@ from typing import Any
 
 from benchmarks.infrastructure.utils import ensure_directory
 
+try:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except ImportError:  # pragma: no cover - optional dependency
+    plt = None
+
 
 class ResultFormatter:
     def write(
@@ -156,6 +164,7 @@ class ResultFormatter:
                 "artifact_size_bytes",
             ],
         )
+        self._write_plots(aggregated_root.parent / "plots", performance, memory, compilation)
         executive_lines = [
             "# Executive Summary",
             "",
@@ -194,3 +203,102 @@ class ResultFormatter:
                 payload = {key: row.get(key) for key in keys}
                 lines.append(f"- {json.dumps(payload, sort_keys=True)}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def _write_plots(
+        self,
+        plots_root: Path,
+        performance: list[dict[str, Any]],
+        memory: list[dict[str, Any]],
+        compilation: list[dict[str, Any]],
+    ) -> None:
+        if plt is None:
+            return
+
+        ensure_directory(plots_root)
+        self._plot_bar(
+            plots_root / "performance_comparison.png",
+            performance,
+            value_key="median_ms",
+            title="Performance Comparison",
+            ylabel="Median runtime (ms)",
+        )
+        self._plot_bar(
+            plots_root / "memory_usage.png",
+            memory,
+            value_key="peak_rss_bytes",
+            title="Memory Usage",
+            ylabel="Peak RSS (bytes)",
+        )
+        self._plot_bar(
+            plots_root / "compile_time.png",
+            compilation,
+            value_key="duration_ms",
+            title="Compile Time",
+            ylabel="Compile time (ms)",
+        )
+        self._plot_scatter(
+            plots_root / "scaling_analysis.png",
+            performance,
+            memory,
+        )
+
+    def _plot_bar(
+        self,
+        path: Path,
+        rows: list[dict[str, Any]],
+        value_key: str,
+        title: str,
+        ylabel: str,
+    ) -> None:
+        values = [row for row in rows if isinstance(row.get(value_key), (int, float))]
+        if not values or plt is None:
+            return
+
+        labels = [f"{row.get('case')}\\n{row.get('target_name')}" for row in values[:12]]
+        points = [float(row[value_key]) for row in values[:12]]
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.bar(range(len(points)), points, color="#245c73")
+        ax.set_title(title)
+        ax.set_ylabel(ylabel)
+        ax.set_xticks(range(len(points)))
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        fig.tight_layout()
+        fig.savefig(path, dpi=144)
+        plt.close(fig)
+
+    def _plot_scatter(
+        self,
+        path: Path,
+        performance: list[dict[str, Any]],
+        memory: list[dict[str, Any]],
+    ) -> None:
+        if plt is None:
+            return
+
+        memory_index = {
+            (row.get("case"), row.get("target_id")): row
+            for row in memory
+        }
+        paired: list[tuple[float, float, str]] = []
+        for row in performance:
+            runtime = row.get("median_ms")
+            memory_row = memory_index.get((row.get("case"), row.get("target_id")))
+            footprint = None if memory_row is None else memory_row.get("ssd_footprint_bytes")
+            if isinstance(runtime, (int, float)) and isinstance(footprint, (int, float)):
+                paired.append((float(runtime), float(footprint), str(row.get("target_name"))))
+
+        if not paired:
+            return
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        xs = [item[0] for item in paired]
+        ys = [item[1] for item in paired]
+        ax.scatter(xs, ys, color="#9f2a2a")
+        for x, y, label in paired[:12]:
+            ax.annotate(label, (x, y), fontsize=8)
+        ax.set_title("Scaling Analysis")
+        ax.set_xlabel("Median runtime (ms)")
+        ax.set_ylabel("SSD footprint (bytes)")
+        fig.tight_layout()
+        fig.savefig(path, dpi=144)
+        plt.close(fig)

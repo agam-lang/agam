@@ -13,11 +13,12 @@ This workspace follows a measurement-first process. The benchmark result is part
 ## Experimental Design
 
 1. Warm up the benchmark before recording samples.
-2. Collect multiple measured samples per case.
-3. Use medians for central tendency and coefficient of variation for noise detection.
-4. Compare against a declared baseline rather than against memory.
-5. Separate Agam-native runs from comparison-language runs in reporting, then show side-by-side deltas.
-6. Compare like with like: platform, backend, compiler/runtime target, and call-cache state are all part of the experiment key.
+2. Warm up ahead-of-time compile paths separately before recording compile metrics.
+3. Collect multiple measured samples per case.
+4. Use medians for central tendency and coefficient of variation for noise detection.
+5. Compare against a declared baseline rather than against memory.
+6. Separate Agam-native runs from comparison-language runs in reporting, then show side-by-side deltas.
+7. Compare like with like: platform, backend, compiler/runtime target, and call-cache state are all part of the experiment key.
 
 ## Runtime Measurements
 
@@ -35,6 +36,11 @@ Compile-time metrics should be captured when:
 - LLVM/JIT specialization or cache work changes emitted work per unit
 
 The compile-time contract stores the compile command, wall-clock duration, exit code, and stderr preview for debugging.
+
+- Default compile warmup runs: `1`
+- Rationale: absorb first-hit driver/toolchain startup noise before the measured AOT compile sample
+- Scope: applies to AOT targets such as LLVM, C, Rust, Clang, Clang++, Go, and similar native build steps
+- Exclusion: JIT and interpreted targets do not invent a fake AOT compile number
 
 ## Memory Measurements
 

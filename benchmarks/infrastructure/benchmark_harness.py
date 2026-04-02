@@ -81,6 +81,7 @@ class BenchmarkWorkspace:
         include_comparisons: bool,
         language_filters: set[str] | None,
         target_filters: list[str] | None,
+        match_filters: list[str] | None,
         warmups: int | None,
         runs: int | None,
         max_benchmarks: int | None,
@@ -89,12 +90,14 @@ class BenchmarkWorkspace:
         defaults = self.config["defaults"]
         warmup_runs = warmups if warmups is not None else defaults["warmup_runs"]
         measured_runs = runs if runs is not None else defaults["measured_runs"]
+        compile_warmup_runs = defaults.get("compile_warmup_runs", 0)
         selected_targets = target_filters or defaults["default_targets"]
         target_filter_set = set(selected_targets)
         benchmarks = discover_benchmarks(
             suite_filters=suites,
             include_comparisons=include_comparisons or defaults["include_comparisons"],
             language_filters=language_filters,
+            match_filters=match_filters,
         )
         if max_benchmarks is not None:
             benchmarks = benchmarks[:max_benchmarks]
@@ -124,11 +127,12 @@ class BenchmarkWorkspace:
             for prepared in prepared_variants:
                 row_context = self._row_context(source, suite, case_name, prepared, complexity)
                 compile_row = self.compilation_analyzer.measure(
-                    prepared.compile_command,
-                    cwd=REPO_ROOT,
-                    env=os.environ.copy(),
-                    artifact_path=prepared.artifact_path,
-                )
+                prepared.compile_command,
+                cwd=REPO_ROOT,
+                env=os.environ.copy(),
+                artifact_path=prepared.artifact_path,
+                warmup_runs=compile_warmup_runs,
+            )
                 if compile_row is not None:
                     compile_row.update(row_context)
                     compilation_rows.append(compile_row)
@@ -211,10 +215,12 @@ class BenchmarkWorkspace:
             "benchmark_count": len(benchmarks),
             "warmup_runs": warmup_runs,
             "measured_runs": measured_runs,
+            "compile_warmup_runs": compile_warmup_runs,
             "dry_run": dry_run,
             "selected_suites": suites or [],
             "selected_targets": selected_targets,
             "selected_languages": sorted(language_filters) if language_filters else [],
+            "selected_matches": match_filters or [],
         }
         self.formatter.write(
             run_root=run_root,
@@ -303,6 +309,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Target ids from comparison_targets.yaml",
     )
     parser.add_argument(
+        "--match",
+        action="append",
+        dest="matches",
+        help="Substring filter applied to relative benchmark paths",
+    )
+    parser.add_argument(
         "--environment",
         help="Environment id from environments.yaml",
     )
@@ -327,6 +339,7 @@ def main() -> int:
         include_comparisons=args.include_comparisons,
         language_filters=set(args.languages) if args.languages else None,
         target_filters=parse_csv_arguments(args.targets),
+        match_filters=parse_csv_arguments(args.matches),
         warmups=args.warmups,
         runs=args.runs,
         max_benchmarks=args.max_benchmarks,

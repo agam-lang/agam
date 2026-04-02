@@ -2,6 +2,7 @@
   "defaults": {
     "warmup_runs": 2,
     "measured_runs": 7,
+    "compile_warmup_runs": 1,
     "runtime_regression_percent": 5.0,
     "compile_regression_percent": 5.0,
     "coefficient_of_variation_warning_percent": 10.0,

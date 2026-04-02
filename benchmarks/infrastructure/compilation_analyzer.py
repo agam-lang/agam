@@ -15,9 +15,28 @@ class CompilationAnalyzer:
         cwd: Path,
         env: dict[str, str] | None = None,
         artifact_path: Path | None = None,
+        warmup_runs: int = 0,
     ) -> dict[str, Any] | None:
         if not command:
             return None
+
+        for _ in range(max(0, warmup_runs)):
+            warmed = subprocess.run(
+                command,
+                cwd=cwd,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if warmed.returncode != 0:
+                return {
+                    "command": command,
+                    "duration_ms": None,
+                    "return_code": warmed.returncode,
+                    "stderr_preview": sanitize_preview(warmed.stderr),
+                    "artifact_size_bytes": file_size_bytes(artifact_path),
+                }
 
         start = time.perf_counter_ns()
         completed = subprocess.run(

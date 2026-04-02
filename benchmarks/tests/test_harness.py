@@ -21,6 +21,7 @@ class HarnessTests(unittest.TestCase):
             include_comparisons=True,
             language_filters={"python"},
             target_filters=["python_cpython"],
+            match_filters=["fibonacci"],
             warmups=0,
             runs=1,
             max_benchmarks=1,

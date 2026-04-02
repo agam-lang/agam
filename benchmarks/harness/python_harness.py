@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from shutil import which
 
 from benchmarks.harness.base_harness import BaseHarness, PreparedBenchmark
+from benchmarks.infrastructure.utils import resolve_command_path
 
 
 class PythonHarness(BaseHarness):
@@ -19,7 +19,7 @@ class PythonHarness(BaseHarness):
     ) -> PreparedBenchmark:
         interpreter_key = str(target_spec.get("interpreter_key", "python"))
         interpreter = str(self.environment[interpreter_key])
-        runtime_executable = which(interpreter)
+        runtime_executable = resolve_command_path(interpreter)
         return PreparedBenchmark(
             target_id=target_id,
             target_name=str(target_spec.get("name", target_id)),
@@ -30,5 +30,5 @@ class PythonHarness(BaseHarness):
             compile_command=None,
             run_command=[interpreter, str(source)],
             artifact_path=None,
-            runtime_executable=Path(runtime_executable) if runtime_executable else None,
+            runtime_executable=runtime_executable,
         )
