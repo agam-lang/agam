@@ -459,6 +459,17 @@ impl CallCacheFunctionState {
         }
     }
 
+    fn specialization_feedback_counts(
+        &self,
+    ) -> impl Iterator<Item = agam_profile::SpecializationFeedbackCounts> + '_ {
+        self.specialization_feedback.iter().map(|feedback| {
+            agam_profile::SpecializationFeedbackCounts {
+                guard_hits: feedback.hits,
+                guard_fallbacks: feedback.fallbacks,
+            }
+        })
+    }
+
     fn profile_snapshot(&self) -> CallCacheFunctionProfile {
         let avg_reuse_distance = if self.reuse_distance_samples > 0 {
             Some(self.reuse_distance_total / self.reuse_distance_samples)
@@ -2898,10 +2909,15 @@ impl CallCacheRuntime {
         }
         match mode {
             CallCacheMode::Basic => {
+                let decision = {
+                    let function = &self.functions[function_index];
+                    let observation = function.observation_for_key(&key, self.capacity);
+                    agam_profile::adaptive_admission_decision_with_specialization_feedback(
+                        &observation,
+                        function.specialization_feedback_counts(),
+                    )
+                };
                 let function = &mut self.functions[function_index];
-                let decision = agam_runtime::profile::call_cache_admission_decision(
-                    &function.observation_for_key(&key, self.capacity),
-                );
                 if !decision.admit {
                     return;
                 }
@@ -2940,8 +2956,10 @@ impl CallCacheRuntime {
                 }
                 let decision = {
                     let function = &self.functions[function_index];
-                    agam_runtime::profile::call_cache_admission_decision(
-                        &function.observation_for_key(&key, self.capacity),
+                    let observation = function.observation_for_key(&key, self.capacity);
+                    agam_profile::adaptive_admission_decision_with_specialization_feedback(
+                        &observation,
+                        function.specialization_feedback_counts(),
                     )
                 };
                 if !decision.admit {
@@ -3070,10 +3088,11 @@ impl CallCacheRuntime {
             .and_then(|function| {
                 function.entries.get(key).map(|entry| {
                     (
-                        agam_profile::apply_specialization_feedback_payoff(
+                        agam_profile::apply_specialization_feedback_payoff_with_profiles(
                             entry.payoff_score,
                             function.specialization_guard_hits,
                             function.specialization_guard_fallbacks,
+                            function.specialization_feedback_counts(),
                         ),
                         entry.last_touch,
                     )
@@ -3268,6 +3287,29 @@ extern "C" fn rt_specialization_enabled(slot: i32, specialization: i32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    fn specialization_registry(
+        function_name: &str,
+        stable_groups: Vec<Vec<StableScalarValueProfile>>,
+    ) -> SpecializationRegistry {
+        SpecializationRegistry {
+            by_function: HashMap::from([(
+                function_name.to_string(),
+                stable_groups
+                    .into_iter()
+                    .enumerate()
+                    .map(
+                        |(feedback_index, stable_values)| JitFunctionSpecialization {
+                            clone_name: format!("__spec_{function_name}_{feedback_index}"),
+                            stable_values,
+                            feedback_index,
+                        },
+                    )
+                    .collect(),
+            )]),
+        }
+    }
     use agam_errors::span::SourceId;
     use agam_hir::lower::HirLowering;
     use agam_lexer::Lexer;
@@ -4140,6 +4182,47 @@ fn main() -> i32:
     }
 
     #[test]
+    fn test_optimize_mode_uses_favorable_clone_feedback_over_neutral_aggregate() {
+        let registry = specialization_registry(
+            "hot",
+            vec![
+                vec![StableScalarValueProfile {
+                    index: 0,
+                    raw_bits: 7,
+                    matches: 16,
+                }],
+                vec![StableScalarValueProfile {
+                    index: 0,
+                    raw_bits: 33,
+                    matches: 16,
+                }],
+            ],
+        );
+        let mut runtime = CallCacheRuntime::new(
+            &["hot".to_string()],
+            &[CallCacheMode::Optimize],
+            &registry,
+            4,
+            0,
+        );
+        for _ in 0..8 {
+            runtime.record_specialization_fallback(0, 0);
+            runtime.record_specialization_hit(0, 1);
+        }
+        let key = CallCacheKey {
+            len: 1,
+            args: [33, 0, 0, 0],
+        };
+
+        runtime.lookup(0, key);
+        runtime.store(0, key, 99);
+        runtime.lookup(0, key);
+        runtime.store(0, key, 99);
+
+        assert_eq!(runtime.functions[0].entries.len(), 1);
+    }
+
+    #[test]
     fn test_global_optimized_victim_prefers_unfavorable_specialization_feedback() {
         let mut runtime = CallCacheRuntime::new(
             &["cold".to_string(), "hot".to_string()],
@@ -4178,6 +4261,75 @@ fn main() -> i32:
         runtime.functions[0].specialization_guard_fallbacks = 8;
         runtime.functions[1].specialization_guard_hits = 8;
         runtime.functions[1].specialization_guard_fallbacks = 0;
+
+        let victim = runtime
+            .global_optimized_victim()
+            .expect("expected an optimized victim");
+        assert_eq!(victim.function_index, 0);
+        assert_eq!(victim.key, cold_key);
+    }
+
+    #[test]
+    fn test_global_optimized_victim_preserves_favorable_broad_clone_signal() {
+        let registry = specialization_registry(
+            "hot",
+            vec![
+                vec![
+                    StableScalarValueProfile {
+                        index: 0,
+                        raw_bits: 7,
+                        matches: 24,
+                    },
+                    StableScalarValueProfile {
+                        index: 1,
+                        raw_bits: 9,
+                        matches: 20,
+                    },
+                ],
+                vec![StableScalarValueProfile {
+                    index: 0,
+                    raw_bits: 7,
+                    matches: 16,
+                }],
+            ],
+        );
+        let mut runtime = CallCacheRuntime::new(
+            &["cold".to_string(), "hot".to_string()],
+            &[CallCacheMode::Optimize, CallCacheMode::Optimize],
+            &registry,
+            2,
+            0,
+        );
+        let cold_key = CallCacheKey {
+            len: 1,
+            args: [7, 0, 0, 0],
+        };
+        let hot_key = CallCacheKey {
+            len: 1,
+            args: [33, 0, 0, 0],
+        };
+        runtime.functions[0].entries.insert(
+            cold_key,
+            CallCacheEntry {
+                value: 1,
+                hits: 4,
+                last_touch: 10,
+                payoff_score: 20,
+            },
+        );
+        runtime.functions[1].entries.insert(
+            hot_key,
+            CallCacheEntry {
+                value: 2,
+                hits: 4,
+                last_touch: 20,
+                payoff_score: 12,
+            },
+        );
+        runtime.functions[1].specialization_guard_hits = 8;
+        runtime.functions[1].specialization_guard_fallbacks = 8;
+        runtime.functions[1].specialization_feedback[0].fallbacks = 8;
+        runtime.functions[1].specialization_feedback[1].hits = 8;
 
         let victim = runtime
             .global_optimized_victim()

@@ -36,7 +36,7 @@ This is the compact whole-program catalog for Agam's roadmap.
 21. `Phase 15A`: complete
 22. `Phase 15B`: complete
 23. `Phase 15C`: complete
-24. `Phase 15D`: partial
+24. `Phase 15D`: complete
 25. `Phase 15E`: complete
 26. `Phase 15F`: open
 27. `Phase 15G`: partial
@@ -64,7 +64,7 @@ This is the compact whole-program catalog for Agam's roadmap.
 ## Where To Dive Deeper
 
 - Completed foundation phases: `details/foundation-00-05.md`, `details/language-and-runtime-06-10d.md`, `details/optimization-and-tooling-11-15c.md`
-- Active follow-on phases: `details/15D.md`, `details/15E.md`, `details/15F.md`, `details/15G.md`, `details/15H.md`
+- Active follow-on phases: `details/15F.md`, `details/15G.md`, `details/15H.md`
 - Immediate platform/runtime follow-on detail: `details/15A.md`, `details/15B.md`, `details/15C.md`
 - Open future phases: `details/16.md`, `details/17.md`, `details/17A.md` through `details/17F.md`, and `details/18.md` through `details/28.md`
 - Strategic priority summary: `info.md`

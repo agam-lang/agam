@@ -4,46 +4,42 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Finish Phase 15D**
-   - Make measured payoff drive cache admission and specialization decisions
-   - Keep specialization guarded, reversible, and benchmark-proven
-   - Detail file: `details/15D.md`
-2. **Start Phase 15F**
+1. **Start Phase 15F**
    - Add a persistent daemon that keeps parsed, typed, and lowered state warm
    - Add deterministic parallel compilation and background prewarm
    - Detail file: `details/15F.md`
-3. **Finish Phase 15G**
+2. **Finish Phase 15G**
    - Unify workspace conventions, package/runtime/cache metadata, and tool contracts
    - Reduce per-command discovery drift across tooling
    - Detail file: `details/15G.md`
-4. **Finish Phase 15H**
+3. **Finish Phase 15H**
    - Validate real Windows/Linux hosted-runner SDK outputs with bundled LLVM
    - Add Android target-pack packaging and validation
    - Detail file: `details/15H.md`
-5. **Finish Phase 17A**
+4. **Finish Phase 17A**
    - Reuse the parsed manifest contract across formatter, tests, LSP, and later daemon surfaces
    - Strengthen diagnostics for malformed dependency, environment, and workspace-member metadata
    - Detail file: `details/17A.md`
-6. **Start Phase 17B**
+5. **Start Phase 17B**
    - Land deterministic dependency resolution and `agam.lock`
    - Make reproducibility and content addressing the default instead of an optional add-on
    - Detail file: `details/17B.md`
-7. **Start Phase 17C**
+6. **Start Phase 17C**
    - Define the thin central registry-index protocol and immutable publish contract
    - Keep package identity registry-based rather than repo-name-based
    - Detail file: `details/17C.md`
-8. **Start Phase 17D**
+7. **Start Phase 17D**
    - Build named Agam environments that pin compiler, SDK packs, target packs, and dependencies together
    - Make environment selection explicit and reproducible instead of shell-global
    - Detail file: `details/17D.md`
-9. **Start Phase 17E**
+8. **Start Phase 17E**
    - Ship curated first-party base distributions and official package governance
    - Keep foreign-language interop as layered packs, not the base package manager contract
    - Detail file: `details/17E.md`
-10. **Start Phase 17F**
-    - Expand `agam_std` and native I/O once the package and environment layers stop drifting
-    - Keep standard library growth aligned with the new package ecosystem instead of bypassing it
-    - Detail file: `details/17F.md`
+9. **Start Phase 17F**
+   - Expand `agam_std` and native I/O once the package and environment layers stop drifting
+   - Keep standard library growth aligned with the new package ecosystem instead of bypassing it
+   - Detail file: `details/17F.md`
 
 ## What Not To Prioritize First
 

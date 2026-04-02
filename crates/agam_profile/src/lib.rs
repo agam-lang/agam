@@ -66,6 +66,14 @@ pub struct CallCacheSpecializationFeedbackProfile {
     pub guard_fallbacks: u64,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpecializationFeedbackCounts {
+    #[serde(default)]
+    pub guard_hits: u64,
+    #[serde(default)]
+    pub guard_fallbacks: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CallCacheSpecializationHint {
     #[default]
@@ -234,6 +242,19 @@ enum SpecializationFeedbackSignal {
 pub fn adaptive_admission_decision(
     observation: &AdaptiveAdmissionObservation,
 ) -> AdaptiveAdmissionDecision {
+    adaptive_admission_decision_with_specialization_feedback(
+        observation,
+        std::iter::empty::<SpecializationFeedbackCounts>(),
+    )
+}
+
+pub fn adaptive_admission_decision_with_specialization_feedback<I>(
+    observation: &AdaptiveAdmissionObservation,
+    specialization_feedback_profiles: I,
+) -> AdaptiveAdmissionDecision
+where
+    I: IntoIterator<Item = SpecializationFeedbackCounts>,
+{
     let mut payoff_score = 0u32;
     let mut reasons = Vec::new();
 
@@ -288,9 +309,10 @@ pub fn adaptive_admission_decision(
         payoff_score = payoff_score.saturating_sub(ADAPTIVE_ADMISSION_CACHE_FULL_PENALTY);
         reasons.push("cache is full".into());
     }
-    match specialization_feedback_signal_from_counts(
+    match specialization_feedback_signal_from_profiles(
         observation.specialization_guard_hits,
         observation.specialization_guard_fallbacks,
+        specialization_feedback_profiles,
     ) {
         Some(SpecializationFeedbackSignal::Favorable) => {
             payoff_score =
@@ -566,9 +588,27 @@ pub fn apply_specialization_feedback_payoff(
     specialization_guard_hits: u64,
     specialization_guard_fallbacks: u64,
 ) -> u32 {
-    match specialization_feedback_signal_from_counts(
+    apply_specialization_feedback_payoff_with_profiles(
+        payoff_score,
         specialization_guard_hits,
         specialization_guard_fallbacks,
+        std::iter::empty::<SpecializationFeedbackCounts>(),
+    )
+}
+
+pub fn apply_specialization_feedback_payoff_with_profiles<I>(
+    payoff_score: u32,
+    specialization_guard_hits: u64,
+    specialization_guard_fallbacks: u64,
+    specialization_feedback_profiles: I,
+) -> u32
+where
+    I: IntoIterator<Item = SpecializationFeedbackCounts>,
+{
+    match specialization_feedback_signal_from_profiles(
+        specialization_guard_hits,
+        specialization_guard_fallbacks,
+        specialization_feedback_profiles,
     ) {
         Some(SpecializationFeedbackSignal::Favorable) => {
             payoff_score.saturating_add(SPECIALIZATION_FEEDBACK_FAVORABLE_SCORE_BONUS)
@@ -577,6 +617,47 @@ pub fn apply_specialization_feedback_payoff(
             payoff_score.saturating_sub(SPECIALIZATION_FEEDBACK_UNFAVORABLE_SCORE_PENALTY)
         }
         Some(SpecializationFeedbackSignal::Neutral) | None => payoff_score,
+    }
+}
+
+fn specialization_feedback_signal_from_profiles<I>(
+    specialization_guard_hits: u64,
+    specialization_guard_fallbacks: u64,
+    specialization_feedback_profiles: I,
+) -> Option<SpecializationFeedbackSignal>
+where
+    I: IntoIterator<Item = SpecializationFeedbackCounts>,
+{
+    let mut saw_neutral = false;
+    let mut saw_unfavorable = false;
+
+    for signal in std::iter::once(specialization_feedback_signal_from_counts(
+        specialization_guard_hits,
+        specialization_guard_fallbacks,
+    ))
+    .chain(specialization_feedback_profiles.into_iter().map(|profile| {
+        specialization_feedback_signal_from_counts(profile.guard_hits, profile.guard_fallbacks)
+    })) {
+        match signal {
+            Some(SpecializationFeedbackSignal::Favorable) => {
+                return Some(SpecializationFeedbackSignal::Favorable);
+            }
+            Some(SpecializationFeedbackSignal::Neutral) => {
+                saw_neutral = true;
+            }
+            Some(SpecializationFeedbackSignal::Unfavorable) => {
+                saw_unfavorable = true;
+            }
+            None => {}
+        }
+    }
+
+    if saw_neutral {
+        Some(SpecializationFeedbackSignal::Neutral)
+    } else if saw_unfavorable {
+        Some(SpecializationFeedbackSignal::Unfavorable)
+    } else {
+        None
     }
 }
 
@@ -839,6 +920,95 @@ mod tests {
         });
         assert!(!decision.admit);
         assert!(decision.payoff_score < 40);
+    }
+
+    #[test]
+    fn adaptive_admission_uses_favorable_clone_feedback_over_neutral_aggregate() {
+        let decision = adaptive_admission_decision_with_specialization_feedback(
+            &AdaptiveAdmissionObservation {
+                total_calls: 16,
+                total_hits: 0,
+                unique_keys: 2,
+                cached_entries: 0,
+                capacity: 8,
+                candidate_hits: 2,
+                candidate_reuse_distance: None,
+                hottest_key_hits: 4,
+                stable_argument_slots: 0,
+                specialization_guard_hits: 8,
+                specialization_guard_fallbacks: 8,
+                optimize_mode: true,
+            },
+            [
+                SpecializationFeedbackCounts {
+                    guard_hits: 0,
+                    guard_fallbacks: 8,
+                },
+                SpecializationFeedbackCounts {
+                    guard_hits: 8,
+                    guard_fallbacks: 0,
+                },
+            ],
+        );
+        assert!(decision.admit);
+        assert!(decision.payoff_score >= 52);
+    }
+
+    #[test]
+    fn adaptive_admission_neutral_clone_feedback_blocks_unfavorable_penalty() {
+        let decision = adaptive_admission_decision_with_specialization_feedback(
+            &AdaptiveAdmissionObservation {
+                total_calls: 16,
+                total_hits: 0,
+                unique_keys: 2,
+                cached_entries: 0,
+                capacity: 8,
+                candidate_hits: 2,
+                candidate_reuse_distance: None,
+                hottest_key_hits: 4,
+                stable_argument_slots: 0,
+                specialization_guard_hits: 0,
+                specialization_guard_fallbacks: 8,
+                optimize_mode: false,
+            },
+            [SpecializationFeedbackCounts {
+                guard_hits: 3,
+                guard_fallbacks: 5,
+            }],
+        );
+        assert!(decision.admit);
+        assert_eq!(
+            decision.payoff_score,
+            ADAPTIVE_ADMISSION_REPEATED_ARGUMENTS_SCORE
+        );
+    }
+
+    #[test]
+    fn specialization_feedback_payoff_prefers_favorable_clone_signal() {
+        let adjusted = apply_specialization_feedback_payoff_with_profiles(
+            40,
+            8,
+            32,
+            [SpecializationFeedbackCounts {
+                guard_hits: 8,
+                guard_fallbacks: 0,
+            }],
+        );
+        assert_eq!(adjusted, 56);
+    }
+
+    #[test]
+    fn specialization_feedback_payoff_keeps_neutral_clone_from_penalty() {
+        let adjusted = apply_specialization_feedback_payoff_with_profiles(
+            40,
+            0,
+            8,
+            [SpecializationFeedbackCounts {
+                guard_hits: 3,
+                guard_fallbacks: 5,
+            }],
+        );
+        assert_eq!(adjusted, 40);
     }
 
     #[test]

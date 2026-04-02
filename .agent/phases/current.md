@@ -6,21 +6,16 @@
 
 ## Active Workstreams
 
-1. **Phase 15D: Value Profiling, Adaptive Admission, and Specialization**
-   - Status: partial
-   - Done: runtime-side value profiling, specialization guard reporting, persisted optimize/specialization decisions that react to measured guard feedback, live JIT/LLVM optimized-cache scoring that now reacts to guarded-clone outcomes, an emitted LLVM adaptive admission score that replaces the old fixed optimized pending-count gate, multi-clone guarded specialization support in both backends, and persisted multi-plan specialization candidate generation
-   - Next work: close the remaining LLVM/JIT runtime-signal parity gaps and extend the reversible specialization path beyond the current guarded-call surfaces
-   - Detail file: `details/15D.md`
-2. **Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation**
+1. **Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation**
    - Status: not started as a completed slice
    - Next work: keep parsed/typed/lowered state warm across edits and parallelize independent work deterministically
    - Detail file: `details/15F.md`
-3. **Phase 15G: First-Party Premium Experience Layer**
+2. **Phase 15G: First-Party Premium Experience Layer**
    - Status: partial
    - Done: `agamc doctor`, `agamc new`, `agamc dev`, and `agamc cache status`
    - Next work: unify tooling, package/runtime/cache metadata, and workspace conventions behind one stable contract
    - Detail file: `details/15G.md`
-4. **Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles**
+3. **Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles**
    - Status: partial
    - Done: `agamc package sdk`, bundled LLVM layout, initial CI workflow skeleton
    - Next work: validate hosted-runner SDK builds, publish real Windows/Linux SDK artifacts, and add Android target-pack validation

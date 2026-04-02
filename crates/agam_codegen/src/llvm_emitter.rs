@@ -3617,26 +3617,16 @@ fn emit_call_cache_observe_key(
     (candidate_hits, candidate_reuse)
 }
 
-fn emit_specialization_feedback_adjusted_score(
+fn emit_specialization_feedback_signal_flags(
     out: &mut String,
     next_temp: &mut usize,
-    globals: &CallCacheGlobalNames,
-    base_score: &str,
-) -> String {
+    hits_global: &str,
+    fallbacks_global: &str,
+) -> (String, String, String) {
     let hits = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {hits} = load i64, i64* {}",
-        globals.profile_specialization_hits
-    )
-    .unwrap();
+    writeln!(out, "  {hits} = load i64, i64* {hits_global}").unwrap();
     let fallbacks = fresh_call_cache_temp(next_temp);
-    writeln!(
-        out,
-        "  {fallbacks} = load i64, i64* {}",
-        globals.profile_specialization_fallbacks
-    )
-    .unwrap();
+    writeln!(out, "  {fallbacks} = load i64, i64* {fallbacks_global}").unwrap();
     let attempts = fresh_call_cache_temp(next_temp);
     writeln!(out, "  {attempts} = add i64 {hits}, {fallbacks}").unwrap();
     let enough_samples = fresh_call_cache_temp(next_temp);
@@ -3682,12 +3672,89 @@ fn emit_specialization_feedback_adjusted_score(
         "  {favorable_with_samples} = and i1 {enough_samples}, {favorable}"
     )
     .unwrap();
+    let not_favorable = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {not_favorable} = xor i1 {favorable}, true").unwrap();
+    let not_unfavorable = fresh_call_cache_temp(next_temp);
+    writeln!(out, "  {not_unfavorable} = xor i1 {unfavorable}, true").unwrap();
+    let sampled_not_favorable = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {sampled_not_favorable} = and i1 {enough_samples}, {not_favorable}"
+    )
+    .unwrap();
+    let neutral_with_samples = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {neutral_with_samples} = and i1 {sampled_not_favorable}, {not_unfavorable}"
+    )
+    .unwrap();
     let unfavorable_with_samples = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
         "  {unfavorable_with_samples} = and i1 {enough_samples}, {unfavorable}"
     )
     .unwrap();
+
+    (
+        favorable_with_samples,
+        neutral_with_samples,
+        unfavorable_with_samples,
+    )
+}
+
+fn emit_specialization_feedback_adjusted_score(
+    out: &mut String,
+    next_temp: &mut usize,
+    function_name: &str,
+    globals: &CallCacheGlobalNames,
+    base_score: &str,
+    specializations: &[LlvmFunctionSpecialization],
+) -> String {
+    let (mut has_favorable, mut has_neutral, mut has_unfavorable) =
+        emit_specialization_feedback_signal_flags(
+            out,
+            next_temp,
+            &globals.profile_specialization_hits,
+            &globals.profile_specialization_fallbacks,
+        );
+    for specialization in specializations {
+        let specialization_hits_global = call_cache_specialization_feedback_hits_global(
+            function_name,
+            specialization.feedback_index,
+        );
+        let specialization_fallbacks_global = call_cache_specialization_feedback_fallbacks_global(
+            function_name,
+            specialization.feedback_index,
+        );
+        let (profile_favorable, profile_neutral, profile_unfavorable) =
+            emit_specialization_feedback_signal_flags(
+                out,
+                next_temp,
+                &specialization_hits_global,
+                &specialization_fallbacks_global,
+            );
+        let next_has_favorable = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {next_has_favorable} = or i1 {has_favorable}, {profile_favorable}"
+        )
+        .unwrap();
+        let next_has_neutral = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {next_has_neutral} = or i1 {has_neutral}, {profile_neutral}"
+        )
+        .unwrap();
+        let next_has_unfavorable = fresh_call_cache_temp(next_temp);
+        writeln!(
+            out,
+            "  {next_has_unfavorable} = or i1 {has_unfavorable}, {profile_unfavorable}"
+        )
+        .unwrap();
+        has_favorable = next_has_favorable;
+        has_neutral = next_has_neutral;
+        has_unfavorable = next_has_unfavorable;
+    }
     let favored_score = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
@@ -3718,13 +3785,19 @@ fn emit_specialization_feedback_adjusted_score(
     let after_unfavorable = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
-        "  {after_unfavorable} = select i1 {unfavorable_with_samples}, i32 {penalized_score}, i32 {base_score}"
+        "  {after_unfavorable} = select i1 {has_unfavorable}, i32 {penalized_score}, i32 {base_score}"
+    )
+    .unwrap();
+    let after_neutral = fresh_call_cache_temp(next_temp);
+    writeln!(
+        out,
+        "  {after_neutral} = select i1 {has_neutral}, i32 {base_score}, i32 {after_unfavorable}"
     )
     .unwrap();
     let adjusted_score = fresh_call_cache_temp(next_temp);
     writeln!(
         out,
-        "  {adjusted_score} = select i1 {favorable_with_samples}, i32 {favored_score}, i32 {after_unfavorable}"
+        "  {adjusted_score} = select i1 {has_favorable}, i32 {favored_score}, i32 {after_neutral}"
     )
     .unwrap();
     adjusted_score
@@ -3804,8 +3877,10 @@ fn emit_adaptive_stable_argument_slot_count(
 fn emit_optimized_admission_score(
     out: &mut String,
     next_temp: &mut usize,
+    function_name: &str,
     layout: &FunctionLayout,
     globals: &CallCacheGlobalNames,
+    specializations: &[LlvmFunctionSpecialization],
     capacity: usize,
     total_calls: &str,
     cached_entries: &str,
@@ -4083,7 +4158,14 @@ fn emit_optimized_admission_score(
         score_after_spread
     };
 
-    emit_specialization_feedback_adjusted_score(out, next_temp, globals, &score_after_capacity)
+    emit_specialization_feedback_adjusted_score(
+        out,
+        next_temp,
+        function_name,
+        globals,
+        &score_after_capacity,
+        specializations,
+    )
 }
 
 fn emit_specialized_call_or_fallback(
@@ -4918,8 +5000,14 @@ fn emit_optimized_call_cache_wrapper_ir(
     writeln!(out, "  {hit_score_old} = load i32, i32* {hit_score_ptr}").unwrap();
     let hit_score_base = fresh_call_cache_temp(&mut next_temp);
     writeln!(out, "  {hit_score_base} = add i32 {hit_score_old}, 1").unwrap();
-    let hit_score_new =
-        emit_specialization_feedback_adjusted_score(out, &mut next_temp, &globals, &hit_score_base);
+    let hit_score_new = emit_specialization_feedback_adjusted_score(
+        out,
+        &mut next_temp,
+        name,
+        &globals,
+        &hit_score_base,
+        specializations,
+    );
     writeln!(out, "  store i32 {hit_score_new}, i32* {hit_score_ptr}").unwrap();
     let hit_age_ptr = fresh_call_cache_temp(&mut next_temp);
     writeln!(
@@ -5084,8 +5172,10 @@ fn emit_optimized_call_cache_wrapper_ir(
     let candidate_score = emit_optimized_admission_score(
         out,
         &mut next_temp,
+        name,
         layout,
         &globals,
+        specializations,
         capacity,
         &calls_new,
         &store_len,
@@ -6229,6 +6319,70 @@ fn main() -> i32:
         assert!(
             specific_pos < broad_pos,
             "expected the more specific clone to be checked before the broader clone"
+        );
+    }
+
+    #[test]
+    fn test_emit_clone_local_specialization_feedback_in_optimized_scores() {
+        let llvm = compile_to_llvm_with_options(
+            r#"
+fn hot(a: i64, b: i64) -> i64:
+    return a + b
+
+fn main() -> i32:
+    if hot(7, 9) > 0:
+        return 0
+    return 1
+"#,
+            LlvmEmitOptions {
+                call_cache_optimize_only: vec!["hot".into()],
+                call_cache_specializations: vec![
+                    CallCacheSpecializationPlan {
+                        name: "hot".into(),
+                        stable_values: vec![
+                            StableScalarValueProfile {
+                                index: 0,
+                                raw_bits: 7,
+                                matches: 24,
+                            },
+                            StableScalarValueProfile {
+                                index: 1,
+                                raw_bits: 9,
+                                matches: 20,
+                            },
+                        ],
+                    },
+                    CallCacheSpecializationPlan {
+                        name: "hot".into(),
+                        stable_values: vec![StableScalarValueProfile {
+                            index: 0,
+                            raw_bits: 7,
+                            matches: 16,
+                        }],
+                    },
+                ],
+                ..LlvmEmitOptions::default()
+            },
+        );
+        assert!(
+            llvm.matches("load i64, i64* @agam_call_cache_hot_profile_specialization_0_hits")
+                .count()
+                >= 3
+        );
+        assert!(
+            llvm.matches("load i64, i64* @agam_call_cache_hot_profile_specialization_0_fallbacks")
+                .count()
+                >= 3
+        );
+        assert!(
+            llvm.matches("load i64, i64* @agam_call_cache_hot_profile_specialization_1_hits")
+                .count()
+                >= 3
+        );
+        assert!(
+            llvm.matches("load i64, i64* @agam_call_cache_hot_profile_specialization_1_fallbacks")
+                .count()
+                >= 3
         );
     }
 

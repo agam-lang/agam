@@ -258,15 +258,12 @@ Agam is still under active compiler development. Important incomplete areas incl
 
 These are the active next phases from the repo's current program board:
 
-1. Phase 15D: Value Profiling, Adaptive Admission, and Specialization
-   - make measured payoff drive cache admission and specialization decisions
-   - finish LLVM-side profiling and guarded specialization work
-2. Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation
+1. Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation
    - keep typed/lowered state warm across edits
    - parallelize independent work deterministically
-3. Phase 15G: First-Party Premium Experience Layer
+2. Phase 15G: First-Party Premium Experience Layer
    - unify workspace, package, runtime, cache, and CLI conventions
-4. Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles
+3. Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles
    - ship supportable Windows/Linux SDK outputs
    - extend Android target-pack validation
 

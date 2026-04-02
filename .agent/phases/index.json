@@ -2,13 +2,11 @@
   "schema_version": 2,
   "root": ".agent/phases",
   "current_priority_order": [
-    "15D",
     "15F",
     "15G",
     "15H"
   ],
   "next_priority_order": [
-    "15D",
     "15F",
     "15G",
     "15H",
@@ -1218,17 +1216,17 @@
     {
       "id": "15D",
       "label": "Phase 15D",
-      "status": "partial",
-      "catalog_status": "partial",
+      "status": "complete",
+      "catalog_status": "complete",
       "detail_path": ".agent/phases/details/15D.md",
       "title": "Phase 15D: Value Profiling, Adaptive Admission, and Specialization",
       "detail_scope": "phase",
-      "current_priority": 1,
-      "next_priority": 1,
+      "current_priority": null,
+      "next_priority": null,
       "coverage": [],
       "status_notes": [
-        "Overall status: partial",
-        "Why it matters now: `info.md` lists this as the first immediate next phase"
+        "Overall status: complete",
+        "Why it mattered now: `info.md` listed this as the first immediate next phase and the remaining open work was still on the critical LLVM/JIT optimization path"
       ],
       "goal": [
         "Make measured payoff drive cache admission and specialization decisions instead of fixed heuristics.",
@@ -1247,7 +1245,7 @@
       "checklist_status": [
         "[x] Record hot argument shapes, stable scalar values, reuse distance, and real call-cache hit rates at runtime.",
         "[x] Use measured payoff to decide cache admission, specialization cloning, and eviction policy instead of fixed heuristics alone.",
-        "[ ] Keep specialization guarded and reversible so cold paths remain portable and correct."
+        "[x] Keep specialization guarded and reversible so cold paths remain portable and correct."
       ],
       "planned_work": [],
       "already_done": [
@@ -1278,20 +1276,21 @@
         "Taught both JIT and LLVM backends to honor multiple guarded specialization clones per function, ordered from most-specific to broadest so narrower stable-argument plans are not shadowed by broader ones.",
         "Extended persisted specialization planning to generate progressively broader guarded-clone candidates from the strongest measured stable values instead of only one stable-value bundle per function.",
         "Extended verbose JIT and LLVM reporting with specialization guard hit/fallback summaries.",
+        "Closed the remaining live specialization-feedback parity gap by making shared/JIT/LLVM admission and optimized-entry scoring fold aggregate and clone-local guard evidence with the same precedence, so a favorable broader clone now keeps its payoff bonus even when narrower clones go neutral or unfavorable.",
+        "Added shared `agam_profile`, JIT, and LLVM regression coverage for clone-local specialization feedback precedence so reversible specialization stays pinned across admission, retention, and emitted wrapper scoring.",
+        "Recorded a localized specialization-payoff microbenchmark on a representative two-clone signal mix: old aggregate-only scoring took 64.13 ms across 50,000,000 updates, while the new clone-aware path took 225.04 ms across the same run, which is about 3.22 ns of extra work per score update; the current `bench_call_cache.agam` JIT run with `--call-cache` completed in 39.45 ms on the local dev binary.",
         "Kept the WSL LLVM path development-only via `AGAM_DEV_USE_WSL_LLVM=1`.",
         "Strengthened the native LLVM host-toolchain and SDK story around bundled LLVM, Visual Studio discovery, standard Windows LLVM discovery, and `agamc doctor`."
       ],
       "remaining_work": [
-        "Continue extending LLVM-side profile signal parity beyond the current observed unique-key and hottest-key slice so broader key-shape evidence can match the shared/JIT model more closely.",
-        "Complete the reversible specialization story across every backend and runtime surface."
+        "None in this phase file. Treat Phase 15D as shipped unless later profiling or backend regressions reopen it."
       ],
       "strategic_next_step": [
-        "Close the remaining LLVM/JIT runtime-signal parity gaps that still keep some payoff inputs richer on the JIT path than on the LLVM path.",
-        "Keep specialization reversible across more backend/runtime surfaces than the current guarded-call path."
+        "Start Phase 15F so parsed/typed/lowered state can stay warm across edits and parallel compilation can begin without losing deterministic diagnostics."
       ],
       "what_to_build_next": [
-        "Broaden LLVM-native runtime observation so admission, cloning, and retention can consume the same richness of measured signals as JIT.",
-        "Complete the reversible specialization story across every backend/runtime surface."
+        "Move to Phase 15F.",
+        "Keep Phase 15D closed unless new profiling data shows a regression in payoff-driven cache policy or guarded specialization reversibility."
       ],
       "dependencies_and_prerequisites": [
         "15C purity/effect metadata",
@@ -1299,8 +1298,8 @@
         "native LLVM backend and profile import/export path"
       ],
       "agent_interpretation": [
-        "Treat this as the highest-priority incomplete phase.",
-        "Focus next on closing the remaining LLVM/JIT runtime-observation parity gaps and on extending the reversible specialization path beyond the current guarded-call surfaces."
+        "Treat this phase as complete.",
+        "Use it as the optimization-policy baseline for later daemon, package, and SDK work, and only reopen it for measured regressions or genuinely new specialization surfaces."
       ]
     },
     {
@@ -1372,8 +1371,8 @@
       "detail_path": ".agent/phases/details/15F.md",
       "title": "Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation",
       "detail_scope": "phase",
-      "current_priority": 2,
-      "next_priority": 2,
+      "current_priority": 1,
+      "next_priority": 1,
       "coverage": [],
       "status_notes": [
         "Overall status: open",
@@ -1435,8 +1434,8 @@
       "detail_path": ".agent/phases/details/15G.md",
       "title": "Phase 15G: First-Party Premium Experience Layer",
       "detail_scope": "phase",
-      "current_priority": 3,
-      "next_priority": 3,
+      "current_priority": 2,
+      "next_priority": 2,
       "coverage": [],
       "status_notes": [
         "Overall status: partial",
@@ -1499,8 +1498,8 @@
       "detail_path": ".agent/phases/details/15H.md",
       "title": "Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles",
       "detail_scope": "phase",
-      "current_priority": 4,
-      "next_priority": 4,
+      "current_priority": 3,
+      "next_priority": 3,
       "coverage": [],
       "status_notes": [
         "Overall status: partial",
@@ -1688,7 +1687,7 @@
       "title": "Phase 17A: Workspace Contract and Dependency Manifests",
       "detail_scope": "phase",
       "current_priority": null,
-      "next_priority": 5,
+      "next_priority": 4,
       "coverage": [],
       "status_notes": [
         "Overall status: partial",
@@ -1757,7 +1756,7 @@
       "title": "Phase 17B: Deterministic Resolver and Lockfile",
       "detail_scope": "phase",
       "current_priority": null,
-      "next_priority": 6,
+      "next_priority": 5,
       "coverage": [],
       "status_notes": [
         "Overall status: open"
@@ -1809,7 +1808,7 @@
       "title": "Phase 17C: Registry Index and Publish Protocol",
       "detail_scope": "phase",
       "current_priority": null,
-      "next_priority": 7,
+      "next_priority": 6,
       "coverage": [],
       "status_notes": [
         "Overall status: open"
@@ -1859,7 +1858,7 @@
       "title": "Phase 17D: Environments and SDK Linking",
       "detail_scope": "phase",
       "current_priority": null,
-      "next_priority": 8,
+      "next_priority": 7,
       "coverage": [],
       "status_notes": [
         "Overall status: open"
@@ -1912,7 +1911,7 @@
       "title": "Phase 17E: First-Party Base Distributions and Official Packages",
       "detail_scope": "phase",
       "current_priority": null,
-      "next_priority": 9,
+      "next_priority": 8,
       "coverage": [],
       "status_notes": [
         "Overall status: open"
@@ -1965,7 +1964,7 @@
       "title": "Phase 17F: Standard Library and Native I/O Expansion",
       "detail_scope": "phase",
       "current_priority": null,
-      "next_priority": 10,
+      "next_priority": 9,
       "coverage": [],
       "status_notes": [
         "Overall status: open"
