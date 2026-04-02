@@ -1614,8 +1614,8 @@
     {
       "id": "17",
       "label": "Phase 17",
-      "status": "open",
-      "catalog_status": "open",
+      "status": "partial",
+      "catalog_status": "partial",
       "detail_path": ".agent/phases/details/17.md",
       "title": "Phase 17: Package Ecosystem, Registry, and Reproducible Environments",
       "detail_scope": "phase",
@@ -1623,7 +1623,8 @@
       "next_priority": null,
       "coverage": [],
       "status_notes": [
-        "Overall status: open"
+        "Overall status: partial",
+        "Current note: Phase 17A contract groundwork is now started in `agam_pkg`"
       ],
       "goal": [
         "Build Agam into a coherent package ecosystem with a stable source manifest, deterministic resolution, registry protocol, reproducible environments, and curated first-party distributions.",
@@ -1648,8 +1649,14 @@
         "Preserve the existing Phase 15A portable package/runtime contract and Phase 15H SDK distribution contract instead of reopening them casually.",
         "Build the future package manager on content-addressable, reproducible metadata rather than ad hoc install scripts or repo-name coupling."
       ],
-      "already_done": [],
-      "remaining_work": [],
+      "already_done": [
+        "Added the first `agam_pkg` source-workspace contract types for `agam.toml`, `agam.lock`, dependency specs, toolchain requirements, and named environments.",
+        "Added TOML read/write helpers and round-trip tests for the new workspace and lockfile data models."
+      ],
+      "remaining_work": [
+        "Wire the source-workspace contract into `agam_driver`, workspace discovery, and future resolver flows.",
+        "Keep Phase 17A moving until the manifest contract is stable enough for registry and environment UX on top."
+      ],
       "strategic_next_step": [],
       "what_to_build_next": [
         "Start with 17A and freeze the workspace/package manifest surface.",
@@ -1673,8 +1680,8 @@
     {
       "id": "17A",
       "label": "Phase 17A",
-      "status": "open",
-      "catalog_status": "open",
+      "status": "partial",
+      "catalog_status": "partial",
       "detail_path": ".agent/phases/details/17A.md",
       "title": "Phase 17A: Workspace Contract and Dependency Manifests",
       "detail_scope": "phase",
@@ -1682,7 +1689,8 @@
       "next_priority": 5,
       "coverage": [],
       "status_notes": [
-        "Overall status: open"
+        "Overall status: partial",
+        "Current note: `agam_pkg` now carries the first source-workspace, dependency, lockfile, and environment data models"
       ],
       "goal": [
         "Define one stable `agam.toml` contract for package metadata, workspace layout, dependency declarations, and toolchain expectations.",
@@ -1699,15 +1707,25 @@
         "`agam_fmt`",
         "`agam_test`"
       ],
-      "checklist_status": [],
+      "checklist_status": [
+        "[x] Add the first `agam_pkg` data models for source manifests, dependency specs, lockfiles, and environments.",
+        "[ ] Wire the manifest contract into `agamc new`, workspace discovery, and first-party diagnostics.",
+        "[ ] Freeze the manifest naming and compatibility policy before building resolver flows on top."
+      ],
       "planned_work": [
         "Define the first stable source-package manifest schema for `agam.toml`.",
         "Add package identity, version, workspace members, dependency sections, target intent, and toolchain requirement fields.",
         "Keep the manifest aligned with the existing first-party layout from Phase 15G instead of creating a second project model.",
         "Define diagnostics and validation rules so malformed manifests fail clearly through first-party tooling."
       ],
-      "already_done": [],
-      "remaining_work": [],
+      "already_done": [
+        "Added `WorkspaceManifest`, `DependencySpec`, `ToolchainRequirement`, `EnvironmentSpec`, and `WorkspaceLockfile` in `agam_pkg`.",
+        "Added TOML read/write helpers plus round-trip tests for manifest and lockfile compatibility, including the current `[project]` manifest shape."
+      ],
+      "remaining_work": [
+        "Reuse the new manifest contract from `agam_driver` instead of hand-rendering `agam.toml`.",
+        "Define validation and user-facing diagnostics around malformed dependency and environment metadata."
+      ],
       "strategic_next_step": [],
       "what_to_build_next": [
         "Freeze the manifest shape and naming conventions first.",

@@ -20,9 +20,9 @@ Use this as the default answer to "what should Agam agents build next?"
    - Validate real Windows/Linux hosted-runner SDK outputs with bundled LLVM
    - Add Android target-pack packaging and validation
    - Detail file: `details/15H.md`
-5. **Start Phase 17A**
-   - Lock the stable `agam.toml` package and workspace contract before adding resolver or registry complexity
-   - Separate source-package metadata from portable runtime packages and SDK distributions
+5. **Finish Phase 17A**
+   - Wire the new manifest contract into `agamc new`, workspace discovery, and first-party diagnostics
+   - Keep source-package metadata separate from portable runtime packages and SDK distributions
    - Detail file: `details/17A.md`
 6. **Start Phase 17B**
    - Land deterministic dependency resolution and `agam.lock`

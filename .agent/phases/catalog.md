@@ -42,8 +42,8 @@ This is the compact whole-program catalog for Agam's roadmap.
 27. `Phase 15G`: partial
 28. `Phase 15H`: partial
 29. `Phase 16`: open
-30. `Phase 17`: open
-31. `Phase 17A`: open
+30. `Phase 17`: partial
+31. `Phase 17A`: partial
 32. `Phase 17B`: open
 33. `Phase 17C`: open
 34. `Phase 17D`: open
