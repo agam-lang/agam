@@ -360,6 +360,17 @@ pub struct LockedEnvironment {
     pub packages: Vec<String>,
 }
 
+/// Shared workspace layout resolved from a manifest root, source file, or directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceLayout {
+    pub root: PathBuf,
+    pub manifest_path: Option<PathBuf>,
+    pub project_name: String,
+    pub entry_file: PathBuf,
+    pub source_files: Vec<PathBuf>,
+    pub test_files: Vec<PathBuf>,
+}
+
 /// Create the first-party scaffold manifest for a new workspace.
 pub fn scaffold_workspace_manifest(project_name: &str) -> WorkspaceManifest {
     WorkspaceManifest {
@@ -422,6 +433,60 @@ pub fn write_workspace_manifest_to_path(
     })
 }
 
+/// Resolve the canonical workspace layout from a directory, manifest path, or source file.
+pub fn resolve_workspace_layout(path: Option<PathBuf>) -> Result<WorkspaceLayout, String> {
+    let hint = match path {
+        Some(path) => path,
+        None => std::env::current_dir()
+            .map_err(|e| format!("failed to read current directory: {e}"))?,
+    };
+
+    resolve_workspace_layout_from_path(&hint)
+}
+
+/// Resolve the canonical workspace layout from an explicit filesystem path.
+pub fn resolve_workspace_layout_from_path(path: &Path) -> Result<WorkspaceLayout, String> {
+    if path.is_file() {
+        if path.file_name().and_then(|name| name.to_str()) == Some("agam.toml") {
+            let root = path
+                .parent()
+                .ok_or_else(|| format!("manifest `{}` has no parent directory", path.display()))?;
+            return workspace_layout_from_root(root, Some(path.to_path_buf()), None);
+        }
+        if path.extension().and_then(|ext| ext.to_str()) != Some("agam") {
+            return Err(format!(
+                "`{}` is not an Agam source file or `agam.toml` manifest",
+                path.display()
+            ));
+        }
+        let parent = path
+            .parent()
+            .ok_or_else(|| format!("source file `{}` has no parent directory", path.display()))?;
+        let manifest = find_workspace_manifest(parent);
+        let root = manifest
+            .as_ref()
+            .and_then(|manifest_path| manifest_path.parent())
+            .unwrap_or(parent)
+            .to_path_buf();
+        return workspace_layout_from_root(&root, manifest, Some(path.to_path_buf()));
+    }
+
+    if !path.exists() {
+        return Err(format!("`{}` does not exist", path.display()));
+    }
+    if !path.is_dir() {
+        return Err(format!("`{}` is not a directory", path.display()));
+    }
+
+    let manifest = find_workspace_manifest(path);
+    let root = manifest
+        .as_ref()
+        .and_then(|manifest_path| manifest_path.parent())
+        .unwrap_or(path)
+        .to_path_buf();
+    workspace_layout_from_root(&root, manifest, None)
+}
+
 /// Default dependency lockfile path for a workspace root.
 pub fn default_lockfile_path(root: &Path) -> PathBuf {
     root.join("agam.lock")
@@ -462,6 +527,141 @@ fn verified_ir_summary(mir: &MirModule) -> VerifiedIrSummary {
             })
             .collect(),
     }
+}
+
+fn collect_agam_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    if path.is_file() {
+        if path.extension().and_then(|ext| ext.to_str()) == Some("agam") {
+            out.push(path.to_path_buf());
+        }
+        return Ok(());
+    }
+
+    if !path.is_dir() {
+        return Err(format!("`{}` is not a file or directory", path.display()));
+    }
+
+    for entry in std::fs::read_dir(path)
+        .map_err(|e| format!("could not read directory `{}`: {e}", path.display()))?
+    {
+        let entry = entry.map_err(|e| format!("could not read directory entry: {e}"))?;
+        let child = entry.path();
+        if child.is_dir() {
+            collect_agam_files(&child, out)?;
+        } else if child.extension().and_then(|ext| ext.to_str()) == Some("agam") {
+            out.push(child);
+        }
+    }
+
+    Ok(())
+}
+
+fn find_workspace_manifest(start: &Path) -> Option<PathBuf> {
+    for ancestor in start.ancestors() {
+        let manifest = ancestor.join("agam.toml");
+        if manifest.is_file() {
+            return Some(manifest);
+        }
+    }
+    None
+}
+
+fn workspace_layout_from_root(
+    root: &Path,
+    manifest_path: Option<PathBuf>,
+    entry_override: Option<PathBuf>,
+) -> Result<WorkspaceLayout, String> {
+    let manifest = manifest_path
+        .as_ref()
+        .map(|path| read_workspace_manifest_from_path(path))
+        .transpose()?;
+    let project_name = manifest
+        .as_ref()
+        .map(|manifest| manifest.project.name.clone())
+        .or_else(|| {
+            root.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_string())
+        })
+        .unwrap_or_else(|| "agam-workspace".into());
+    let entry_file = match entry_override {
+        Some(path) => path,
+        None => manifest
+            .as_ref()
+            .map(|manifest| manifest_entry_path(root, manifest))
+            .transpose()?
+            .unwrap_or_else(|| root.join("src").join("main.agam")),
+    };
+    if !entry_file.is_file() {
+        return Err(format!(
+            "could not find entry file `{}`; create a project with `agamc new <name>` or pass an explicit `.agam` file",
+            entry_file.display()
+        ));
+    }
+
+    let mut source_files = Vec::new();
+    let src_dir = root.join("src");
+    if src_dir.is_dir() {
+        collect_agam_files(&src_dir, &mut source_files)?;
+    }
+    if !source_files.iter().any(|file| file == &entry_file) {
+        source_files.push(entry_file.clone());
+    }
+    source_files.sort();
+    source_files.dedup();
+
+    let mut test_files = Vec::new();
+    let tests_dir = root.join("tests");
+    if tests_dir.is_dir() {
+        collect_agam_files(&tests_dir, &mut test_files)?;
+    }
+    test_files.sort();
+    test_files.dedup();
+
+    Ok(WorkspaceLayout {
+        root: root.to_path_buf(),
+        manifest_path,
+        project_name,
+        entry_file,
+        source_files,
+        test_files,
+    })
+}
+
+fn manifest_entry_path(root: &Path, manifest: &WorkspaceManifest) -> Result<PathBuf, String> {
+    let entry = manifest.project.entry.as_deref().unwrap_or("src/main.agam");
+    workspace_relative_path(root, entry, "`project.entry`")
+}
+
+fn workspace_relative_path(
+    root: &Path,
+    relative: &str,
+    field_name: &str,
+) -> Result<PathBuf, String> {
+    let path = Path::new(relative);
+    if relative.trim().is_empty() {
+        return Err(format!("{field_name} cannot be empty"));
+    }
+    if path.is_absolute() {
+        return Err(format!(
+            "{field_name} must stay relative to the workspace root; got `{}`",
+            relative
+        ));
+    }
+    if path.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(format!(
+            "{field_name} must stay inside the workspace root; got `{}`",
+            relative
+        ));
+    }
+    Ok(root.join(path))
 }
 
 fn collect_source_map(module: &Module, source_file: &SourceFile) -> Vec<SourceMapEntry> {
@@ -774,5 +974,85 @@ agam = "0.1"
         assert_eq!(decoded, lockfile);
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolves_workspace_layout_uses_manifest_root_entry_and_tests() {
+        let root = temp_dir("workspace");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        let test_file = root.join("tests").join("smoke.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::create_dir_all(test_file.parent().expect("test parent")).expect("create tests");
+        write_workspace_manifest_to_path(&manifest, &scaffold_workspace_manifest("workspace"))
+            .expect("write manifest");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(
+            &test_file,
+            "@test\nfn arithmetic_is_sound() -> bool:\n    return true\n",
+        )
+        .expect("write test");
+
+        let layout = resolve_workspace_layout(Some(root.clone())).expect("resolve workspace");
+
+        assert_eq!(layout.root, root);
+        assert_eq!(layout.manifest_path.as_ref(), Some(&manifest));
+        assert_eq!(layout.project_name, "workspace");
+        assert_eq!(layout.entry_file, entry);
+        assert_eq!(layout.test_files, vec![test_file]);
+
+        let _ = fs::remove_dir_all(layout.root);
+    }
+
+    #[test]
+    fn resolves_workspace_layout_uses_manifest_declared_entry_path() {
+        let root = temp_dir("workspace_entry");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("app").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create app");
+
+        let mut workspace_manifest = scaffold_workspace_manifest("workspace-entry");
+        workspace_manifest.project.entry = Some("app/main.agam".into());
+        write_workspace_manifest_to_path(&manifest, &workspace_manifest).expect("write manifest");
+        fs::write(&entry, sample_source()).expect("write entry");
+
+        let layout = resolve_workspace_layout(Some(root.clone())).expect("resolve workspace");
+
+        assert_eq!(layout.manifest_path.as_ref(), Some(&manifest));
+        assert_eq!(layout.project_name, "workspace-entry");
+        assert_eq!(layout.entry_file, entry);
+        assert_eq!(layout.source_files, vec![layout.entry_file.clone()]);
+
+        let _ = fs::remove_dir_all(layout.root);
+    }
+
+    #[test]
+    fn resolves_workspace_layout_rejects_manifest_entry_outside_workspace() {
+        let root = temp_dir("workspace_invalid_entry");
+        let manifest = root.join("agam.toml");
+
+        let mut workspace_manifest = scaffold_workspace_manifest("workspace-invalid");
+        workspace_manifest.project.entry = Some("../escape.agam".into());
+        write_workspace_manifest_to_path(&manifest, &workspace_manifest).expect("write manifest");
+
+        let error = resolve_workspace_layout(Some(root.clone())).expect_err("manifest should fail");
+        assert!(error.contains("must stay inside the workspace root"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_workspace_layout_supports_single_source_file_without_manifest() {
+        let root = temp_dir("single_file");
+        let file = root.join("script.agam");
+        fs::write(&file, sample_source()).expect("write source");
+
+        let layout = resolve_workspace_layout(Some(file.clone())).expect("resolve single source");
+
+        assert!(layout.manifest_path.is_none());
+        assert_eq!(layout.entry_file, file);
+        assert_eq!(layout.source_files, vec![layout.entry_file.clone()]);
+
+        let _ = fs::remove_dir_all(root);
     }
 }

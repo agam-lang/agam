@@ -1487,15 +1487,7 @@ fn collect_agam_files(path: &PathBuf, out: &mut Vec<PathBuf>) -> Result<(), Stri
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WorkspaceLayout {
-    root: PathBuf,
-    manifest_path: Option<PathBuf>,
-    project_name: String,
-    entry_file: PathBuf,
-    source_files: Vec<PathBuf>,
-    test_files: Vec<PathBuf>,
-}
+type WorkspaceLayout = agam_pkg::WorkspaceLayout;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectScaffold {
@@ -1648,127 +1640,7 @@ fn render_project_smoke_test() -> String {
 }
 
 fn resolve_workspace_layout(path: Option<PathBuf>) -> Result<WorkspaceLayout, String> {
-    let hint = match path {
-        Some(path) => path,
-        None => std::env::current_dir()
-            .map_err(|e| format!("failed to read current directory: {}", e))?,
-    };
-
-    resolve_workspace_layout_from_path(&hint)
-}
-
-fn resolve_workspace_layout_from_path(path: &Path) -> Result<WorkspaceLayout, String> {
-    if path.is_file() {
-        if path.file_name().and_then(|name| name.to_str()) == Some("agam.toml") {
-            let root = path
-                .parent()
-                .ok_or_else(|| format!("manifest `{}` has no parent directory", path.display()))?;
-            return workspace_layout_from_root(root, Some(path.to_path_buf()), None);
-        }
-        if path.extension().and_then(|ext| ext.to_str()) != Some("agam") {
-            return Err(format!(
-                "`{}` is not an Agam source file or `agam.toml` manifest",
-                path.display()
-            ));
-        }
-        let parent = path
-            .parent()
-            .ok_or_else(|| format!("source file `{}` has no parent directory", path.display()))?;
-        let manifest = find_workspace_manifest(parent);
-        let root = manifest
-            .as_ref()
-            .and_then(|manifest_path| manifest_path.parent())
-            .unwrap_or(parent)
-            .to_path_buf();
-        return workspace_layout_from_root(&root, manifest, Some(path.to_path_buf()));
-    }
-
-    if !path.exists() {
-        return Err(format!("`{}` does not exist", path.display()));
-    }
-    if !path.is_dir() {
-        return Err(format!("`{}` is not a directory", path.display()));
-    }
-
-    let manifest = find_workspace_manifest(path);
-    let root = manifest
-        .as_ref()
-        .and_then(|manifest_path| manifest_path.parent())
-        .unwrap_or(path)
-        .to_path_buf();
-    workspace_layout_from_root(&root, manifest, None)
-}
-
-fn find_workspace_manifest(start: &Path) -> Option<PathBuf> {
-    for ancestor in start.ancestors() {
-        let manifest = ancestor.join("agam.toml");
-        if manifest.is_file() {
-            return Some(manifest);
-        }
-    }
-    None
-}
-
-fn workspace_layout_from_root(
-    root: &Path,
-    manifest_path: Option<PathBuf>,
-    entry_override: Option<PathBuf>,
-) -> Result<WorkspaceLayout, String> {
-    let manifest = manifest_path
-        .as_ref()
-        .map(|path| agam_pkg::read_workspace_manifest_from_path(path))
-        .transpose()?;
-    let project_name = manifest
-        .as_ref()
-        .map(|manifest| manifest.project.name.clone())
-        .or_else(|| {
-            root.file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name.to_string())
-        })
-        .unwrap_or_else(|| "agam-workspace".into());
-    let entry_file = match entry_override {
-        Some(path) => path,
-        None => manifest
-            .as_ref()
-            .map(|manifest| manifest_entry_path(root, manifest))
-            .transpose()?
-            .unwrap_or_else(|| root.join("src").join("main.agam")),
-    };
-    if !entry_file.is_file() {
-        return Err(format!(
-            "could not find entry file `{}`; create a project with `agamc new <name>` or pass an explicit `.agam` file",
-            entry_file.display()
-        ));
-    }
-
-    let mut source_files = Vec::new();
-    let src_dir = root.join("src");
-    if src_dir.is_dir() {
-        collect_agam_files(&src_dir, &mut source_files)?;
-    }
-    if !source_files.iter().any(|file| file == &entry_file) {
-        source_files.push(entry_file.clone());
-    }
-    source_files.sort();
-    source_files.dedup();
-
-    let mut test_files = Vec::new();
-    let tests_dir = root.join("tests");
-    if tests_dir.is_dir() {
-        collect_agam_files(&tests_dir, &mut test_files)?;
-    }
-    test_files.sort();
-    test_files.dedup();
-
-    Ok(WorkspaceLayout {
-        root: root.to_path_buf(),
-        manifest_path,
-        project_name,
-        entry_file,
-        source_files,
-        test_files,
-    })
+    agam_pkg::resolve_workspace_layout(path)
 }
 
 fn manifest_entry_path(
