@@ -436,8 +436,15 @@ struct DaemonDiffSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum DaemonRunMode {
+    OneShot,
+    ForegroundLoop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DaemonStatusRecord {
     pub schema_version: u32,
+    pub run_mode: DaemonRunMode,
     pub workspace_root: String,
     pub project_name: String,
     pub pid: u32,
@@ -455,6 +462,7 @@ struct DaemonStatusRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DaemonLiveness {
     Running,
+    Snapshot,
     Stale,
 }
 
@@ -2203,6 +2211,9 @@ fn write_daemon_status(root: &Path, status: &DaemonStatusRecord) -> Result<(), S
 }
 
 fn daemon_liveness(status: &DaemonStatusRecord, now: u128) -> DaemonLiveness {
+    if status.run_mode == DaemonRunMode::OneShot {
+        return DaemonLiveness::Snapshot;
+    }
     if now.saturating_sub(status.last_heartbeat_unix_ms) <= DAEMON_HEARTBEAT_STALE_MS {
         DaemonLiveness::Running
     } else {
@@ -2277,9 +2288,11 @@ fn build_daemon_status(
     warm: WarmSummary,
     last_diff: DaemonDiffSummary,
     session_started_unix_ms: u128,
+    run_mode: DaemonRunMode,
 ) -> DaemonStatusRecord {
     DaemonStatusRecord {
         schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+        run_mode,
         workspace_root: snapshot.session.layout.root.display().to_string(),
         project_name: snapshot.session.layout.project_name.clone(),
         pid: process::id(),
@@ -2317,6 +2330,7 @@ fn print_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), Strin
     let heartbeat_age = now.saturating_sub(status.last_heartbeat_unix_ms);
     match daemon_liveness(&status, now) {
         DaemonLiveness::Running => println!("status: running"),
+        DaemonLiveness::Snapshot => println!("status: snapshot"),
         DaemonLiveness::Stale => println!("status: stale"),
     }
     println!("pid: {}", status.pid);
@@ -2425,6 +2439,11 @@ fn run_daemon_foreground(
             warm,
             diff_summary.clone(),
             session_started_unix_ms,
+            if once {
+                DaemonRunMode::OneShot
+            } else {
+                DaemonRunMode::ForegroundLoop
+            },
         );
 
         let should_log = first_cycle || daemon_diff_has_changes(&diff_summary);
@@ -5495,6 +5514,7 @@ mod tests {
         let root = temp_dir("daemon_status");
         let mut status = DaemonStatusRecord {
             schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+            run_mode: DaemonRunMode::ForegroundLoop,
             workspace_root: root.display().to_string(),
             project_name: "daemon-status".into(),
             pid: process::id(),
@@ -5528,6 +5548,39 @@ mod tests {
     }
 
     #[test]
+    fn test_active_daemon_status_ignores_one_shot_snapshots() {
+        let root = temp_dir("daemon_snapshot_status");
+        let status = DaemonStatusRecord {
+            schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+            run_mode: DaemonRunMode::OneShot,
+            workspace_root: root.display().to_string(),
+            project_name: "daemon-snapshot".into(),
+            pid: process::id(),
+            session_started_unix_ms: now_unix_ms(),
+            last_heartbeat_unix_ms: now_unix_ms(),
+            snapshot_file_count: 1,
+            warmed_file_count: 1,
+            warmed_version_count: 1,
+            ast_decl_count: 1,
+            hir_function_count: 1,
+            mir_function_count: 1,
+            last_diff: DaemonDiffSummary::default(),
+        };
+        write_daemon_status(&root, &status).expect("write snapshot status");
+        assert!(
+            active_daemon_status(&root)
+                .expect("read active status")
+                .is_none()
+        );
+        assert_eq!(
+            daemon_liveness(&status, now_unix_ms()),
+            DaemonLiveness::Snapshot
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn test_run_daemon_foreground_once_persists_status_file() {
         let root = temp_dir("daemon_once_status");
         let file = root.join("main.agam");
@@ -5539,6 +5592,7 @@ mod tests {
         let status = read_daemon_status(&root)
             .expect("read daemon status")
             .expect("status file should exist after one-shot refresh");
+        assert_eq!(status.run_mode, DaemonRunMode::OneShot);
         assert_eq!(status.workspace_root, root.display().to_string());
         assert_eq!(status.warmed_file_count, 1);
         assert_eq!(status.snapshot_file_count, 1);
