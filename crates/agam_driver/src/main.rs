@@ -2453,11 +2453,11 @@ fn run_daemon_foreground(
             }
         }
 
+        write_daemon_status(&workspace.root, &status)?;
         if once {
             return Ok(());
         }
 
-        write_daemon_status(&workspace.root, &status)?;
         std::thread::sleep(std::time::Duration::from_millis(poll_ms.max(100)));
         first_cycle = false;
     }
@@ -5523,6 +5523,25 @@ mod tests {
                 .expect("read active status")
                 .is_none()
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_run_daemon_foreground_once_persists_status_file() {
+        let root = temp_dir("daemon_once_status");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+            .expect("one-shot daemon run should succeed");
+
+        let status = read_daemon_status(&root)
+            .expect("read daemon status")
+            .expect("status file should exist after one-shot refresh");
+        assert_eq!(status.workspace_root, root.display().to_string());
+        assert_eq!(status.warmed_file_count, 1);
+        assert_eq!(status.snapshot_file_count, 1);
 
         let _ = fs::remove_dir_all(root);
     }
