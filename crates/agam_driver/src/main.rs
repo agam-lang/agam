@@ -1158,6 +1158,23 @@ fn default_package_output_path(path: &Path) -> Result<PathBuf, String> {
     Ok(agam_pkg::default_package_path(&layout.entry_file))
 }
 
+fn default_build_output_path(path: &Path, target: Option<&str>) -> Result<PathBuf, String> {
+    let layout = resolve_workspace_layout(Some(path.to_path_buf()))?;
+    if layout.manifest_path.is_some() {
+        return Ok(layout.root.join("dist").join({
+            let mut name = std::ffi::OsString::from(layout.project_name);
+            if native_binary_extension(target) == Some("exe") {
+                name.push(".exe");
+            }
+            name
+        }));
+    }
+    Ok(default_native_binary_output_path(
+        &layout.entry_file,
+        target,
+    ))
+}
+
 fn resolve_build_requests(
     files: &[PathBuf],
     output: Option<PathBuf>,
@@ -1184,7 +1201,7 @@ fn resolve_build_requests(
         if !seen.insert(file.clone()) {
             continue;
         }
-        let output = default_native_binary_output_path(&file, target);
+        let output = default_build_output_path(path, target)?;
         requests.push((file, output));
     }
 
@@ -5767,6 +5784,39 @@ mod tests {
         let output =
             default_package_output_path(&file).expect("single-file package output should resolve");
         assert_eq!(output, root.join("script.agpkg.json"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_default_build_output_path_uses_dist_for_manifest_workspace() {
+        let root = temp_dir("build_output_workspace");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        agam_pkg::write_workspace_manifest_to_path(
+            &manifest,
+            &agam_pkg::scaffold_workspace_manifest("build-output-workspace"),
+        )
+        .expect("write manifest");
+        fs::write(&entry, render_project_entry("build-output-workspace")).expect("write entry");
+
+        let output = default_build_output_path(&root, Some("x86_64-pc-windows-msvc"))
+            .expect("workspace root should resolve build output");
+        assert_eq!(output, root.join("dist").join("build-output-workspace.exe"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_default_build_output_path_keeps_single_file_neighbor() {
+        let root = temp_dir("build_output_single_file");
+        let file = root.join("script.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        let output = default_build_output_path(&file, None)
+            .expect("single-file build output should resolve");
+        assert_eq!(output, default_native_binary_output_path(&file, None));
 
         let _ = fs::remove_dir_all(root);
     }
