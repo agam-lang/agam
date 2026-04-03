@@ -378,6 +378,33 @@ pub struct WorkspaceSession {
     pub manifest: Option<WorkspaceManifest>,
 }
 
+/// Fingerprint for one manifest, source, or test file in a workspace snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceFileSnapshot {
+    pub path: PathBuf,
+    pub content_hash: String,
+    pub bytes: u64,
+    pub modified_unix_seconds: Option<u64>,
+}
+
+/// Point-in-time workspace manifest/source/test snapshot for future daemon reuse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSnapshot {
+    pub session: WorkspaceSession,
+    pub manifest: Option<WorkspaceFileSnapshot>,
+    pub source_files: Vec<WorkspaceFileSnapshot>,
+    pub test_files: Vec<WorkspaceFileSnapshot>,
+}
+
+/// Diff between two workspace snapshots.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspaceSnapshotDiff {
+    pub added_files: Vec<PathBuf>,
+    pub changed_files: Vec<PathBuf>,
+    pub removed_files: Vec<PathBuf>,
+    pub unchanged_files: Vec<PathBuf>,
+}
+
 /// Create the first-party scaffold manifest for a new workspace.
 pub fn scaffold_workspace_manifest(project_name: &str) -> WorkspaceManifest {
     WorkspaceManifest {
@@ -529,6 +556,69 @@ pub fn expand_agam_inputs(files: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
     Ok(expanded)
 }
 
+/// Capture a fingerprinted workspace snapshot for future incremental invalidation work.
+pub fn snapshot_workspace(path: Option<PathBuf>) -> Result<WorkspaceSnapshot, String> {
+    Ok(snapshot_workspace_session(resolve_workspace_session(path)?)?)
+}
+
+/// Capture a fingerprinted workspace snapshot from an explicit filesystem path.
+pub fn snapshot_workspace_from_path(path: &Path) -> Result<WorkspaceSnapshot, String> {
+    Ok(snapshot_workspace_session(resolve_workspace_session_from_path(path)?)?)
+}
+
+/// Fingerprint a resolved workspace session.
+pub fn snapshot_workspace_session(session: WorkspaceSession) -> Result<WorkspaceSnapshot, String> {
+    let manifest = session
+        .layout
+        .manifest_path
+        .as_ref()
+        .map(|path| snapshot_file(path))
+        .transpose()?;
+    let source_files = session
+        .layout
+        .source_files
+        .iter()
+        .map(|path| snapshot_file(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let test_files = session
+        .layout
+        .test_files
+        .iter()
+        .map(|path| snapshot_file(path))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(WorkspaceSnapshot {
+        session,
+        manifest,
+        source_files,
+        test_files,
+    })
+}
+
+/// Compare two workspace snapshots so later daemon work can invalidate only changed files.
+pub fn diff_workspace_snapshots(
+    previous: &WorkspaceSnapshot,
+    next: &WorkspaceSnapshot,
+) -> WorkspaceSnapshotDiff {
+    let previous_files = tracked_snapshot_hashes(previous);
+    let mut next_files = tracked_snapshot_hashes(next);
+    let mut diff = WorkspaceSnapshotDiff::default();
+
+    for (path, previous_hash) in previous_files {
+        match next_files.remove(&path) {
+            Some(next_hash) if next_hash == previous_hash => diff.unchanged_files.push(path),
+            Some(_) => diff.changed_files.push(path),
+            None => diff.removed_files.push(path),
+        }
+    }
+
+    for (path, _) in next_files {
+        diff.added_files.push(path);
+    }
+
+    diff
+}
+
 /// Resolve the canonical workspace layout from an explicit filesystem path.
 pub fn resolve_workspace_layout_from_path(path: &Path) -> Result<WorkspaceLayout, String> {
     Ok(resolve_workspace_session_from_path(path)?.layout)
@@ -644,6 +734,39 @@ fn collect_agam_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String>
     }
 
     Ok(())
+}
+
+fn snapshot_file(path: &Path) -> Result<WorkspaceFileSnapshot, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|e| format!("failed to read workspace file `{}`: {e}", path.display()))?;
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| format!("failed to read metadata for `{}`: {e}", path.display()))?;
+    let modified_unix_seconds = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs());
+
+    Ok(WorkspaceFileSnapshot {
+        path: path.to_path_buf(),
+        content_hash: agam_runtime::cache::hash_bytes(&bytes),
+        bytes: bytes.len() as u64,
+        modified_unix_seconds,
+    })
+}
+
+fn tracked_snapshot_hashes(snapshot: &WorkspaceSnapshot) -> BTreeMap<PathBuf, String> {
+    let mut files = BTreeMap::new();
+    if let Some(manifest) = snapshot.manifest.as_ref() {
+        files.insert(manifest.path.clone(), manifest.content_hash.clone());
+    }
+    for file in &snapshot.source_files {
+        files.insert(file.path.clone(), file.content_hash.clone());
+    }
+    for file in &snapshot.test_files {
+        files.insert(file.path.clone(), file.content_hash.clone());
+    }
+    files
 }
 
 fn expand_agam_input(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -1301,6 +1424,75 @@ agam = "0.1"
         );
 
         let _ = fs::remove_dir_all(session.layout.root);
+    }
+
+    #[test]
+    fn snapshot_workspace_captures_manifest_sources_and_tests() {
+        let dir = temp_dir("workspace_snapshot");
+        let entry = dir.join("src").join("main.agam");
+        let helper = dir.join("src").join("helper.agam");
+        let test_file = dir.join("tests").join("smoke.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::create_dir_all(test_file.parent().expect("test parent")).expect("create tests");
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &scaffold_workspace_manifest("snapshot"))
+            .expect("write workspace manifest");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(&helper, sample_source()).expect("write helper");
+        fs::write(&test_file, "@test\nfn smoke() -> bool:\n    return true\n").expect("write test");
+
+        let snapshot = snapshot_workspace(Some(dir.clone())).expect("snapshot workspace");
+
+        assert_eq!(snapshot.session.layout.project_name, "snapshot");
+        assert!(snapshot.manifest.is_some());
+        assert_eq!(snapshot.source_files.len(), 2);
+        assert_eq!(snapshot.test_files.len(), 1);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn diff_workspace_snapshots_reports_added_changed_and_removed_files() {
+        let dir = temp_dir("workspace_snapshot_diff");
+        let entry = dir.join("src").join("main.agam");
+        let helper = dir.join("src").join("helper.agam");
+        let extra = dir.join("src").join("extra.agam");
+        let test_file = dir.join("tests").join("smoke.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::create_dir_all(test_file.parent().expect("test parent")).expect("create tests");
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &scaffold_workspace_manifest("snapshot-diff"))
+            .expect("write workspace manifest");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(&helper, sample_source()).expect("write helper");
+        fs::write(&test_file, "@test\nfn smoke() -> bool:\n    return true\n").expect("write test");
+
+        let previous = snapshot_workspace(Some(dir.clone())).expect("snapshot workspace");
+
+        fs::write(
+            default_manifest_path(&dir),
+            r#"
+[project]
+name = "snapshot-diff"
+version = "0.2.0"
+agam = "0.1"
+entry = "src/main.agam"
+"#,
+        )
+        .expect("rewrite manifest");
+        fs::write(&entry, "@lang.advance\nfn main() -> i32 {\n    return 1;\n}\n")
+            .expect("rewrite entry");
+        fs::write(&extra, sample_source()).expect("write extra source");
+        fs::remove_file(&test_file).expect("remove test file");
+
+        let next = snapshot_workspace(Some(dir.clone())).expect("snapshot workspace");
+        let diff = diff_workspace_snapshots(&previous, &next);
+
+        assert!(diff.changed_files.contains(&default_manifest_path(&dir)));
+        assert!(diff.changed_files.contains(&entry));
+        assert!(diff.added_files.contains(&extra));
+        assert!(diff.removed_files.contains(&test_file));
+        assert!(diff.unchanged_files.contains(&helper));
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

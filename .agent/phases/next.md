@@ -4,8 +4,8 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Start Phase 15F**
-   - Add a persistent daemon that keeps parsed, typed, and lowered state warm
+1. **Continue Phase 15F**
+   - Build a daemon-owned warm state on top of the shared workspace snapshot and invalidation-diff contract
    - Add deterministic parallel compilation and background prewarm
    - Detail file: `details/15F.md`
 2. **Finish Phase 15G**
