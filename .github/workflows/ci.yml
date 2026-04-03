@@ -1,4 +1,4 @@
-name: benchmarks
+name: CI
 on:
   push:
     branches: [ "main" ]
@@ -6,4 +6,4 @@ on:
     branches: [ "main" ]
 jobs:
   build:
-    uses: agam-lang/.github/.github/workflows/benchmarks.yml@main
+    uses: agam-lang/.github/.github/workflows/rust-ci.yml@main

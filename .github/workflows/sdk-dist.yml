@@ -1,75 +1,9 @@
 name: sdk-dist
-
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "main" ]
   pull_request:
-    paths:
-      - ".github/workflows/sdk-dist.yml"
-      - "scripts/package_sdk.py"
-      - "crates/agam_driver/**"
-      - "crates/agam_pkg/**"
-
+    branches: [ "main" ]
 jobs:
-  sdk-package:
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install clang on Linux
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang
-
-      - name: Configure Visual Studio LLVM
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          if (-not (Test-Path $vswhere)) {
-            throw "vswhere.exe not found"
-          }
-          $installPath = & $vswhere -latest -products * -property installationPath
-          if (-not $installPath) {
-            throw "Visual Studio installation not found"
-          }
-          $llvmBin = Join-Path $installPath 'VC\Tools\Llvm\x64\bin'
-          $clang = Join-Path $llvmBin 'clang.exe'
-          if (-not (Test-Path $clang)) {
-            $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vs_installer.exe'
-            if (-not (Test-Path $installer)) {
-              throw "Visual Studio Installer not found"
-            }
-            & $installer modify --installPath $installPath --add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang --quiet --wait --norestart --nocache
-            if ($LASTEXITCODE -ne 0) {
-              throw "Failed to install Visual Studio LLVM tools"
-            }
-          }
-          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          clang --version
-
-      - name: Build, package, and validate SDK
-        run: |
-          python scripts/package_sdk.py --require-llvm-bundle --verbose
-
-      - name: Upload SDK artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdk-${{ runner.os }}
-          path: dist
+  build:
+    uses: agam-lang/.github/.github/workflows/sdk-dist.yml@main
