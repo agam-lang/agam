@@ -1,6 +1,6 @@
 //! Portable Agam package format and helpers.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use agam_ast::Module;
@@ -371,6 +371,13 @@ pub struct WorkspaceLayout {
     pub test_files: Vec<PathBuf>,
 }
 
+/// Parsed workspace metadata paired with the resolved first-party layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSession {
+    pub layout: WorkspaceLayout,
+    pub manifest: Option<WorkspaceManifest>,
+}
+
 /// Create the first-party scaffold manifest for a new workspace.
 pub fn scaffold_workspace_manifest(project_name: &str) -> WorkspaceManifest {
     WorkspaceManifest {
@@ -410,12 +417,65 @@ pub fn read_workspace_manifest_from_path(path: &Path) -> Result<WorkspaceManifes
             path.display()
         )
     })?;
-    toml::from_str(&manifest).map_err(|e| {
+    let manifest: WorkspaceManifest = toml::from_str(&manifest).map_err(|e| {
         format!(
             "failed to parse workspace manifest `{}`: {e}",
             path.display()
         )
-    })
+    })?;
+    let root = path
+        .parent()
+        .ok_or_else(|| format!("workspace manifest `{}` has no parent directory", path.display()))?;
+    validate_workspace_manifest(root, &manifest)?;
+    Ok(manifest)
+}
+
+/// Validate the user-facing `agam.toml` workspace contract.
+pub fn validate_workspace_manifest(root: &Path, manifest: &WorkspaceManifest) -> Result<(), String> {
+    if manifest.format_version != WORKSPACE_MANIFEST_FORMAT_VERSION {
+        return Err(format!(
+            "unsupported `format_version` `{}`; expected `{WORKSPACE_MANIFEST_FORMAT_VERSION}`",
+            manifest.format_version
+        ));
+    }
+
+    validate_required_field(&manifest.project.name, "`project.name`")?;
+    validate_required_field(&manifest.project.version, "`project.version`")?;
+    validate_required_field(&manifest.project.agam, "`project.agam`")?;
+
+    if let Some(entry) = manifest.project.entry.as_deref() {
+        workspace_relative_path(root, entry, "`project.entry`")?;
+    }
+
+    if let Some(toolchain) = manifest.toolchain.as_ref() {
+        validate_required_field(&toolchain.agam, "`toolchain.agam`")?;
+        validate_optional_field(toolchain.sdk.as_deref(), "`toolchain.sdk`")?;
+        validate_optional_field(toolchain.target.as_deref(), "`toolchain.target`")?;
+        if matches!(toolchain.runtime_abi, Some(0)) {
+            return Err("`toolchain.runtime_abi` must be greater than zero".into());
+        }
+    }
+
+    let members = validate_workspace_member_list(root, &manifest.workspace.members, "workspace.members")?;
+    let default_members = validate_workspace_member_list(
+        root,
+        &manifest.workspace.default_members,
+        "workspace.default-members",
+    )?;
+    for member in default_members {
+        if !members.contains(&member) {
+            return Err(format!(
+                "`workspace.default-members` entry `{member}` must also appear in `workspace.members`"
+            ));
+        }
+    }
+
+    validate_dependency_table(root, "dependencies", &manifest.dependencies)?;
+    validate_dependency_table(root, "dev-dependencies", &manifest.dev_dependencies)?;
+    validate_dependency_table(root, "build-dependencies", &manifest.build_dependencies)?;
+    validate_environments(&manifest.environments)?;
+
+    Ok(())
 }
 
 /// Write a source workspace manifest to TOML.
@@ -435,13 +495,18 @@ pub fn write_workspace_manifest_to_path(
 
 /// Resolve the canonical workspace layout from a directory, manifest path, or source file.
 pub fn resolve_workspace_layout(path: Option<PathBuf>) -> Result<WorkspaceLayout, String> {
+    Ok(resolve_workspace_session(path)?.layout)
+}
+
+/// Resolve a parsed workspace session from a directory, manifest path, or source file.
+pub fn resolve_workspace_session(path: Option<PathBuf>) -> Result<WorkspaceSession, String> {
     let hint = match path {
         Some(path) => path,
         None => std::env::current_dir()
             .map_err(|e| format!("failed to read current directory: {e}"))?,
     };
 
-    resolve_workspace_layout_from_path(&hint)
+    resolve_workspace_session_from_path(&hint)
 }
 
 /// Expand user-provided formatter/test inputs into concrete Agam source files.
@@ -466,12 +531,17 @@ pub fn expand_agam_inputs(files: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
 
 /// Resolve the canonical workspace layout from an explicit filesystem path.
 pub fn resolve_workspace_layout_from_path(path: &Path) -> Result<WorkspaceLayout, String> {
+    Ok(resolve_workspace_session_from_path(path)?.layout)
+}
+
+/// Resolve a parsed workspace session from an explicit filesystem path.
+pub fn resolve_workspace_session_from_path(path: &Path) -> Result<WorkspaceSession, String> {
     if path.is_file() {
         if path.file_name().and_then(|name| name.to_str()) == Some("agam.toml") {
             let root = path
                 .parent()
                 .ok_or_else(|| format!("manifest `{}` has no parent directory", path.display()))?;
-            return workspace_layout_from_root(root, Some(path.to_path_buf()), None);
+            return workspace_session_from_root(root, Some(path.to_path_buf()), None);
         }
         if path.extension().and_then(|ext| ext.to_str()) != Some("agam") {
             return Err(format!(
@@ -488,7 +558,7 @@ pub fn resolve_workspace_layout_from_path(path: &Path) -> Result<WorkspaceLayout
             .and_then(|manifest_path| manifest_path.parent())
             .unwrap_or(parent)
             .to_path_buf();
-        return workspace_layout_from_root(&root, manifest, Some(path.to_path_buf()));
+        return workspace_session_from_root(&root, manifest, Some(path.to_path_buf()));
     }
 
     if !path.exists() {
@@ -504,7 +574,7 @@ pub fn resolve_workspace_layout_from_path(path: &Path) -> Result<WorkspaceLayout
         .and_then(|manifest_path| manifest_path.parent())
         .unwrap_or(path)
         .to_path_buf();
-    workspace_layout_from_root(&root, manifest, None)
+    workspace_session_from_root(&root, manifest, None)
 }
 
 /// Default dependency lockfile path for a workspace root.
@@ -623,11 +693,11 @@ fn find_workspace_manifest(start: &Path) -> Option<PathBuf> {
     None
 }
 
-fn workspace_layout_from_root(
+fn workspace_session_from_root(
     root: &Path,
     manifest_path: Option<PathBuf>,
     entry_override: Option<PathBuf>,
-) -> Result<WorkspaceLayout, String> {
+) -> Result<WorkspaceSession, String> {
     let manifest = manifest_path
         .as_ref()
         .map(|path| read_workspace_manifest_from_path(path))
@@ -675,13 +745,16 @@ fn workspace_layout_from_root(
     test_files.sort();
     test_files.dedup();
 
-    Ok(WorkspaceLayout {
-        root: root.to_path_buf(),
-        manifest_path,
-        project_name,
-        entry_file,
-        source_files,
-        test_files,
+    Ok(WorkspaceSession {
+        layout: WorkspaceLayout {
+            root: root.to_path_buf(),
+            manifest_path,
+            project_name,
+            entry_file,
+            source_files,
+            test_files,
+        },
+        manifest,
     })
 }
 
@@ -719,6 +792,158 @@ fn workspace_relative_path(
         ));
     }
     Ok(root.join(path))
+}
+
+fn validate_dependency_table(
+    root: &Path,
+    table_name: &str,
+    dependencies: &BTreeMap<String, DependencySpec>,
+) -> Result<(), String> {
+    for (name, spec) in dependencies {
+        if name.trim().is_empty() {
+            return Err(format!("dependency name in `{table_name}` cannot be empty"));
+        }
+
+        let field_prefix = format!("`{table_name}.{name}`");
+        let has_version =
+            validate_optional_field(spec.version.as_deref(), &format!("{field_prefix}.version"))?;
+        let has_registry = validate_optional_field(
+            spec.registry.as_deref(),
+            &format!("{field_prefix}.registry"),
+        )?;
+        let has_path = if let Some(path) = spec.path.as_deref() {
+            validate_required_field(path, &format!("{field_prefix}.path"))?;
+            workspace_relative_path(root, path, &format!("{field_prefix}.path"))?;
+            true
+        } else {
+            false
+        };
+        let has_git =
+            validate_optional_field(spec.git.as_deref(), &format!("{field_prefix}.git"))?;
+        let has_rev =
+            validate_optional_field(spec.rev.as_deref(), &format!("{field_prefix}.rev"))?;
+        let has_branch = validate_optional_field(
+            spec.branch.as_deref(),
+            &format!("{field_prefix}.branch"),
+        )?;
+        validate_optional_field(
+            spec.package.as_deref(),
+            &format!("{field_prefix}.package"),
+        )?;
+
+        if has_branch && has_rev {
+            return Err(format!(
+                "{field_prefix} cannot set both `branch` and `rev`"
+            ));
+        }
+        if (has_branch || has_rev) && !has_git {
+            return Err(format!(
+                "{field_prefix} requires `git` when `branch` or `rev` is set"
+            ));
+        }
+        if has_path && has_git {
+            return Err(format!(
+                "{field_prefix} cannot mix `path` and `git` sources"
+            ));
+        }
+        if has_path && has_registry {
+            return Err(format!(
+                "{field_prefix} cannot mix `path` and `registry` sources"
+            ));
+        }
+        if has_git && has_registry {
+            return Err(format!(
+                "{field_prefix} cannot mix `git` and `registry` sources"
+            ));
+        }
+        if !(has_version || has_registry || has_path || has_git) {
+            return Err(format!(
+                "{field_prefix} must declare at least one source selector (`version`, `path`, `git`, or `registry`)"
+            ));
+        }
+
+        validate_string_list(&spec.features, &format!("{field_prefix}.features"))?;
+    }
+
+    Ok(())
+}
+
+fn validate_environments(environments: &BTreeMap<String, EnvironmentSpec>) -> Result<(), String> {
+    for (name, environment) in environments {
+        if name.trim().is_empty() {
+            return Err("environment name cannot be empty".into());
+        }
+
+        let field_prefix = format!("`environments.{name}`");
+        let has_compiler = validate_optional_field(
+            environment.compiler.as_deref(),
+            &format!("{field_prefix}.compiler"),
+        )?;
+        let has_sdk =
+            validate_optional_field(environment.sdk.as_deref(), &format!("{field_prefix}.sdk"))?;
+        let has_target = validate_optional_field(
+            environment.target.as_deref(),
+            &format!("{field_prefix}.target"),
+        )?;
+        validate_string_list(&environment.profiles, &format!("{field_prefix}.profiles"))?;
+
+        if !(has_compiler
+            || has_sdk
+            || has_target
+            || environment.preferred_backend.is_some()
+            || !environment.profiles.is_empty())
+        {
+            return Err(format!(
+                "{field_prefix} must set at least one compiler, sdk, target, preferred backend, or profile"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_workspace_member_list(
+    root: &Path,
+    members: &[String],
+    field_name: &str,
+) -> Result<BTreeSet<String>, String> {
+    let mut seen = BTreeSet::new();
+    for (index, member) in members.iter().enumerate() {
+        let item_field = format!("`{field_name}[{index}]`");
+        validate_required_field(member, &item_field)?;
+        workspace_relative_path(root, member, &item_field)?;
+        if !seen.insert(member.clone()) {
+            return Err(format!("`{field_name}` contains duplicate entry `{member}`"));
+        }
+    }
+    Ok(seen)
+}
+
+fn validate_required_field(value: &str, field_name: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("{field_name} cannot be empty"));
+    }
+    Ok(())
+}
+
+fn validate_optional_field(value: Option<&str>, field_name: &str) -> Result<bool, String> {
+    if let Some(value) = value {
+        validate_required_field(value, field_name)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn validate_string_list(values: &[String], field_name: &str) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for (index, value) in values.iter().enumerate() {
+        let item_field = format!("`{field_name}[{index}]`");
+        validate_required_field(value, &item_field)?;
+        if !seen.insert(value.clone()) {
+            return Err(format!("{field_name} contains duplicate entry `{value}`"));
+        }
+    }
+    Ok(())
 }
 
 fn collect_source_map(module: &Module, source_file: &SourceFile) -> Vec<SourceMapEntry> {
@@ -988,6 +1213,94 @@ agam = "0.1"
         assert_eq!(decoded.format_version, WORKSPACE_MANIFEST_FORMAT_VERSION);
         assert_eq!(decoded.project.name, "legacy-app");
         assert!(decoded.dependencies.is_empty());
+    }
+
+    #[test]
+    fn read_workspace_manifest_rejects_git_revision_without_git_source() {
+        let dir = temp_dir("manifest_invalid_dep");
+        let path = default_manifest_path(&dir);
+        fs::write(
+            &path,
+            r#"
+[project]
+name = "invalid-dependency"
+version = "0.1.0"
+agam = "0.1"
+
+[dependencies.tensor-core]
+rev = "abc123"
+"#,
+        )
+        .expect("write invalid manifest");
+
+        let error =
+            read_workspace_manifest_from_path(&path).expect_err("manifest should reject bad git metadata");
+
+        assert!(error.contains("requires `git`"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn read_workspace_manifest_rejects_empty_environment_metadata() {
+        let dir = temp_dir("manifest_invalid_env");
+        let path = default_manifest_path(&dir);
+        fs::write(
+            &path,
+            r#"
+[project]
+name = "invalid-environment"
+version = "0.1.0"
+agam = "0.1"
+
+[environments.dev]
+"#,
+        )
+        .expect("write invalid manifest");
+
+        let error = read_workspace_manifest_from_path(&path)
+            .expect_err("manifest should reject empty environment metadata");
+
+        assert!(error.contains("must set at least one compiler, sdk, target, preferred backend, or profile"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolve_workspace_session_includes_manifest_and_layout() {
+        let dir = temp_dir("workspace_session");
+        let entry = dir.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        let mut manifest = scaffold_workspace_manifest("session-workspace");
+        manifest.dependencies.insert(
+            "tensor-core".into(),
+            DependencySpec {
+                version: Some("^0.4".into()),
+                registry: Some("agam".into()),
+                ..DependencySpec::default()
+            },
+        );
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &manifest)
+            .expect("write workspace manifest");
+        fs::write(&entry, sample_source()).expect("write entry");
+
+        let session =
+            resolve_workspace_session(Some(dir.clone())).expect("resolve workspace session");
+
+        assert_eq!(session.layout.root, dir);
+        assert_eq!(session.layout.project_name, "session-workspace");
+        assert_eq!(session.layout.entry_file, entry);
+        assert_eq!(
+            session
+                .manifest
+                .as_ref()
+                .expect("manifest should exist")
+                .dependencies
+                .len(),
+            1
+        );
+
+        let _ = fs::remove_dir_all(session.layout.root);
     }
 
     #[test]

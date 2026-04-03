@@ -138,6 +138,8 @@ version = "0.1.0"
 name = "agam_lsp"
 version = "0.1.0"
 dependencies = [
+ "agam_fmt",
+ "agam_pkg",
  "serde_json",
 ]
 
