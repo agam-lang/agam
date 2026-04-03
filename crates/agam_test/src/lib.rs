@@ -3,7 +3,7 @@
 //! Test framework, property testing, and fuzzing.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use agam_ast::Module;
 use agam_ast::decl::DeclKind;
@@ -28,6 +28,12 @@ pub struct TestSummary {
     pub results: Vec<TestResult>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileTestSummary {
+    pub path: PathBuf,
+    pub summary: TestSummary,
+}
+
 impl TestSummary {
     pub fn total(&self) -> usize {
         self.results.len()
@@ -46,6 +52,22 @@ pub fn run_file(path: &Path) -> Result<TestSummary, String> {
     let source = fs::read_to_string(path)
         .map_err(|e| format!("failed to read Agam test file `{}`: {e}", path.display()))?;
     run_source(&source, &path.to_string_lossy())
+}
+
+pub fn run_paths(paths: &[PathBuf]) -> Result<Vec<FileTestSummary>, String> {
+    paths.iter()
+        .map(|path| {
+            run_file(path).map(|summary| FileTestSummary {
+                path: path.clone(),
+                summary,
+            })
+        })
+        .collect()
+}
+
+pub fn run_inputs(inputs: Vec<PathBuf>) -> Result<Vec<FileTestSummary>, String> {
+    let paths = agam_pkg::expand_agam_inputs(inputs)?;
+    run_paths(&paths)
 }
 
 fn run_source(source: &str, label: &str) -> Result<TestSummary, String> {
@@ -178,6 +200,33 @@ fn helper() -> bool:
         .expect("run source without tests");
 
         assert_eq!(summary.total(), 0);
+    }
+
+    #[test]
+    fn run_paths_preserves_file_paths() {
+        let dir = std::env::temp_dir().join(format!(
+            "agam_test_paths_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("smoke.agam");
+        std::fs::write(
+            &file,
+            "@test\nfn smoke() -> bool:\n    return true\n",
+        )
+        .expect("write test file");
+
+        let summaries = run_paths(std::slice::from_ref(&file)).expect("run test paths");
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].path, file);
+        assert_eq!(summaries[0].summary.passed(), 1);
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
 

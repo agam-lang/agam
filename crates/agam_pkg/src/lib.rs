@@ -444,6 +444,26 @@ pub fn resolve_workspace_layout(path: Option<PathBuf>) -> Result<WorkspaceLayout
     resolve_workspace_layout_from_path(&hint)
 }
 
+/// Expand user-provided formatter/test inputs into concrete Agam source files.
+pub fn expand_agam_inputs(files: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
+    let inputs = if files.is_empty() {
+        vec![
+            std::env::current_dir()
+                .map_err(|e| format!("could not read current directory: {e}"))?,
+        ]
+    } else {
+        files
+    };
+
+    let mut expanded = Vec::new();
+    for input in inputs {
+        expand_agam_input(&input, &mut expanded)?;
+    }
+    expanded.sort();
+    expanded.dedup();
+    Ok(expanded)
+}
+
 /// Resolve the canonical workspace layout from an explicit filesystem path.
 pub fn resolve_workspace_layout_from_path(path: &Path) -> Result<WorkspaceLayout, String> {
     if path.is_file() {
@@ -554,6 +574,43 @@ fn collect_agam_files(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String>
     }
 
     Ok(())
+}
+
+fn expand_agam_input(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+    if path.is_file() {
+        if path.file_name().and_then(|name| name.to_str()) == Some("agam.toml") {
+            let layout = resolve_workspace_layout(Some(path.to_path_buf()))?;
+            out.extend(layout.source_files);
+            out.extend(layout.test_files);
+            return Ok(());
+        }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("agam") {
+            out.push(path.to_path_buf());
+            return Ok(());
+        }
+        return Err(format!("`{}` is not an Agam source file or `agam.toml` manifest", path.display()));
+    }
+
+    if !path.is_dir() {
+        return Err(format!("`{}` is not a file or directory", path.display()));
+    }
+
+    match resolve_workspace_layout_from_path(path) {
+        Ok(layout) => {
+            out.extend(layout.source_files);
+            out.extend(layout.test_files);
+            Ok(())
+        }
+        Err(error) => {
+            if find_workspace_manifest(path).is_some()
+                || path.join("agam.toml").is_file()
+                || path.join("src").join("main.agam").is_file()
+            {
+                return Err(error);
+            }
+            collect_agam_files(path, out)
+        }
+    }
 }
 
 fn find_workspace_manifest(start: &Path) -> Option<PathBuf> {
@@ -1052,6 +1109,46 @@ agam = "0.1"
         assert!(layout.manifest_path.is_none());
         assert_eq!(layout.entry_file, file);
         assert_eq!(layout.source_files, vec![layout.entry_file.clone()]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn expand_agam_inputs_prefers_workspace_contract_for_directories() {
+        let root = temp_dir("expand_workspace");
+        let entry = root.join("src").join("main.agam");
+        let test_file = root.join("tests").join("smoke.agam");
+        let loose_file = root.join("benchmarks").join("scratch.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::create_dir_all(test_file.parent().expect("test parent")).expect("create tests");
+        fs::create_dir_all(loose_file.parent().expect("loose parent")).expect("create loose dir");
+        write_workspace_manifest_to_path(&root.join("agam.toml"), &scaffold_workspace_manifest("expand"))
+            .expect("write manifest");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(&test_file, "@test\nfn smoke() -> bool:\n    return true\n").expect("write test");
+        fs::write(&loose_file, sample_source()).expect("write loose file");
+
+        let expanded = expand_agam_inputs(vec![root.clone()]).expect("expand workspace inputs");
+
+        assert_eq!(expanded, vec![entry, test_file]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn expand_agam_inputs_keeps_explicit_source_files_narrow() {
+        let root = temp_dir("expand_file");
+        let entry = root.join("src").join("main.agam");
+        let helper = root.join("src").join("helper.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        write_workspace_manifest_to_path(&root.join("agam.toml"), &scaffold_workspace_manifest("expand-file"))
+            .expect("write manifest");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(&helper, sample_source()).expect("write helper");
+
+        let expanded = expand_agam_inputs(vec![helper.clone()]).expect("expand explicit file");
+
+        assert_eq!(expanded, vec![helper]);
 
         let _ = fs::remove_dir_all(root);
     }

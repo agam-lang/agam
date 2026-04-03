@@ -12,4 +12,5 @@ agam_hir = { workspace = true }
 agam_jit = { workspace = true }
 agam_lexer = { workspace = true }
 agam_mir = { workspace = true }
+agam_pkg = { workspace = true }
 agam_parser = { workspace = true }

@@ -8,6 +8,9 @@
 //! current toolchain a stable formatting command without rewriting user code
 //! into a lossy AST printer.
 
+use std::fs;
+use std::path::{Path, PathBuf};
+
 /// Formatting options for the current whitespace-stable formatter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FormatOptions {
@@ -71,6 +74,35 @@ pub fn format_source_with_options(source: &str, options: FormatOptions) -> Forma
         changed: output != source,
         output,
     }
+}
+
+/// Format a single file in-place unless `check` is set.
+pub fn format_path(path: &Path, check: bool) -> Result<bool, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|e| format!("could not read `{}`: {e}", path.display()))?;
+    let formatted = format_source(&source);
+    if formatted.changed && !check {
+        fs::write(path, formatted.output)
+            .map_err(|e| format!("could not write `{}`: {e}", path.display()))?;
+    }
+    Ok(formatted.changed)
+}
+
+/// Format an explicit list of Agam source files.
+pub fn format_paths(files: &[PathBuf], check: bool) -> Result<Vec<PathBuf>, String> {
+    let mut changed_files = Vec::new();
+    for file in files {
+        if format_path(file, check)? {
+            changed_files.push(file.clone());
+        }
+    }
+    Ok(changed_files)
+}
+
+/// Expand user inputs through the shared workspace contract and format the result set.
+pub fn format_inputs(inputs: Vec<PathBuf>, check: bool) -> Result<Vec<PathBuf>, String> {
+    let files = agam_pkg::expand_agam_inputs(inputs)?;
+    format_paths(&files, check)
 }
 
 fn trim_trailing_whitespace(line: &str) -> &str {
@@ -144,5 +176,64 @@ mod tests {
         let formatted = format_source(source);
         assert!(!formatted.changed);
         assert_eq!(formatted.output, source);
+    }
+
+    #[test]
+    fn format_paths_writes_changed_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "agam_fmt_paths_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let file = dir.join("sample.agam");
+        std::fs::write(&file, "fn main() {   \n    return 0; \t\n}")
+            .expect("write sample file");
+
+        let changed = format_paths(std::slice::from_ref(&file), false).expect("format paths");
+
+        assert_eq!(changed, vec![file.clone()]);
+        assert_eq!(
+            std::fs::read_to_string(&file).expect("read formatted"),
+            "fn main() {\n    return 0;\n}\n"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn format_inputs_uses_workspace_expansion() {
+        let dir = std::env::temp_dir().join(format!(
+            "agam_fmt_workspace_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("time should move forward")
+                .as_nanos()
+        ));
+        let entry = dir.join("src").join("main.agam");
+        let test_file = dir.join("tests").join("smoke.agam");
+        let loose_file = dir.join("notes").join("ignored.agam");
+        std::fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        std::fs::create_dir_all(test_file.parent().expect("test parent")).expect("create tests");
+        std::fs::create_dir_all(loose_file.parent().expect("loose parent"))
+            .expect("create loose dir");
+        let manifest = agam_pkg::scaffold_workspace_manifest("fmt-workspace");
+        agam_pkg::write_workspace_manifest_to_path(&dir.join("agam.toml"), &manifest)
+            .expect("write manifest");
+        std::fs::write(&entry, "fn main() {   \n    return 0; \t\n}").expect("write entry");
+        std::fs::write(&test_file, "@test\nfn smoke() -> bool:\n    return true\n")
+            .expect("write test");
+        std::fs::write(&loose_file, "fn ignored() -> i32:\n    return 0\n")
+            .expect("write loose");
+
+        let changed = format_inputs(vec![dir.clone()], true).expect("format workspace inputs");
+
+        assert_eq!(changed, vec![entry]);
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -733,7 +733,7 @@ fn main() {
         }
 
         Command::Fmt { files, check } => {
-            let files = match expand_agam_inputs(files) {
+            let files = match agam_pkg::expand_agam_inputs(files) {
                 Ok(files) => files,
                 Err(e) => {
                     eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
@@ -741,7 +741,12 @@ fn main() {
                 }
             };
 
-            let changed_files = match run_format_paths(&files, check, cli.verbose) {
+            let action = if check { "Checking" } else { "Formatting" };
+            if cli.verbose {
+                eprintln!("[agamc] {} {} file(s)...", action, files.len());
+            }
+
+            let changed_files = match agam_fmt::format_paths(&files, check) {
                 Ok(changed_files) => changed_files,
                 Err(e) => {
                     eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
@@ -774,7 +779,7 @@ fn main() {
         }
 
         Command::Test { files, coverage } => {
-            let files = match expand_agam_inputs(files) {
+            let files = match agam_pkg::expand_agam_inputs(files) {
                 Ok(files) => files,
                 Err(e) => {
                     eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
@@ -1441,52 +1446,6 @@ fn default_c_compiler() -> &'static str {
     if cfg!(windows) { "gcc" } else { "cc" }
 }
 
-fn expand_agam_inputs(files: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
-    let inputs = if files.is_empty() {
-        vec![
-            std::env::current_dir()
-                .map_err(|e| format!("could not read current directory: {}", e))?,
-        ]
-    } else {
-        files
-    };
-
-    let mut expanded = Vec::new();
-    for input in inputs {
-        collect_agam_files(&input, &mut expanded)?;
-    }
-    expanded.sort();
-    expanded.dedup();
-    Ok(expanded)
-}
-
-fn collect_agam_files(path: &PathBuf, out: &mut Vec<PathBuf>) -> Result<(), String> {
-    if path.is_file() {
-        if path.extension().and_then(|ext| ext.to_str()) == Some("agam") {
-            out.push(path.clone());
-        }
-        return Ok(());
-    }
-
-    if !path.is_dir() {
-        return Err(format!("`{}` is not a file or directory", path.display()));
-    }
-
-    for entry in std::fs::read_dir(path)
-        .map_err(|e| format!("could not read directory `{}`: {}", path.display(), e))?
-    {
-        let entry = entry.map_err(|e| format!("could not read directory entry: {}", e))?;
-        let child = entry.path();
-        if child.is_dir() {
-            collect_agam_files(&child, out)?;
-        } else if child.extension().and_then(|ext| ext.to_str()) == Some("agam") {
-            out.push(child);
-        }
-    }
-
-    Ok(())
-}
-
 type WorkspaceLayout = agam_pkg::WorkspaceLayout;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1682,33 +1641,12 @@ fn workspace_relative_path(
     Ok(root.join(path))
 }
 
-fn run_format_paths(files: &[PathBuf], check: bool, verbose: bool) -> Result<Vec<PathBuf>, String> {
-    let action = if check { "Checking" } else { "Formatting" };
-    if verbose {
-        eprintln!("[agamc] {} {} file(s)...", action, files.len());
-    }
-
-    let mut changed_files = Vec::new();
-    for file in files {
-        let source = std::fs::read_to_string(file)
-            .map_err(|e| format!("could not read `{}`: {}", file.display(), e))?;
-        let formatted = agam_fmt::format_source(&source);
-        if formatted.changed {
-            changed_files.push(file.clone());
-            if !check {
-                std::fs::write(file, formatted.output)
-                    .map_err(|e| format!("could not write `{}`: {}", file.display(), e))?;
-            }
-        }
-    }
-    Ok(changed_files)
-}
-
 fn run_agam_tests(files: &[PathBuf], verbose: bool) -> Result<TestRunTotals, String> {
     let mut totals = TestRunTotals::default();
 
-    for file in files {
-        let summary = agam_test::run_file(file)?;
+    for file_summary in agam_test::run_paths(files)? {
+        let file = &file_summary.path;
+        let summary = &file_summary.summary;
         if summary.results.is_empty() && verbose {
             eprintln!("[agamc] {} — no tests found", file.display());
         }
@@ -1878,7 +1816,11 @@ fn run_dev_workflow(
     files_to_format.sort();
     files_to_format.dedup();
 
-    let changed = run_format_paths(&files_to_format, !fix, verbose)?;
+    if verbose {
+        let action = if !fix { "Checking" } else { "Formatting" };
+        eprintln!("[agamc] {} {} file(s)...", action, files_to_format.len());
+    }
+    let changed = agam_fmt::format_paths(&files_to_format, !fix)?;
     if !fix && !changed.is_empty() {
         for file in &changed {
             eprintln!("needs formatting: {}", file.display());
