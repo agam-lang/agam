@@ -1135,7 +1135,7 @@ fn resolve_build_requests(
                     .into(),
             );
         }
-        return Ok(vec![(files[0].clone(), output)]);
+        return Ok(vec![(resolve_entry_source_path(&files[0])?, output)]);
     }
 
     Ok(files
@@ -5758,11 +5758,39 @@ mod tests {
 
     #[test]
     fn test_resolve_build_requests_keeps_explicit_output_for_single_input() {
-        let files = vec![PathBuf::from("main.agam")];
-        let output = PathBuf::from("dist/program.exe");
+        let root = temp_dir("build_requests_single_output");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        let files = vec![file.clone()];
+        let output = root.join("program.exe");
         let requests = resolve_build_requests(&files, Some(output.clone()), None)
             .expect("single input should allow explicit output");
-        assert_eq!(requests, vec![(PathBuf::from("main.agam"), output)]);
+        assert_eq!(requests, vec![(file, output)]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_resolve_build_requests_resolves_workspace_root_before_explicit_output() {
+        let root = temp_dir("build_requests_root_output");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        agam_pkg::write_workspace_manifest_to_path(
+            &manifest,
+            &agam_pkg::scaffold_workspace_manifest("build-requests-root-output"),
+        )
+        .expect("write manifest");
+        fs::write(&entry, render_project_entry("build-requests-root-output")).expect("write entry");
+
+        let output = root.join("dist").join("program.exe");
+        let requests =
+            resolve_build_requests(std::slice::from_ref(&root), Some(output.clone()), None)
+                .expect("workspace root should resolve to entry before output is applied");
+        assert_eq!(requests, vec![(entry.clone(), output)]);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
