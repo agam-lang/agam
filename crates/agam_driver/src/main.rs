@@ -837,6 +837,14 @@ fn main() {
         },
 
         Command::Check { files } => {
+            let files = match agam_pkg::expand_agam_inputs(files) {
+                Ok(files) => files,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            };
+
             if cli.verbose {
                 eprintln!("[agamc] Checking {} file(s)...", files.len());
             }
