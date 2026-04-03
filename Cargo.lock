@@ -134,6 +134,9 @@ version = "0.1.0"
 [[package]]
 name = "agam_lsp"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "agam_macro"
@@ -193,6 +196,7 @@ name = "agam_runtime"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -225,6 +229,15 @@ dependencies = [
 [[package]]
 name = "agam_test"
 version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
+ "agam_hir",
+ "agam_jit",
+ "agam_lexer",
+ "agam_mir",
+ "agam_parser",
+]
 
 [[package]]
 name = "agam_ui"
