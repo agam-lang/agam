@@ -620,39 +620,56 @@ fn main() {
                 }
             }
 
-            let out_path = output.unwrap_or_else(|| {
-                default_native_binary_output_path(&files[0], tuning.target.as_deref())
-            });
+            let build_requests =
+                match resolve_build_requests(&files, output, tuning.target.as_deref()) {
+                    Ok(requests) => requests,
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                };
 
-            match build_file(
-                &files[0],
-                &out_path,
-                opt_level,
-                backend,
-                &tuning,
-                features,
-                cli.verbose,
-            ) {
-                Ok(outcome) => {
-                    if outcome.native_binary {
-                        eprintln!("\x1b[1;32m✓\x1b[0m Built: {}", out_path.display());
-                        if outcome.generated_path != out_path {
+            let mut had_errors = false;
+            for (file, out_path) in build_requests {
+                match build_file(
+                    &file,
+                    &out_path,
+                    opt_level,
+                    backend,
+                    &tuning,
+                    features,
+                    cli.verbose,
+                ) {
+                    Ok(outcome) => {
+                        if outcome.native_binary {
                             eprintln!(
-                                "\x1b[1;32minfo\x1b[0m: Generated IR: {}",
+                                "\x1b[1;32m✓\x1b[0m Built: {} -> {}",
+                                file.display(),
+                                out_path.display()
+                            );
+                            if outcome.generated_path != out_path {
+                                eprintln!(
+                                    "\x1b[1;32minfo\x1b[0m: Generated IR: {}",
+                                    outcome.generated_path.display()
+                                );
+                            }
+                        } else {
+                            eprintln!(
+                                "\x1b[1;32m✓\x1b[0m Generated: {} -> {}",
+                                file.display(),
                                 outcome.generated_path.display()
                             );
                         }
-                    } else {
-                        eprintln!(
-                            "\x1b[1;32m✓\x1b[0m Generated: {}",
-                            outcome.generated_path.display()
-                        );
+                    }
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {} ({})", e, file.display());
+                        had_errors = true;
                     }
                 }
-                Err(e) => {
-                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
-                    process::exit(1);
-                }
+            }
+
+            if had_errors {
+                process::exit(1);
             }
         }
 
@@ -1074,6 +1091,35 @@ fn default_native_binary_output_path(source: &Path, target: Option<&str>) -> Pat
         output.set_extension("exe");
     }
     output
+}
+
+fn resolve_build_requests(
+    files: &[PathBuf],
+    output: Option<PathBuf>,
+    target: Option<&str>,
+) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    if files.is_empty() {
+        return Err("at least one source file is required".into());
+    }
+
+    if let Some(output) = output {
+        if files.len() > 1 {
+            return Err(
+                "`--output` only supports a single input file; omit it to compile each file to its default output path"
+                    .into(),
+            );
+        }
+        return Ok(vec![(files[0].clone(), output)]);
+    }
+
+    Ok(files
+        .iter()
+        .cloned()
+        .map(|file| {
+            let output = default_native_binary_output_path(&file, target);
+            (file, output)
+        })
+        .collect())
 }
 
 fn native_binary_extension(target: Option<&str>) -> Option<&'static str> {
@@ -5614,6 +5660,39 @@ mod tests {
         compile_file(&file, false).expect("compile should succeed");
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_resolve_build_requests_rejects_explicit_output_for_multiple_inputs() {
+        let files = vec![PathBuf::from("a.agam"), PathBuf::from("b.agam")];
+        let error = resolve_build_requests(&files, Some(PathBuf::from("out.exe")), None)
+            .expect_err("multiple inputs should reject one explicit output");
+        assert!(error.contains("`--output` only supports a single input file"));
+    }
+
+    #[test]
+    fn test_resolve_build_requests_uses_default_output_per_file() {
+        let files = vec![PathBuf::from("alpha.agam"), PathBuf::from("beta.agam")];
+        let requests = resolve_build_requests(&files, None, Some("x86_64-pc-windows-msvc"))
+            .expect("build requests should resolve");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests[0],
+            (PathBuf::from("alpha.agam"), PathBuf::from("alpha.exe"))
+        );
+        assert_eq!(
+            requests[1],
+            (PathBuf::from("beta.agam"), PathBuf::from("beta.exe"))
+        );
+    }
+
+    #[test]
+    fn test_resolve_build_requests_keeps_explicit_output_for_single_input() {
+        let files = vec![PathBuf::from("main.agam")];
+        let output = PathBuf::from("dist/program.exe");
+        let requests = resolve_build_requests(&files, Some(output.clone()), None)
+            .expect("single input should allow explicit output");
+        assert_eq!(requests, vec![(PathBuf::from("main.agam"), output)]);
     }
 
     #[test]
