@@ -2044,22 +2044,11 @@ impl LlvmEmitter {
                     .unwrap_or_else(LlvmType::default_int);
                 if !emitted_locals.contains(name) {
                     let ptr_name = format!("%local_{}", sanitize_name(name));
-                    // Emit escape analysis annotation as an LLVM IR comment.
-                    let escape_comment = if instr.metadata.stack_promote {
-                        " ; stack-promoted, noalias"
-                    } else {
-                        match instr.metadata.escape_state {
-                            Some(EscapeState::GlobalEscape) => " ; escapes: global",
-                            Some(EscapeState::ArgEscape) => " ; escapes: arg",
-                            _ => "",
-                        }
-                    };
                     writeln!(
                         out,
-                        "  {} = alloca {}{}",
+                        "  {} = alloca {}",
                         ptr_name,
                         local_ty.ir(),
-                        escape_comment,
                     )
                     .unwrap();
                     locals.insert(name.clone(), (local_ty, ptr_name));

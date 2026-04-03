@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 agam_mir = { path = "../agam_mir" }
+agam_profile = { workspace = true }
 agam_sema = { path = "../agam_sema" }
 agam_errors = { path = "../agam_errors" }
 

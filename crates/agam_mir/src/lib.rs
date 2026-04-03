@@ -8,6 +8,7 @@
 //! - **SSA values** (each value assigned exactly once).
 //! - **CFG** (control flow graph) for optimization passes.
 
+pub mod analysis;
 pub mod ir;
 pub mod lower;
 pub mod opt;
