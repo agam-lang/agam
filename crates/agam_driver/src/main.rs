@@ -424,6 +424,9 @@ enum CacheCommand {
 enum DaemonCommand {
     /// Print background daemon status and cached pipeline health
     Status,
+
+    /// Remove persisted daemon status metadata for a workspace
+    Clear,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -932,6 +935,12 @@ fn main() {
         } => match command {
             Some(DaemonCommand::Status) => {
                 if let Err(e) = print_daemon_status(path, cli.verbose) {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
+            Some(DaemonCommand::Clear) => {
+                if let Err(e) = clear_daemon_status(path, cli.verbose) {
                     eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
                     process::exit(1);
                 }
@@ -2235,6 +2244,30 @@ fn write_daemon_status(root: &Path, status: &DaemonStatusRecord) -> Result<(), S
         .map_err(|e| format!("failed to serialize daemon status: {e}"))?;
     std::fs::write(&path, json)
         .map_err(|e| format!("failed to write daemon status `{}`: {e}", path.display()))
+}
+
+fn clear_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), String> {
+    let workspace = resolve_workspace_layout(path)?;
+    let status_path = daemon_status_path(&workspace.root);
+    if status_path.is_file() {
+        std::fs::remove_file(&status_path).map_err(|e| {
+            format!(
+                "failed to remove daemon status `{}`: {e}",
+                status_path.display()
+            )
+        })?;
+        println!("Agam Daemon");
+        println!("workspace: {}", workspace.root.display());
+        println!("status: cleared");
+    } else {
+        println!("Agam Daemon");
+        println!("workspace: {}", workspace.root.display());
+        println!("status: already clear");
+    }
+    if verbose {
+        println!("status-file: {}", status_path.display());
+    }
+    Ok(())
 }
 
 fn daemon_liveness(status: &DaemonStatusRecord, now: u128) -> DaemonLiveness {
@@ -5849,6 +5882,27 @@ mod tests {
                 .as_ref()
                 .expect("last error should exist")
                 .contains("semantic error")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_clear_daemon_status_removes_persisted_status_file() {
+        let root = temp_dir("daemon_clear_status");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
+
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+            .expect("one-shot daemon run should succeed");
+        assert!(daemon_status_path(&root).is_file());
+
+        clear_daemon_status(Some(file), false).expect("clear daemon status should succeed");
+        assert!(!daemon_status_path(&root).exists());
+        assert!(
+            read_daemon_status(&root)
+                .expect("read cleared daemon status")
+                .is_none()
         );
 
         let _ = fs::remove_dir_all(root);
