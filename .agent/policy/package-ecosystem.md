@@ -89,10 +89,13 @@ Do not overload `agamc package` so heavily that users cannot tell whether they a
 
 Recommended organization shape:
 
-- `agam-lang/registry-index`
-- `agam-lang/sdk-packs`
-- `agam-lang/official-*` or `agam-lang/std-*`
-- `agam-lang/interop-*`
+- `agam-lang/agam` (core toolchain)
+- `agam-lang/std` (standard library)
+- `agam-lang/agamlab` (scientific platform)
+- `agam-lang/registry-index` (package registry)
+- `agam-lang/sdk-packs` (SDK bundles)
+- `agam-lang/rfcs` (language design)
+- `agam-lang/interop-*` (FFI bridges)
 
 Community packages should be able to live in any repository and still publish cleanly into the registry.
 
