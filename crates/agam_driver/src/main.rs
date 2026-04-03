@@ -488,6 +488,15 @@ struct WarmSummary {
     pub mir_function_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct WarmCacheSummary {
+    pub file_count: usize,
+    pub version_count: usize,
+    pub ast_decl_count: usize,
+    pub hir_function_count: usize,
+    pub mir_function_count: usize,
+}
+
 enum DaemonCycleOutcome {
     Success {
         status: DaemonStatusRecord,
@@ -547,10 +556,9 @@ impl<'a> IncrementalPipeline<'a> {
             self.session.cache.remove(removed);
         }
 
-        // Remove caches for changed files
-        for changed in &diff.changed_files {
-            self.session.cache.remove(changed);
-        }
+        // Keep the previous good cache for changed files until the replacement
+        // version successfully warms. `warm_workspace_session` will clear the old
+        // version only after a new hash has been built.
 
         // Unchanged files maintain their WarmState entries securely in `session.cache`.
 
@@ -2460,6 +2468,7 @@ fn build_daemon_status(
 
 fn build_daemon_error_status(
     snapshot: &agam_pkg::WorkspaceSnapshot,
+    warm_cache: WarmCacheSummary,
     session_started_unix_ms: u128,
     run_mode: DaemonRunMode,
     error: String,
@@ -2473,11 +2482,11 @@ fn build_daemon_error_status(
         session_started_unix_ms,
         last_heartbeat_unix_ms: now_unix_ms(),
         snapshot_file_count: tracked_snapshot_file_count(snapshot),
-        warmed_file_count: 0,
-        warmed_version_count: 0,
-        ast_decl_count: 0,
-        hir_function_count: 0,
-        mir_function_count: 0,
+        warmed_file_count: warm_cache.file_count,
+        warmed_version_count: warm_cache.version_count,
+        ast_decl_count: warm_cache.ast_decl_count,
+        hir_function_count: warm_cache.hir_function_count,
+        mir_function_count: warm_cache.mir_function_count,
         last_error: Some(error),
         last_diff: DaemonDiffSummary::default(),
     }
@@ -2592,6 +2601,7 @@ fn run_daemon_cycle(
             Err(error) => {
                 let status = build_daemon_error_status(
                     session.snapshot.as_ref().unwrap_or(initial_snapshot),
+                    summarize_warm_cache(&session.cache),
                     session_started_unix_ms,
                     run_mode,
                     error.clone(),
@@ -2605,6 +2615,7 @@ fn run_daemon_cycle(
         Err(error) => {
             let status = build_daemon_error_status(
                 &snapshot,
+                summarize_warm_cache(&session.cache),
                 session_started_unix_ms,
                 run_mode,
                 error.clone(),
@@ -3117,6 +3128,30 @@ fn build_warm_state(
     })
 }
 
+fn summarize_warm_cache(
+    cache: &BTreeMap<PathBuf, BTreeMap<String, WarmState>>,
+) -> WarmCacheSummary {
+    let mut summary = WarmCacheSummary::default();
+    for versions in cache.values() {
+        if !versions.is_empty() {
+            summary.file_count += 1;
+        }
+        summary.version_count += versions.len();
+        for state in versions.values() {
+            if let Some(module) = state.module.as_ref() {
+                summary.ast_decl_count += module.declarations.len();
+            }
+            if let Some(hir) = state.hir.as_ref() {
+                summary.hir_function_count += hir.functions.len();
+            }
+            if let Some(mir) = state.mir.as_ref() {
+                summary.mir_function_count += mir.functions.len();
+            }
+        }
+    }
+    summary
+}
+
 fn warm_workspace_session(
     session: &mut DaemonSession,
     snapshot: &agam_pkg::WorkspaceSnapshot,
@@ -3138,20 +3173,11 @@ fn warm_workspace_session(
         summary.warmed_files += 1;
     }
 
-    for versions in session.cache.values() {
-        summary.warmed_version_count += versions.len();
-        for state in versions.values() {
-            if let Some(module) = state.module.as_ref() {
-                summary.ast_decl_count += module.declarations.len();
-            }
-            if let Some(hir) = state.hir.as_ref() {
-                summary.hir_function_count += hir.functions.len();
-            }
-            if let Some(mir) = state.mir.as_ref() {
-                summary.mir_function_count += mir.functions.len();
-            }
-        }
-    }
+    let cache_summary = summarize_warm_cache(&session.cache);
+    summary.warmed_version_count = cache_summary.version_count;
+    summary.ast_decl_count = cache_summary.ast_decl_count;
+    summary.hir_function_count = cache_summary.hir_function_count;
+    summary.mir_function_count = cache_summary.mir_function_count;
 
     Ok(summary)
 }
@@ -6068,6 +6094,8 @@ mod tests {
             second_status.last_error.as_deref(),
             Some(second_error.as_str())
         );
+        assert_eq!(second_status.warmed_file_count, 1);
+        assert_eq!(second_status.warmed_version_count, 1);
 
         fs::write(&file, "fn main(): println(\"recovered\")\n").expect("rewrite fixed source");
         let third = run_daemon_cycle(
