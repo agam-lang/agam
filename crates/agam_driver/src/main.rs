@@ -759,7 +759,16 @@ fn main() {
                         process::exit(1);
                     }
                 };
-                let output = output.unwrap_or_else(|| agam_pkg::default_package_path(&file));
+                let output = match output {
+                    Some(output) => output,
+                    None => match default_package_output_path(&file) {
+                        Ok(output) => output,
+                        Err(e) => {
+                            eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                            process::exit(1);
+                        }
+                    },
+                };
                 match build_portable_package_file(&file, cli.verbose) {
                     Ok(package) => {
                         if let Err(e) =
@@ -1057,7 +1066,11 @@ fn main() {
 }
 
 fn effective_opt_level(opt_level: u8, fast: bool) -> u8 {
-    if fast { 3 } else { opt_level.min(3) }
+    if fast {
+        3
+    } else {
+        opt_level.min(3)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1132,6 +1145,17 @@ fn ensure_build_output_parent_dir(path: &Path) -> Result<(), String> {
             parent.display()
         )
     })
+}
+
+fn default_package_output_path(path: &Path) -> Result<PathBuf, String> {
+    let layout = resolve_workspace_layout(Some(path.to_path_buf()))?;
+    if layout.manifest_path.is_some() {
+        return Ok(layout
+            .root
+            .join("dist")
+            .join(format!("{}.agpkg.json", layout.project_name)));
+    }
+    Ok(agam_pkg::default_package_path(&layout.entry_file))
 }
 
 fn resolve_build_requests(
@@ -1728,7 +1752,11 @@ fn validate_llvm_target_config(tuning: &ReleaseTuning) -> Result<(), String> {
 }
 
 fn default_c_compiler() -> &'static str {
-    if cfg!(windows) { "gcc" } else { "cc" }
+    if cfg!(windows) {
+        "gcc"
+    } else {
+        "cc"
+    }
 }
 
 type WorkspaceLayout = agam_pkg::WorkspaceLayout;
@@ -5707,6 +5735,43 @@ mod tests {
     }
 
     #[test]
+    fn test_default_package_output_path_uses_dist_for_manifest_workspace() {
+        let root = temp_dir("package_output_workspace");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        agam_pkg::write_workspace_manifest_to_path(
+            &manifest,
+            &agam_pkg::scaffold_workspace_manifest("package-output-workspace"),
+        )
+        .expect("write manifest");
+        fs::write(&entry, render_project_entry("package-output-workspace")).expect("write entry");
+
+        let output = default_package_output_path(&root)
+            .expect("workspace root should resolve package output");
+        assert_eq!(
+            output,
+            root.join("dist")
+                .join("package-output-workspace.agpkg.json")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_default_package_output_path_keeps_single_file_neighbor() {
+        let root = temp_dir("package_output_single_file");
+        let file = root.join("script.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        let output =
+            default_package_output_path(&file).expect("single-file package output should resolve");
+        assert_eq!(output, root.join("script.agpkg.json"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn test_resolve_build_requests_uses_workspace_manifest_entry_output() {
         let root = temp_dir("build_requests_manifest");
         let manifest = root.join("agam.toml");
@@ -5980,13 +6045,11 @@ mod tests {
         assert_eq!(first_warm.warmed_files, 1);
         assert_eq!(first_warm.reused_files, 0);
         assert_eq!(first_diff.added_files, 2);
-        assert!(
-            session
-                .cache
-                .get(&entry)
-                .expect("entry cache")
-                .contains_key(&first_hash)
-        );
+        assert!(session
+            .cache
+            .get(&entry)
+            .expect("entry cache")
+            .contains_key(&first_hash));
 
         let repeat_snapshot = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
         let (repeat_warm, repeat_diff) =
@@ -6042,16 +6105,12 @@ mod tests {
 
         status.last_heartbeat_unix_ms = now_unix_ms().saturating_sub(DAEMON_HEARTBEAT_STALE_MS + 1);
         write_daemon_status(&root, &status).expect("write stale status");
-        assert!(
-            read_daemon_status(&root)
-                .expect("read stale status")
-                .is_some()
-        );
-        assert!(
-            active_daemon_status(&root)
-                .expect("read active status")
-                .is_none()
-        );
+        assert!(read_daemon_status(&root)
+            .expect("read stale status")
+            .is_some());
+        assert!(active_daemon_status(&root)
+            .expect("read active status")
+            .is_none());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6077,11 +6136,9 @@ mod tests {
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write snapshot status");
-        assert!(
-            active_daemon_status(&root)
-                .expect("read active status")
-                .is_none()
-        );
+        assert!(active_daemon_status(&root)
+            .expect("read active status")
+            .is_none());
         assert_eq!(
             daemon_liveness(&status, now_unix_ms()),
             DaemonLiveness::Snapshot
@@ -6111,11 +6168,9 @@ mod tests {
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write error status");
-        assert!(
-            active_daemon_status(&root)
-                .expect("read active status")
-                .is_none()
-        );
+        assert!(active_daemon_status(&root)
+            .expect("read active status")
+            .is_none());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6261,13 +6316,11 @@ mod tests {
             .expect("status file should exist after one-shot failure");
         assert_eq!(status.run_mode, DaemonRunMode::OneShot);
         assert_eq!(status.warmed_file_count, 0);
-        assert!(
-            status
-                .last_error
-                .as_ref()
-                .expect("last error should exist")
-                .contains("semantic error")
-        );
+        assert!(status
+            .last_error
+            .as_ref()
+            .expect("last error should exist")
+            .contains("semantic error"));
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6370,11 +6423,9 @@ mod tests {
 
         clear_daemon_status(Some(file), false).expect("clear daemon status should succeed");
         assert!(!daemon_status_path(&root).exists());
-        assert!(
-            read_daemon_status(&root)
-                .expect("read cleared daemon status")
-                .is_none()
-        );
+        assert!(read_daemon_status(&root)
+            .expect("read cleared daemon status")
+            .is_none());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -7111,13 +7162,11 @@ fn hot(n: i64) -> i64 { return n + 1; }
             .expect("bundle root layout should stage");
 
         assert_eq!(staged, output_root.join("toolchains").join("llvm"));
-        assert!(
-            staged
-                .join(bundled_llvm_platform_dir())
-                .join("bin")
-                .join(if cfg!(windows) { "clang.exe" } else { "clang" })
-                .is_file()
-        );
+        assert!(staged
+            .join(bundled_llvm_platform_dir())
+            .join("bin")
+            .join(if cfg!(windows) { "clang.exe" } else { "clang" })
+            .is_file());
 
         let _ = std::fs::remove_dir_all(&temp_root);
     }
@@ -7158,10 +7207,9 @@ fn hot(n: i64) -> i64 { return n + 1; }
             &target_config,
         );
 
-        assert!(
-            args.iter()
-                .any(|arg| arg == "--target=aarch64-linux-android21")
-        );
+        assert!(args
+            .iter()
+            .any(|arg| arg == "--target=aarch64-linux-android21"));
         assert!(args.iter().any(|arg| arg == "--sysroot=/ndk/sysroot"));
         assert!(args.iter().any(|arg| arg == "-flto=thin"));
         assert!(args.iter().any(|arg| arg == "-lm"));

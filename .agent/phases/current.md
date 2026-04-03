@@ -13,7 +13,7 @@
    - Detail file: `details/15F.md`
 2. **Phase 15G: First-Party Premium Experience Layer**
    - Status: partial
-   - Done: `agamc doctor`, `agamc new`, `agamc dev`, `agamc cache status`, workspace-aware `agamc check` input expansion, and shared entry-file resolution for workspace-root build/run/package commands
+   - Done: `agamc doctor`, `agamc new`, `agamc dev`, `agamc cache status`, workspace-aware `agamc check` input expansion, shared entry-file resolution for workspace-root build/run/package commands, and first-party default package artifacts under workspace `dist/`
    - Next work: unify tooling, package/runtime/cache metadata, and workspace conventions behind one stable contract
    - Detail file: `details/15G.md`
 3. **Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles**
