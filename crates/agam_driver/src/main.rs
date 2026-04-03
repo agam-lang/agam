@@ -1777,6 +1777,65 @@ fn resolve_workspace_layout(path: Option<PathBuf>) -> Result<WorkspaceLayout, St
     agam_pkg::resolve_workspace_layout(path)
 }
 
+struct DaemonWorkspaceTarget {
+    root: PathBuf,
+    project_name: String,
+}
+
+fn daemon_workspace_target_from_layout(layout: WorkspaceLayout) -> DaemonWorkspaceTarget {
+    DaemonWorkspaceTarget {
+        root: layout.root,
+        project_name: layout.project_name,
+    }
+}
+
+fn resolve_daemon_workspace_target(path: Option<PathBuf>) -> Result<DaemonWorkspaceTarget, String> {
+    let hint = match path {
+        Some(path) => path,
+        None => {
+            std::env::current_dir().map_err(|e| format!("failed to read current directory: {e}"))?
+        }
+    };
+    if hint.exists() {
+        if let Ok(layout) = resolve_workspace_layout(Some(hint.clone())) {
+            return Ok(daemon_workspace_target_from_layout(layout));
+        }
+    }
+
+    let is_source_hint = hint.extension().and_then(|ext| ext.to_str()) == Some("agam");
+    let is_manifest_hint = hint.file_name().and_then(|name| name.to_str()) == Some("agam.toml");
+    let root = if is_source_hint || is_manifest_hint {
+        hint.parent()
+            .ok_or_else(|| {
+                format!(
+                    "`{}` does not exist and has no parent directory to resolve daemon status from",
+                    hint.display()
+                )
+            })?
+            .to_path_buf()
+    } else {
+        hint.clone()
+    };
+    if !root.exists() {
+        return Err(format!("`{}` does not exist", hint.display()));
+    }
+    if let Ok(layout) = resolve_workspace_layout(Some(root.clone())) {
+        return Ok(daemon_workspace_target_from_layout(layout));
+    }
+
+    if is_source_hint || is_manifest_hint {
+        let project_name = root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or("agam-workspace")
+            .to_string();
+        return Ok(DaemonWorkspaceTarget { root, project_name });
+    }
+
+    Err(format!("`{}` does not exist", hint.display()))
+}
+
 fn manifest_entry_path(
     root: &Path,
     manifest: &agam_pkg::WorkspaceManifest,
@@ -2247,7 +2306,7 @@ fn write_daemon_status(root: &Path, status: &DaemonStatusRecord) -> Result<(), S
 }
 
 fn clear_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), String> {
-    let workspace = resolve_workspace_layout(path)?;
+    let workspace = resolve_daemon_workspace_target(path)?;
     let status_path = daemon_status_path(&workspace.root);
     if status_path.is_file() {
         std::fs::remove_file(&status_path).map_err(|e| {
@@ -2399,7 +2458,7 @@ fn build_daemon_error_status(
 }
 
 fn print_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), String> {
-    let workspace = resolve_workspace_layout(path)?;
+    let workspace = resolve_daemon_workspace_target(path)?;
     let now = now_unix_ms();
 
     println!("Agam Daemon Status");
@@ -5904,6 +5963,24 @@ mod tests {
                 .expect("read cleared daemon status")
                 .is_none()
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_resolve_daemon_workspace_target_allows_missing_source_hint() {
+        let root = temp_dir("daemon_missing_source_hint");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
+
+        let layout =
+            resolve_workspace_layout(Some(file.clone())).expect("existing source should resolve");
+        fs::remove_file(&file).expect("remove source");
+
+        let daemon_target = resolve_daemon_workspace_target(Some(file))
+            .expect("daemon target should resolve from missing source parent");
+        assert_eq!(daemon_target.root, layout.root);
+        assert_eq!(daemon_target.project_name, layout.project_name);
 
         let _ = fs::remove_dir_all(root);
     }
