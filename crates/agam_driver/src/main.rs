@@ -1916,7 +1916,7 @@ fn sanitize_project_name(raw: &str) -> String {
     }
 }
 
-const PROJECT_GITIGNORE: &str = ".agam_cache/\ndist/\n*.agpkg.json\n*.c\n*.ll\n*.exe\nsrc/main\n";
+const PROJECT_GITIGNORE: &str = ".agam_cache/\ndist/\n*.agpkg.json\n*.c\n*.ll\n*.exe\n";
 
 fn render_project_entry(project_name: &str) -> String {
     format!(
@@ -5643,6 +5643,10 @@ mod tests {
                 .name
                 == "hello-app"
         );
+        let gitignore =
+            fs::read_to_string(project_root.join(".gitignore")).expect("read gitignore");
+        assert!(gitignore.contains("dist/"));
+        assert!(!gitignore.contains("src/main"));
 
         let _ = fs::remove_dir_all(root);
     }
