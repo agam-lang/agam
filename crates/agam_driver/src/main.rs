@@ -2001,6 +2001,30 @@ fn print_cache_status(path: Option<PathBuf>, recent: usize, verbose: bool) -> Re
     Ok(())
 }
 
+fn dev_daemon_status_message(root: &Path) -> Result<String, String> {
+    let Some(status) = read_daemon_status(root)? else {
+        return Ok(
+            "daemon: not connected (run `agamc daemon` for incremental warm-state reuse)".into(),
+        );
+    };
+
+    let now = now_unix_ms();
+    Ok(match daemon_liveness(&status, now) {
+        DaemonLiveness::Running => format!(
+            "daemon: connected (warm-state pipeline active; {} file(s) warm)",
+            status.warmed_file_count
+        ),
+        DaemonLiveness::Snapshot => format!(
+            "daemon: snapshot available (last warm refresh {}; run `agamc daemon` for continuous incremental reuse)",
+            relative_age(now.saturating_sub(status.last_heartbeat_unix_ms))
+        ),
+        DaemonLiveness::Stale => format!(
+            "daemon: stale (last heartbeat {}; run `agamc daemon` for incremental warm-state reuse)",
+            relative_age(now.saturating_sub(status.last_heartbeat_unix_ms))
+        ),
+    })
+}
+
 fn run_dev_workflow(
     path: Option<PathBuf>,
     backend: Backend,
@@ -2032,19 +2056,7 @@ fn run_dev_workflow(
         cache_status.entry_count,
         human_bytes(cache_status.total_bytes)
     );
-    if let Some(status) = active_daemon_status(&workspace.root)? {
-        println!(
-            "daemon: connected (warm-state pipeline active; {} file(s) warm)",
-            status.warmed_file_count
-        );
-    } else if let Some(status) = read_daemon_status(&workspace.root)? {
-        println!(
-            "daemon: stale (last heartbeat {}; run `agamc daemon` for incremental warm-state reuse)",
-            relative_age(now_unix_ms().saturating_sub(status.last_heartbeat_unix_ms))
-        );
-    } else {
-        println!("daemon: not connected (run `agamc daemon` for incremental warm-state reuse)");
-    }
+    println!("{}", dev_daemon_status_message(&workspace.root)?);
     println!(
         "toolchain: {}",
         native_llvm
@@ -2221,6 +2233,7 @@ fn daemon_liveness(status: &DaemonStatusRecord, now: u128) -> DaemonLiveness {
     }
 }
 
+#[cfg(test)]
 fn active_daemon_status(root: &Path) -> Result<Option<DaemonStatusRecord>, String> {
     let Some(status) = read_daemon_status(root)? else {
         return Ok(None);
@@ -5576,6 +5589,34 @@ mod tests {
             daemon_liveness(&status, now_unix_ms()),
             DaemonLiveness::Snapshot
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_dev_daemon_status_message_reports_snapshot_separately() {
+        let root = temp_dir("dev_daemon_snapshot");
+        let status = DaemonStatusRecord {
+            schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+            run_mode: DaemonRunMode::OneShot,
+            workspace_root: root.display().to_string(),
+            project_name: "dev-daemon-snapshot".into(),
+            pid: process::id(),
+            session_started_unix_ms: now_unix_ms(),
+            last_heartbeat_unix_ms: now_unix_ms(),
+            snapshot_file_count: 1,
+            warmed_file_count: 1,
+            warmed_version_count: 1,
+            ast_decl_count: 1,
+            hir_function_count: 1,
+            mir_function_count: 1,
+            last_diff: DaemonDiffSummary::default(),
+        };
+        write_daemon_status(&root, &status).expect("write snapshot status");
+
+        let message = dev_daemon_status_message(&root).expect("format dev daemon message");
+        assert!(message.contains("snapshot available"));
+        assert!(!message.contains("stale"));
 
         let _ = fs::remove_dir_all(root);
     }
