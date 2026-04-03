@@ -1153,14 +1153,18 @@ fn resolve_build_requests(
         return Ok(vec![(resolve_entry_source_path(&files[0])?, output)]);
     }
 
-    Ok(files
-        .iter()
-        .map(|path| -> Result<(PathBuf, PathBuf), String> {
-            let file = resolve_entry_source_path(path)?;
-            let output = default_native_binary_output_path(&file, target);
-            Ok((file, output))
-        })
-        .collect::<Result<Vec<_>, _>>()?)
+    let mut seen = BTreeSet::new();
+    let mut requests = Vec::new();
+    for path in files {
+        let file = resolve_entry_source_path(path)?;
+        if !seen.insert(file.clone()) {
+            continue;
+        }
+        let output = default_native_binary_output_path(&file, target);
+        requests.push((file, output));
+    }
+
+    Ok(requests)
 }
 
 fn native_binary_extension(target: Option<&str>) -> Option<&'static str> {
@@ -5806,6 +5810,30 @@ mod tests {
             resolve_build_requests(std::slice::from_ref(&root), Some(output.clone()), None)
                 .expect("workspace root should resolve to entry before output is applied");
         assert_eq!(requests, vec![(entry.clone(), output)]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_resolve_build_requests_deduplicates_overlapping_workspace_inputs() {
+        let root = temp_dir("build_requests_dedup");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        agam_pkg::write_workspace_manifest_to_path(
+            &manifest,
+            &agam_pkg::scaffold_workspace_manifest("build-requests-dedup"),
+        )
+        .expect("write manifest");
+        fs::write(&entry, render_project_entry("build-requests-dedup")).expect("write entry");
+
+        let requests = resolve_build_requests(
+            &[root.clone(), manifest.clone(), entry.clone()],
+            None,
+            Some("x86_64-pc-windows-msvc"),
+        )
+        .expect("overlapping workspace inputs should resolve");
+        assert_eq!(requests, vec![(entry.clone(), entry.with_extension("exe"))]);
 
         let _ = fs::remove_dir_all(root);
     }
