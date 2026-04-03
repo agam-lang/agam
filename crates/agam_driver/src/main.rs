@@ -2125,7 +2125,7 @@ fn run_source_file_with_optional_warm_state(
     features: FeatureFlags,
     warm_state: Option<&WarmState>,
 ) -> Result<i32, String> {
-    let exe_path = default_native_binary_output_path(file, tuning.target.as_deref());
+    let exe_path = default_build_output_path(file, tuning.target.as_deref())?;
 
     if backend == Backend::Jit {
         let mut runtime_args = Vec::with_capacity(args.len() + 1);
@@ -5209,7 +5209,7 @@ fn run_with_llvm_prelowered(
         }
     }
 
-    let exe_path = path.with_extension("exe");
+    let exe_path = default_build_output_path(path, tuning.target.as_deref())?;
     let outcome = build_prelowered_file(
         path,
         &exe_path,
