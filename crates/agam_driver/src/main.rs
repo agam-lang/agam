@@ -435,15 +435,22 @@ struct DaemonDiffSummary {
     pub manifest_changed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum DaemonRunMode {
     OneShot,
     ForegroundLoop,
 }
 
+impl Default for DaemonRunMode {
+    fn default() -> Self {
+        Self::ForegroundLoop
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct DaemonStatusRecord {
     pub schema_version: u32,
+    #[serde(default)]
     pub run_mode: DaemonRunMode,
     pub workspace_root: String,
     pub project_name: String,
@@ -456,6 +463,8 @@ struct DaemonStatusRecord {
     pub ast_decl_count: usize,
     pub hir_function_count: usize,
     pub mir_function_count: usize,
+    #[serde(default)]
+    pub last_error: Option<String>,
     pub last_diff: DaemonDiffSummary,
 }
 
@@ -2009,6 +2018,12 @@ fn dev_daemon_status_message(root: &Path) -> Result<String, String> {
     };
 
     let now = now_unix_ms();
+    if let Some(error) = status.last_error.as_ref() {
+        return Ok(format!(
+            "daemon: last warm refresh failed ({}; run `agamc daemon` again after fixing the workspace)",
+            error
+        ));
+    }
     Ok(match daemon_liveness(&status, now) {
         DaemonLiveness::Running => format!(
             "daemon: connected (warm-state pipeline active; {} file(s) warm)",
@@ -2238,6 +2253,9 @@ fn active_daemon_status(root: &Path) -> Result<Option<DaemonStatusRecord>, Strin
     let Some(status) = read_daemon_status(root)? else {
         return Ok(None);
     };
+    if status.last_error.is_some() {
+        return Ok(None);
+    }
     if daemon_liveness(&status, now_unix_ms()) == DaemonLiveness::Running {
         Ok(Some(status))
     } else {
@@ -2317,7 +2335,33 @@ fn build_daemon_status(
         ast_decl_count: warm.ast_decl_count,
         hir_function_count: warm.hir_function_count,
         mir_function_count: warm.mir_function_count,
+        last_error: None,
         last_diff,
+    }
+}
+
+fn build_daemon_error_status(
+    snapshot: &agam_pkg::WorkspaceSnapshot,
+    session_started_unix_ms: u128,
+    run_mode: DaemonRunMode,
+    error: String,
+) -> DaemonStatusRecord {
+    DaemonStatusRecord {
+        schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+        run_mode,
+        workspace_root: snapshot.session.layout.root.display().to_string(),
+        project_name: snapshot.session.layout.project_name.clone(),
+        pid: process::id(),
+        session_started_unix_ms,
+        last_heartbeat_unix_ms: now_unix_ms(),
+        snapshot_file_count: tracked_snapshot_file_count(snapshot),
+        warmed_file_count: 0,
+        warmed_version_count: 0,
+        ast_decl_count: 0,
+        hir_function_count: 0,
+        mir_function_count: 0,
+        last_error: Some(error),
+        last_diff: DaemonDiffSummary::default(),
     }
 }
 
@@ -2341,10 +2385,14 @@ fn print_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), Strin
     };
 
     let heartbeat_age = now.saturating_sub(status.last_heartbeat_unix_ms);
-    match daemon_liveness(&status, now) {
-        DaemonLiveness::Running => println!("status: running"),
-        DaemonLiveness::Snapshot => println!("status: snapshot"),
-        DaemonLiveness::Stale => println!("status: stale"),
+    if status.last_error.is_some() {
+        println!("status: error");
+    } else {
+        match daemon_liveness(&status, now) {
+            DaemonLiveness::Running => println!("status: running"),
+            DaemonLiveness::Snapshot => println!("status: snapshot"),
+            DaemonLiveness::Stale => println!("status: stale"),
+        }
     }
     println!("pid: {}", status.pid);
     println!("heartbeat: {}", relative_age(heartbeat_age));
@@ -2366,6 +2414,9 @@ fn print_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), Strin
             status.last_diff.removed_files,
             status.last_diff.unchanged_files
         );
+    }
+    if let Some(error) = status.last_error.as_ref() {
+        println!("last error: {error}");
     }
     if verbose {
         println!(
@@ -2417,6 +2468,11 @@ fn run_daemon_foreground(
     let session_started_unix_ms = now_unix_ms();
     let mut session = DaemonSession::default();
     let mut first_cycle = true;
+    let run_mode = if once {
+        DaemonRunMode::OneShot
+    } else {
+        DaemonRunMode::ForegroundLoop
+    };
 
     println!("Agam Daemon");
     println!("workspace: {}", workspace.root.display());
@@ -2440,9 +2496,34 @@ fn run_daemon_foreground(
         let snapshot = if first_cycle {
             initial_snapshot.clone()
         } else {
-            agam_pkg::snapshot_workspace_from_path(&workspace.root)?
+            match agam_pkg::snapshot_workspace_from_path(&workspace.root) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    let status = build_daemon_error_status(
+                        session.snapshot.as_ref().unwrap_or(&initial_snapshot),
+                        session_started_unix_ms,
+                        run_mode,
+                        error.clone(),
+                    );
+                    write_daemon_status(&workspace.root, &status)?;
+                    return Err(error);
+                }
+            }
         };
-        let (warm, diff_summary) = refresh_daemon_session(&mut session, snapshot, verbose)?;
+        let (warm, diff_summary) =
+            match refresh_daemon_session(&mut session, snapshot.clone(), verbose) {
+                Ok(result) => result,
+                Err(error) => {
+                    let status = build_daemon_error_status(
+                        &snapshot,
+                        session_started_unix_ms,
+                        run_mode,
+                        error.clone(),
+                    );
+                    write_daemon_status(&workspace.root, &status)?;
+                    return Err(error);
+                }
+            };
         let snapshot = session
             .snapshot
             .clone()
@@ -2452,11 +2533,7 @@ fn run_daemon_foreground(
             warm,
             diff_summary.clone(),
             session_started_unix_ms,
-            if once {
-                DaemonRunMode::OneShot
-            } else {
-                DaemonRunMode::ForegroundLoop
-            },
+            run_mode,
         );
 
         let should_log = first_cycle || daemon_diff_has_changes(&diff_summary);
@@ -5539,6 +5616,7 @@ mod tests {
             ast_decl_count: 1,
             hir_function_count: 1,
             mir_function_count: 1,
+            last_error: None,
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write fresh status");
@@ -5577,6 +5655,7 @@ mod tests {
             ast_decl_count: 1,
             hir_function_count: 1,
             mir_function_count: 1,
+            last_error: None,
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write snapshot status");
@@ -5588,6 +5667,36 @@ mod tests {
         assert_eq!(
             daemon_liveness(&status, now_unix_ms()),
             DaemonLiveness::Snapshot
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_active_daemon_status_ignores_error_status() {
+        let root = temp_dir("daemon_error_status");
+        let status = DaemonStatusRecord {
+            schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+            run_mode: DaemonRunMode::ForegroundLoop,
+            workspace_root: root.display().to_string(),
+            project_name: "daemon-error".into(),
+            pid: process::id(),
+            session_started_unix_ms: now_unix_ms(),
+            last_heartbeat_unix_ms: now_unix_ms(),
+            snapshot_file_count: 1,
+            warmed_file_count: 0,
+            warmed_version_count: 0,
+            ast_decl_count: 0,
+            hir_function_count: 0,
+            mir_function_count: 0,
+            last_error: Some("parse error".into()),
+            last_diff: DaemonDiffSummary::default(),
+        };
+        write_daemon_status(&root, &status).expect("write error status");
+        assert!(
+            active_daemon_status(&root)
+                .expect("read active status")
+                .is_none()
         );
 
         let _ = fs::remove_dir_all(root);
@@ -5610,6 +5719,7 @@ mod tests {
             ast_decl_count: 1,
             hir_function_count: 1,
             mir_function_count: 1,
+            last_error: None,
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write snapshot status");
@@ -5617,6 +5727,82 @@ mod tests {
         let message = dev_daemon_status_message(&root).expect("format dev daemon message");
         assert!(message.contains("snapshot available"));
         assert!(!message.contains("stale"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_dev_daemon_status_message_reports_failure() {
+        let root = temp_dir("dev_daemon_error");
+        let status = DaemonStatusRecord {
+            schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+            run_mode: DaemonRunMode::ForegroundLoop,
+            workspace_root: root.display().to_string(),
+            project_name: "dev-daemon-error".into(),
+            pid: process::id(),
+            session_started_unix_ms: now_unix_ms(),
+            last_heartbeat_unix_ms: now_unix_ms(),
+            snapshot_file_count: 1,
+            warmed_file_count: 0,
+            warmed_version_count: 0,
+            ast_decl_count: 0,
+            hir_function_count: 0,
+            mir_function_count: 0,
+            last_error: Some("semantic error".into()),
+            last_diff: DaemonDiffSummary::default(),
+        };
+        write_daemon_status(&root, &status).expect("write daemon error status");
+
+        let message = dev_daemon_status_message(&root).expect("format dev daemon message");
+        assert!(message.contains("last warm refresh failed"));
+        assert!(message.contains("semantic error"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_read_daemon_status_accepts_legacy_status_without_new_fields() {
+        let root = temp_dir("daemon_legacy_status");
+        ensure_daemon_status_dir(&root).expect("create daemon status dir");
+        let path = daemon_status_path(&root);
+        fs::write(
+            &path,
+            format!(
+                concat!(
+                    "{{",
+                    "\"schema_version\":{},",
+                    "\"workspace_root\":\"{}\",",
+                    "\"project_name\":\"legacy\",",
+                    "\"pid\":{},",
+                    "\"session_started_unix_ms\":1,",
+                    "\"last_heartbeat_unix_ms\":2,",
+                    "\"snapshot_file_count\":3,",
+                    "\"warmed_file_count\":2,",
+                    "\"warmed_version_count\":2,",
+                    "\"ast_decl_count\":4,",
+                    "\"hir_function_count\":5,",
+                    "\"mir_function_count\":6,",
+                    "\"last_diff\":{{",
+                    "\"added_files\":1,",
+                    "\"changed_files\":0,",
+                    "\"removed_files\":0,",
+                    "\"unchanged_files\":2,",
+                    "\"manifest_changed\":false",
+                    "}}",
+                    "}}"
+                ),
+                DAEMON_STATUS_SCHEMA_VERSION,
+                root.display().to_string().replace('\\', "\\\\"),
+                process::id()
+            ),
+        )
+        .expect("write legacy status");
+
+        let status = read_daemon_status(&root)
+            .expect("read legacy daemon status")
+            .expect("status should parse");
+        assert_eq!(status.run_mode, DaemonRunMode::ForegroundLoop);
+        assert_eq!(status.last_error, None);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5634,9 +5820,36 @@ mod tests {
             .expect("read daemon status")
             .expect("status file should exist after one-shot refresh");
         assert_eq!(status.run_mode, DaemonRunMode::OneShot);
+        assert_eq!(status.last_error, None);
         assert_eq!(status.workspace_root, root.display().to_string());
         assert_eq!(status.warmed_file_count, 1);
         assert_eq!(status.snapshot_file_count, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_run_daemon_foreground_once_persists_error_status_on_failure() {
+        let root = temp_dir("daemon_once_error");
+        let file = root.join("broken.agam");
+        fs::write(&file, "fn main(): missing_name\n").expect("write invalid source");
+
+        let error = run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+            .expect_err("one-shot daemon run should fail");
+        assert!(error.contains("semantic error"));
+
+        let status = read_daemon_status(&root)
+            .expect("read daemon error status")
+            .expect("status file should exist after one-shot failure");
+        assert_eq!(status.run_mode, DaemonRunMode::OneShot);
+        assert_eq!(status.warmed_file_count, 0);
+        assert!(
+            status
+                .last_error
+                .as_ref()
+                .expect("last error should exist")
+                .contains("semantic error")
+        );
 
         let _ = fs::remove_dir_all(root);
     }
