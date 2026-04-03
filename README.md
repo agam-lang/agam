@@ -175,6 +175,9 @@ agamc cache status
 
 # Stage an SDK bundle
 agamc package sdk
+
+# Build and validate the hosted-runner SDK layout
+python scripts/package_sdk.py --require-llvm-bundle
 ```
 
 ## Backends

@@ -87,7 +87,7 @@ flowchart TD
 5. **Runtime**: `agam_runtime` carries ARC, SIMD, hardware detection, and runtime helpers used by native execution paths.
 6. **Diagnostics**: `agam_errors` is the canonical path for span-based reporting.
 7. **Profiling**: `agam_profile` is the required benchmarking and optimization-validation path.
-8. **Distribution Contract**: `agam_pkg` currently defines portable package metadata and the SDK distribution manifest used by `agamc package sdk`, and it is the planned home for the future source-package, lockfile, registry, and environment contracts.
+8. **Distribution Contract**: `agam_pkg` currently defines portable package metadata and the SDK distribution manifest used by `agamc package sdk`, while `scripts/package_sdk.py` and `.github/workflows/sdk-dist.yml` exercise that contract for hosted-runner SDK validation; it remains the planned home for the future source-package, lockfile, registry, and environment contracts.
 
 ## 3. Implemented Features
 
