@@ -1789,6 +1789,16 @@ fn daemon_workspace_target_from_layout(layout: WorkspaceLayout) -> DaemonWorkspa
     }
 }
 
+fn daemon_workspace_target_from_root(root: PathBuf) -> DaemonWorkspaceTarget {
+    let project_name = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("agam-workspace")
+        .to_string();
+    DaemonWorkspaceTarget { root, project_name }
+}
+
 fn resolve_daemon_workspace_target(path: Option<PathBuf>) -> Result<DaemonWorkspaceTarget, String> {
     let hint = match path {
         Some(path) => path,
@@ -1799,6 +1809,9 @@ fn resolve_daemon_workspace_target(path: Option<PathBuf>) -> Result<DaemonWorksp
     if hint.exists() {
         if let Ok(layout) = resolve_workspace_layout(Some(hint.clone())) {
             return Ok(daemon_workspace_target_from_layout(layout));
+        }
+        if hint.is_dir() {
+            return Ok(daemon_workspace_target_from_root(hint));
         }
     }
 
@@ -1824,13 +1837,7 @@ fn resolve_daemon_workspace_target(path: Option<PathBuf>) -> Result<DaemonWorksp
     }
 
     if is_source_hint || is_manifest_hint {
-        let project_name = root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or("agam-workspace")
-            .to_string();
-        return Ok(DaemonWorkspaceTarget { root, project_name });
+        return Ok(daemon_workspace_target_from_root(root));
     }
 
     Err(format!("`{}` does not exist", hint.display()))
@@ -5983,6 +5990,34 @@ mod tests {
         assert_eq!(daemon_target.project_name, layout.project_name);
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_resolve_daemon_workspace_target_allows_root_dir_with_status_but_no_entry() {
+        let root = temp_dir("daemon_root_status_hint");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
+
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+            .expect("one-shot daemon run should succeed");
+        fs::remove_file(&file).expect("remove source");
+
+        let daemon_target = resolve_daemon_workspace_target(Some(root.clone()))
+            .expect("daemon target should resolve from root with persisted status");
+        assert_eq!(daemon_target.root, root);
+
+        let _ = fs::remove_dir_all(daemon_target.root);
+    }
+
+    #[test]
+    fn test_resolve_daemon_workspace_target_allows_existing_directory_without_workspace_layout() {
+        let root = temp_dir("daemon_existing_dir_hint");
+
+        let daemon_target = resolve_daemon_workspace_target(Some(root.clone()))
+            .expect("daemon target should resolve from an existing directory");
+        assert_eq!(daemon_target.root, root);
+
+        let _ = fs::remove_dir_all(daemon_target.root);
     }
 
     #[test]
