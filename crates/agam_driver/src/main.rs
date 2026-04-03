@@ -1119,6 +1119,21 @@ fn resolve_entry_source_path(path: &Path) -> Result<PathBuf, String> {
     Ok(resolve_workspace_layout(Some(path.to_path_buf()))?.entry_file)
 }
 
+fn ensure_build_output_parent_dir(path: &Path) -> Result<(), String> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(parent).map_err(|e| {
+        format!(
+            "failed to create build output directory `{}`: {e}",
+            parent.display()
+        )
+    })
+}
+
 fn resolve_build_requests(
     files: &[PathBuf],
     output: Option<PathBuf>,
@@ -4655,6 +4670,8 @@ fn build_prelowered_file(
     allow_wsl_llvm: bool,
     verbose: bool,
 ) -> Result<BuildOutcome, String> {
+    ensure_build_output_parent_dir(output)?;
+
     let cache_store = match agam_runtime::cache::CacheStore::for_path(path) {
         Ok(store) => Some(store),
         Err(e) => {
@@ -5789,6 +5806,18 @@ mod tests {
             resolve_build_requests(std::slice::from_ref(&root), Some(output.clone()), None)
                 .expect("workspace root should resolve to entry before output is applied");
         assert_eq!(requests, vec![(entry.clone(), output)]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_ensure_build_output_parent_dir_creates_missing_directory() {
+        let root = temp_dir("build_output_parent_dir");
+        let output = root.join("nested").join("program.exe");
+
+        ensure_build_output_parent_dir(&output).expect("missing output parent should be created");
+
+        assert!(output.parent().expect("parent").is_dir());
 
         let _ = fs::remove_dir_all(root);
     }
