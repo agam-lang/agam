@@ -8,8 +8,8 @@
 
 1. **Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation**
    - Status: partial
-   - Done: shared workspace snapshot and invalidation-diff contract in `agam_pkg`
-   - Next work: build daemon-owned warm parse/type/lower state on top of that snapshot contract and parallelize independent work deterministically
+   - Done: shared workspace snapshot and invalidation-diff contract in `agam_pkg`, a real foreground warm-state daemon/status loop in `agam_driver`, intra-invocation warm-state reuse for `agamc dev`, and a semantic-only `agamc dev --no-run` entry path that skips unnecessary lowering
+   - Next work: connect build/run/dev flows to daemon-owned warm state and parallelize independent work deterministically
    - Detail file: `details/15F.md`
 2. **Phase 15G: First-Party Premium Experience Layer**
    - Status: partial

@@ -7,11 +7,11 @@
 //!
 //! This is the first semantic pass and runs before type inference.
 
-use agam_ast::*;
 use agam_ast::decl::*;
-use agam_ast::stmt::*;
 use agam_ast::expr::*;
+use agam_ast::stmt::*;
 use agam_ast::types::{TypeExpr, TypeExprKind};
+use agam_ast::*;
 use agam_errors::Span;
 
 use crate::scope::ScopeStack;
@@ -34,11 +34,13 @@ pub struct Resolver {
 
 impl Resolver {
     pub fn new() -> Self {
-        Self {
+        let mut resolver = Self {
             scopes: ScopeStack::new(),
             types: TypeStore::new(),
             errors: Vec::new(),
-        }
+        };
+        resolver.declare_builtin_functions();
+        resolver
     }
 
     /// Run name resolution on a parsed module.
@@ -59,50 +61,60 @@ impl Resolver {
         match &decl.kind {
             DeclKind::Function(f) => {
                 let ret_ty = self.types.fresh_var();
-                let param_tys: Vec<TypeId> = f.params.iter().map(|_| self.types.fresh_var()).collect();
+                let param_tys: Vec<TypeId> =
+                    f.params.iter().map(|_| self.types.fresh_var()).collect();
                 if let Err(prev) = self.scopes.declare(
                     f.name.name.clone(),
-                    SymbolKind::Function { params: param_tys, return_ty: ret_ty, is_async: f.is_async },
+                    SymbolKind::Function {
+                        params: param_tys,
+                        return_ty: ret_ty,
+                        is_async: f.is_async,
+                    },
                     f.span,
                 ) {
                     let prev_sym = self.scopes.get(prev);
                     self.errors.push(ResolveError {
-                        message: format!("'{}' is already declared (previously at {:?})", f.name.name, prev_sym.span),
+                        message: format!(
+                            "'{}' is already declared (previously at {:?})",
+                            f.name.name, prev_sym.span
+                        ),
                         span: f.span,
                     });
                 }
             }
             DeclKind::Struct(s) => {
-                let fields: Vec<(String, TypeId)> = s.fields.iter()
+                let fields: Vec<(String, TypeId)> = s
+                    .fields
+                    .iter()
                     .map(|f| (f.name.name.clone(), self.types.fresh_var()))
                     .collect();
-                let _ = self.scopes.declare(
-                    s.name.name.clone(),
-                    SymbolKind::Struct { fields },
-                    s.span,
-                );
+                let _ =
+                    self.scopes
+                        .declare(s.name.name.clone(), SymbolKind::Struct { fields }, s.span);
             }
             DeclKind::Enum(e) => {
                 let variants = e.variants.iter().map(|v| v.name.name.clone()).collect();
-                let _ = self.scopes.declare(
-                    e.name.name.clone(),
-                    SymbolKind::Enum { variants },
-                    e.span,
-                );
+                let _ =
+                    self.scopes
+                        .declare(e.name.name.clone(), SymbolKind::Enum { variants }, e.span);
             }
             DeclKind::Trait(t) => {
-                let methods = t.items.iter().filter_map(|item| match item {
-                    TraitItem::Method(f) => Some(f.name.name.clone()),
-                    _ => None,
-                }).collect();
-                let _ = self.scopes.declare(
-                    t.name.name.clone(),
-                    SymbolKind::Trait { methods },
-                    t.span,
-                );
+                let methods = t
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        TraitItem::Method(f) => Some(f.name.name.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                let _ =
+                    self.scopes
+                        .declare(t.name.name.clone(), SymbolKind::Trait { methods }, t.span);
             }
             DeclKind::Module(m) => {
-                let _ = self.scopes.declare(m.name.name.clone(), SymbolKind::Module, m.span);
+                let _ = self
+                    .scopes
+                    .declare(m.name.name.clone(), SymbolKind::Module, m.span);
             }
             DeclKind::TypeAlias { name, ty, .. } => {
                 let target = self.types.fresh_var();
@@ -133,15 +145,15 @@ impl Resolver {
 
         // Declare parameters
         for param in &f.params {
-                let ty = self.resolve_type_expr_to_id(&param.ty);
-                if let Some(name) = self.pattern_name(&param.pattern) {
-                    let _ = self.scopes.declare(
-                        name,
-                        SymbolKind::Variable { mutable: true, ty },
-                        param.span,
-                    );
-                }
+            let ty = self.resolve_type_expr_to_id(&param.ty);
+            if let Some(name) = self.pattern_name(&param.pattern) {
+                let _ = self.scopes.declare(
+                    name,
+                    SymbolKind::Variable { mutable: true, ty },
+                    param.span,
+                );
             }
+        }
 
         // Resolve body
         if let Some(body) = &f.body {
@@ -179,7 +191,12 @@ impl Resolver {
 
     fn resolve_stmt(&mut self, stmt: &Stmt) {
         match &stmt.kind {
-            StmtKind::Let { pattern, ty, value, mutable } => {
+            StmtKind::Let {
+                pattern,
+                ty,
+                value,
+                mutable,
+            } => {
                 // Resolve initializer first (before declaring the name).
                 if let Some(val) = value {
                     self.resolve_expr(val);
@@ -192,12 +209,18 @@ impl Resolver {
                 if let Some(name) = self.pattern_name(pattern) {
                     if let Err(prev) = self.scopes.declare(
                         name.clone(),
-                        SymbolKind::Variable { mutable: *mutable, ty: resolved_ty },
+                        SymbolKind::Variable {
+                            mutable: *mutable,
+                            ty: resolved_ty,
+                        },
                         stmt.span,
                     ) {
                         let prev_sym = self.scopes.get(prev);
                         self.errors.push(ResolveError {
-                            message: format!("'{}' is already declared in this scope (previously at {:?})", name, prev_sym.span),
+                            message: format!(
+                                "'{}' is already declared in this scope (previously at {:?})",
+                                name, prev_sym.span
+                            ),
                             span: stmt.span,
                         });
                     }
@@ -236,20 +259,31 @@ impl Resolver {
                 self.resolve_block(body);
                 self.scopes.pop_scope();
             }
-            StmtKind::For { pattern, iterable, body } => {
+            StmtKind::For {
+                pattern,
+                iterable,
+                body,
+            } => {
                 self.resolve_expr(iterable);
                 self.scopes.push_scope();
                 if let Some(name) = self.pattern_name(pattern) {
                     let _ = self.scopes.declare(
                         name,
-                        SymbolKind::Variable { mutable: true, ty: self.types.fresh_var() },
+                        SymbolKind::Variable {
+                            mutable: true,
+                            ty: self.types.fresh_var(),
+                        },
                         stmt.span,
                     );
                 }
                 self.resolve_block(body);
                 self.scopes.pop_scope();
             }
-            StmtKind::If { condition, then_branch, else_branch } => {
+            StmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.resolve_expr(condition);
                 self.scopes.push_scope();
                 self.resolve_block(then_branch);
@@ -275,7 +309,10 @@ impl Resolver {
                     if let Some(name) = self.pattern_name(&arm.pattern) {
                         let _ = self.scopes.declare(
                             name,
-                            SymbolKind::Variable { mutable: false, ty: self.types.fresh_var() },
+                            SymbolKind::Variable {
+                                mutable: false,
+                                ty: self.types.fresh_var(),
+                            },
                             arm.span,
                         );
                     }
@@ -295,7 +332,10 @@ impl Resolver {
                     if let Some(binding) = &catch.binding {
                         let _ = self.scopes.declare(
                             binding.name.clone(),
-                            SymbolKind::Variable { mutable: false, ty: self.types.fresh_var() },
+                            SymbolKind::Variable {
+                                mutable: false,
+                                ty: self.types.fresh_var(),
+                            },
                             catch.span,
                         );
                     }
@@ -374,7 +414,11 @@ impl Resolver {
                     self.resolve_expr(e);
                 }
             }
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.resolve_expr(condition);
                 self.resolve_expr(then_branch);
                 if let Some(eb) = else_branch {
@@ -391,7 +435,10 @@ impl Resolver {
                 for p in params {
                     let _ = self.scopes.declare(
                         p.name.name.clone(),
-                        SymbolKind::Variable { mutable: false, ty: self.types.fresh_var() },
+                        SymbolKind::Variable {
+                            mutable: false,
+                            ty: self.types.fresh_var(),
+                        },
                         p.span,
                     );
                 }
@@ -405,8 +452,12 @@ impl Resolver {
                 self.resolve_expr(inner);
             }
             ExprKind::Range { start, end, .. } => {
-                if let Some(s) = start { self.resolve_expr(s); }
-                if let Some(e) = end { self.resolve_expr(e); }
+                if let Some(s) = start {
+                    self.resolve_expr(s);
+                }
+                if let Some(e) = end {
+                    self.resolve_expr(e);
+                }
             }
             ExprKind::Match { scrutinee, arms } => {
                 self.resolve_expr(scrutinee);
@@ -415,11 +466,16 @@ impl Resolver {
                     if let Some(name) = self.pattern_name(&arm.pattern) {
                         let _ = self.scopes.declare(
                             name,
-                            SymbolKind::Variable { mutable: false, ty: self.types.fresh_var() },
+                            SymbolKind::Variable {
+                                mutable: false,
+                                ty: self.types.fresh_var(),
+                            },
                             arm.span,
                         );
                     }
-                    if let Some(guard) = &arm.guard { self.resolve_expr(guard); }
+                    if let Some(guard) = &arm.guard {
+                        self.resolve_expr(guard);
+                    }
                     self.resolve_expr(&arm.body);
                     self.scopes.pop_scope();
                 }
@@ -452,8 +508,10 @@ impl Resolver {
                 }
             }
             // Literals don't need resolution
-            ExprKind::IntLiteral(_) | ExprKind::FloatLiteral(_)
-            | ExprKind::StringLiteral(_) | ExprKind::BoolLiteral(_) => {}
+            ExprKind::IntLiteral(_)
+            | ExprKind::FloatLiteral(_)
+            | ExprKind::StringLiteral(_)
+            | ExprKind::BoolLiteral(_) => {}
         }
     }
 
@@ -461,7 +519,7 @@ impl Resolver {
 
     /// Map an AST `TypeExpr` → an internal `TypeId`.
     fn resolve_type_expr_to_id(&mut self, te: &TypeExpr) -> TypeId {
-        use crate::types::{builtin_type_id_for_name, Type};
+        use crate::types::{Type, builtin_type_id_for_name};
 
         match &te.kind {
             TypeExprKind::Named(path) => {
@@ -492,28 +550,46 @@ impl Resolver {
             TypeExprKind::SelfType => self.types.fresh_var(), // resolved during trait/impl checking
             TypeExprKind::Reference { mutable, inner } => {
                 let inner_id = self.resolve_type_expr_to_id(inner);
-                self.types.insert(Type::Ref { mutable: *mutable, inner: inner_id })
+                self.types.insert(Type::Ref {
+                    mutable: *mutable,
+                    inner: inner_id,
+                })
             }
             TypeExprKind::Pointer { mutable, inner } => {
                 let inner_id = self.resolve_type_expr_to_id(inner);
-                self.types.insert(Type::Ptr { mutable: *mutable, inner: inner_id })
+                self.types.insert(Type::Ptr {
+                    mutable: *mutable,
+                    inner: inner_id,
+                })
             }
             TypeExprKind::Optional(inner) => {
                 let inner_id = self.resolve_type_expr_to_id(inner);
                 self.types.insert(Type::Optional(inner_id))
             }
             TypeExprKind::Tuple(elems) => {
-                let ids: Vec<TypeId> = elems.iter().map(|e| self.resolve_type_expr_to_id(e)).collect();
+                let ids: Vec<TypeId> = elems
+                    .iter()
+                    .map(|e| self.resolve_type_expr_to_id(e))
+                    .collect();
                 self.types.insert(Type::Tuple(ids))
             }
             TypeExprKind::Slice(inner) => {
                 let inner_id = self.resolve_type_expr_to_id(inner);
                 self.types.insert(Type::Slice(inner_id))
             }
-            TypeExprKind::Function { params, return_type } => {
-                let param_ids: Vec<TypeId> = params.iter().map(|p| self.resolve_type_expr_to_id(p)).collect();
+            TypeExprKind::Function {
+                params,
+                return_type,
+            } => {
+                let param_ids: Vec<TypeId> = params
+                    .iter()
+                    .map(|p| self.resolve_type_expr_to_id(p))
+                    .collect();
                 let ret_id = self.resolve_type_expr_to_id(return_type);
-                self.types.insert(Type::Function { params: param_ids, ret: ret_id })
+                self.types.insert(Type::Function {
+                    params: param_ids,
+                    ret: ret_id,
+                })
             }
             TypeExprKind::Refined { base, .. } => {
                 // Return the base type ID while type system learns refinement predicates
@@ -530,13 +606,62 @@ impl Resolver {
             _ => None, // Destructuring patterns handled in a later pass
         }
     }
+
+    fn declare_builtin_functions(&mut self) {
+        for (name, params, return_ty) in self.builtin_function_signatures() {
+            let _ = self.scopes.declare(
+                name.to_string(),
+                SymbolKind::Function {
+                    params,
+                    return_ty,
+                    is_async: false,
+                },
+                Span::dummy(),
+            );
+        }
+    }
+
+    fn builtin_function_signatures(&self) -> Vec<(&'static str, Vec<TypeId>, TypeId)> {
+        let any = self.types.any();
+        let bool_ty = self.types.bool();
+        let float_ty = self.types.f64();
+        let int_ty = self.types.i64();
+        let str_ty = self.types.str();
+        let unit_ty = self.types.unit();
+
+        vec![
+            ("print", vec![any], unit_ty),
+            ("println", vec![any], unit_ty),
+            ("print_int", vec![int_ty], unit_ty),
+            ("print_str", vec![str_ty], unit_ty),
+            ("argc", Vec::new(), int_ty),
+            ("argv", vec![int_ty], str_ty),
+            ("parse_int", vec![str_ty], int_ty),
+            ("clock", Vec::new(), float_ty),
+            ("adam", vec![any], float_ty),
+            ("dataframe_mean", vec![any], float_ty),
+            ("tensor_checksum", vec![any], float_ty),
+            ("dataframe_build_sin", vec![any], any),
+            ("dataframe_filter_gt", vec![any], any),
+            ("dataframe_sort", vec![any], any),
+            ("dataframe_group_by", vec![any], any),
+            ("tensor_fill_rand", vec![any], any),
+            ("dense_layer", vec![any], any),
+            ("conv2d", vec![any], any),
+            ("dataframe_free", vec![any], unit_ty),
+            ("tensor_free", vec![any], unit_ty),
+            ("len", vec![any], int_ty),
+            ("has_next", vec![any], bool_ty),
+            ("next", vec![any], any),
+        ]
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agam_lexer::Lexer;
     use agam_errors::span::SourceId;
+    use agam_lexer::Lexer;
 
     fn parse_and_resolve(source: &str) -> Resolver {
         let source_id = SourceId(0);
@@ -546,7 +671,9 @@ mod tests {
             let tok = lexer.next_token();
             let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
             tokens.push(tok);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
         let mut parser = agam_parser::Parser::new(tokens);
         let module = parser.parse_module(source_id).expect("parse failed");
@@ -574,19 +701,29 @@ mod tests {
     fn test_function_params_in_scope() {
         let r = parse_and_resolve("fn add(a: i32, b: i32): return a");
         // Should resolve `a` without error
-        let undeclared: Vec<_> = r.errors.iter().filter(|e| e.message.contains("undeclared")).collect();
+        let undeclared: Vec<_> = r
+            .errors
+            .iter()
+            .filter(|e| e.message.contains("undeclared"))
+            .collect();
         assert!(undeclared.is_empty(), "unexpected errors: {:?}", undeclared);
     }
 
     #[test]
     fn test_for_loop_variable() {
-        let r = parse_and_resolve(r#"
+        let r = parse_and_resolve(
+            r#"
 fn main():
     let items = [1, 2, 3]
     for item in items:
         item
-"#);
-        let undeclared: Vec<_> = r.errors.iter().filter(|e| e.message.contains("undeclared")).collect();
+"#,
+        );
+        let undeclared: Vec<_> = r
+            .errors
+            .iter()
+            .filter(|e| e.message.contains("undeclared"))
+            .collect();
         assert!(undeclared.is_empty(), "unexpected errors: {:?}", undeclared);
     }
 }

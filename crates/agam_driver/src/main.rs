@@ -17,7 +17,8 @@
 //! - `test`  — Run tests
 
 use clap::{Parser, Subcommand, ValueEnum};
-use std::collections::{BTreeSet, HashSet};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{self, Stdio};
 
@@ -163,6 +164,10 @@ struct ParsedSource {
     source_features: SourceFeatureFlags,
     source: String,
 }
+
+const DAEMON_STATUS_SCHEMA_VERSION: u32 = 1;
+const DAEMON_HEARTBEAT_STALE_MS: u128 = 5_000;
+const DAEMON_DEFAULT_POLL_MS: u64 = 1_000;
 
 #[derive(Subcommand, Debug)]
 enum Command {
@@ -331,6 +336,23 @@ enum Command {
     /// Start the Language Server Protocol server over stdio
     Lsp,
 
+    /// Start a persistent incremental compilation daemon
+    Daemon {
+        /// Workspace root, manifest path, or source file to keep warm (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Run one warm-state refresh and exit
+        #[arg(long)]
+        once: bool,
+
+        /// Poll interval in milliseconds while the foreground daemon is running
+        #[arg(long, default_value_t = DAEMON_DEFAULT_POLL_MS)]
+        poll_ms: u64,
+
+        #[command(subcommand)]
+        command: Option<DaemonCommand>,
+    },
+
     /// Run tests
     Test {
         /// Source file(s) containing tests
@@ -396,6 +418,113 @@ enum CacheCommand {
         #[arg(long, default_value = "5")]
         recent: usize,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum DaemonCommand {
+    /// Print background daemon status and cached pipeline health
+    Status,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct DaemonDiffSummary {
+    pub added_files: usize,
+    pub changed_files: usize,
+    pub removed_files: usize,
+    pub unchanged_files: usize,
+    pub manifest_changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct DaemonStatusRecord {
+    pub schema_version: u32,
+    pub workspace_root: String,
+    pub project_name: String,
+    pub pid: u32,
+    pub session_started_unix_ms: u128,
+    pub last_heartbeat_unix_ms: u128,
+    pub snapshot_file_count: usize,
+    pub warmed_file_count: usize,
+    pub warmed_version_count: usize,
+    pub ast_decl_count: usize,
+    pub hir_function_count: usize,
+    pub mir_function_count: usize,
+    pub last_diff: DaemonDiffSummary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DaemonLiveness {
+    Running,
+    Stale,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct WarmSummary {
+    pub warmed_files: usize,
+    pub reused_files: usize,
+    pub warmed_version_count: usize,
+    pub ast_decl_count: usize,
+    pub hir_function_count: usize,
+    pub mir_function_count: usize,
+}
+
+/// Daemon-owned compilation state for a specific file version.
+#[derive(Debug)]
+struct WarmState {
+    pub source_features: Option<SourceFeatureFlags>,
+    pub module: Option<agam_ast::Module>,
+    pub hir: Option<agam_hir::nodes::HirModule>,
+    pub mir: Option<agam_mir::ir::MirModule>,
+}
+
+/// Daemon pipeline and state owner.
+#[derive(Debug, Default)]
+struct DaemonSession {
+    pub snapshot: Option<agam_pkg::WorkspaceSnapshot>,
+    pub cache: BTreeMap<PathBuf, BTreeMap<String, WarmState>>,
+}
+
+/// Pipeline that takes a diff and reuses warm state where possible.
+struct IncrementalPipeline<'a> {
+    pub session: &'a mut DaemonSession,
+}
+
+impl<'a> IncrementalPipeline<'a> {
+    pub fn new(session: &'a mut DaemonSession) -> Self {
+        Self { session }
+    }
+
+    pub fn apply_diff(
+        &mut self,
+        next_snapshot: agam_pkg::WorkspaceSnapshot,
+        diff: &agam_pkg::WorkspaceSnapshotDiff,
+    ) {
+        let manifest_changed = self
+            .session
+            .snapshot
+            .as_ref()
+            .map(|previous| snapshot_diff_touches_manifest(previous, &next_snapshot, diff))
+            .unwrap_or(false);
+        if manifest_changed {
+            self.session.cache.clear();
+            self.session.snapshot = Some(next_snapshot);
+            return;
+        }
+
+        // Remove caches for deleted files entirely
+        for removed in &diff.removed_files {
+            self.session.cache.remove(removed);
+        }
+
+        // Remove caches for changed files
+        for changed in &diff.changed_files {
+            self.session.cache.remove(changed);
+        }
+
+        // Unchanged files maintain their WarmState entries securely in `session.cache`.
+
+        self.session.snapshot = Some(next_snapshot);
+    }
 }
 
 fn main() {
@@ -777,6 +906,26 @@ fn main() {
                 process::exit(1);
             }
         }
+
+        Command::Daemon {
+            path,
+            once,
+            poll_ms,
+            command,
+        } => match command {
+            Some(DaemonCommand::Status) => {
+                if let Err(e) = print_daemon_status(path, cli.verbose) {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
+            None => {
+                if let Err(e) = run_daemon_foreground(path, once, poll_ms, cli.verbose) {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
+        },
 
         Command::Test { files, coverage } => {
             let files = match agam_pkg::expand_agam_inputs(files) {
@@ -1686,22 +1835,99 @@ fn run_source_file(
     verbose: bool,
     features: FeatureFlags,
 ) -> Result<i32, String> {
+    run_source_file_with_optional_warm_state(
+        file, args, backend, opt_level, tuning, verbose, features, None,
+    )
+}
+
+fn warm_state_mir<'a>(
+    file: &Path,
+    warm_state: &'a WarmState,
+) -> Result<&'a agam_mir::ir::MirModule, String> {
+    warm_state
+        .mir
+        .as_ref()
+        .ok_or_else(|| format!("warm MIR state missing for `{}`", file.display()))
+}
+
+fn warm_state_source_features<'a>(
+    file: &Path,
+    warm_state: &'a WarmState,
+) -> Result<&'a SourceFeatureFlags, String> {
+    warm_state
+        .source_features
+        .as_ref()
+        .ok_or_else(|| format!("warm source features missing for `{}`", file.display()))
+}
+
+fn run_source_file_with_optional_warm_state(
+    file: &PathBuf,
+    args: &[String],
+    backend: Backend,
+    opt_level: u8,
+    tuning: &ReleaseTuning,
+    verbose: bool,
+    features: FeatureFlags,
+    warm_state: Option<&WarmState>,
+) -> Result<i32, String> {
     let exe_path = default_native_binary_output_path(file, tuning.target.as_deref());
 
     if backend == Backend::Jit {
         let mut runtime_args = Vec::with_capacity(args.len() + 1);
         runtime_args.push(file.to_string_lossy().to_string());
         runtime_args.extend(args.iter().cloned());
-        return run_with_jit(file, &runtime_args, verbose, features);
+        return match warm_state {
+            Some(warm_state) => run_with_jit_prelowered(
+                file,
+                &runtime_args,
+                warm_state_mir(file, warm_state)?,
+                warm_state_source_features(file, warm_state)?,
+                verbose,
+                features,
+            ),
+            None => run_with_jit(file, &runtime_args, verbose, features),
+        };
     }
 
     if backend == Backend::Llvm {
-        return run_with_llvm(file, args, opt_level, tuning, verbose, features);
+        return match warm_state {
+            Some(warm_state) => run_with_llvm_prelowered(
+                file,
+                args,
+                opt_level,
+                tuning,
+                warm_state_mir(file, warm_state)?,
+                warm_state_source_features(file, warm_state)?,
+                verbose,
+                features,
+            ),
+            None => run_with_llvm(file, args, opt_level, tuning, verbose, features),
+        };
     }
 
-    let outcome = build_file(
-        file, &exe_path, opt_level, backend, tuning, features, verbose,
-    )?;
+    let outcome = match warm_state {
+        Some(warm_state) => {
+            let call_cache = effective_call_cache_selection(
+                features,
+                warm_state_source_features(file, warm_state)?,
+            );
+            build_prelowered_file(
+                file,
+                &exe_path,
+                opt_level,
+                backend,
+                tuning,
+                warm_state_mir(file, warm_state)?,
+                &call_cache,
+                &[],
+                false,
+                verbose,
+            )?
+        }
+        None => build_file(
+            file, &exe_path, opt_level, backend, tuning, features, verbose,
+        )?,
+    };
     if !outcome.native_binary {
         return Err(format!(
             "backend {:?} emitted {} but no native executable was produced",
@@ -1798,6 +2024,19 @@ fn run_dev_workflow(
         cache_status.entry_count,
         human_bytes(cache_status.total_bytes)
     );
+    if let Some(status) = active_daemon_status(&workspace.root)? {
+        println!(
+            "daemon: connected (warm-state pipeline active; {} file(s) warm)",
+            status.warmed_file_count
+        );
+    } else if let Some(status) = read_daemon_status(&workspace.root)? {
+        println!(
+            "daemon: stale (last heartbeat {}; run `agamc daemon` for incremental warm-state reuse)",
+            relative_age(now_unix_ms().saturating_sub(status.last_heartbeat_unix_ms))
+        );
+    } else {
+        println!("daemon: not connected (run `agamc daemon` for incremental warm-state reuse)");
+    }
     println!(
         "toolchain: {}",
         native_llvm
@@ -1831,8 +2070,13 @@ fn run_dev_workflow(
         eprintln!("\x1b[1;32m✓\x1b[0m Formatted {} file(s).", changed.len());
     }
 
+    let mut warmed_entry_state = None;
     for file in &workspace.source_files {
-        compile_file(file, verbose)?;
+        if *file == workspace.entry_file {
+            warmed_entry_state = compile_dev_source_file(file, !no_run, verbose)?;
+        } else {
+            compile_file(file, verbose)?;
+        }
     }
     for file in &workspace.test_files {
         compile_file(file, verbose)?;
@@ -1863,7 +2107,7 @@ fn run_dev_workflow(
         pgo_use: None,
     };
     let features = FeatureFlags::default();
-    let code = run_source_file(
+    let code = run_source_file_with_optional_warm_state(
         &workspace.entry_file,
         &[],
         resolved_backend,
@@ -1871,6 +2115,7 @@ fn run_dev_workflow(
         &tuning,
         verbose,
         features,
+        warmed_entry_state.as_ref(),
     )?;
     if code != 0 {
         return Err(format!("program exited with status {}", code));
@@ -1908,6 +2153,313 @@ fn relative_age(delta_ms: u128) -> String {
         format!("{}s ago", delta_ms / SECOND)
     } else {
         "just now".into()
+    }
+}
+
+fn now_unix_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+fn daemon_status_path(root: &Path) -> PathBuf {
+    root.join(".agam_cache").join("daemon").join("status.json")
+}
+
+fn ensure_daemon_status_dir(root: &Path) -> Result<PathBuf, String> {
+    let dir = root.join(".agam_cache").join("daemon");
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        format!(
+            "failed to create daemon status directory `{}`: {e}",
+            dir.display()
+        )
+    })?;
+    Ok(dir)
+}
+
+fn read_daemon_status(root: &Path) -> Result<Option<DaemonStatusRecord>, String> {
+    let path = daemon_status_path(root);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let json = std::fs::read_to_string(&path)
+        .map_err(|e| format!("failed to read daemon status `{}`: {e}", path.display()))?;
+    let status: DaemonStatusRecord = serde_json::from_str(&json)
+        .map_err(|e| format!("failed to parse daemon status `{}`: {e}", path.display()))?;
+    if status.schema_version != DAEMON_STATUS_SCHEMA_VERSION {
+        return Ok(None);
+    }
+    Ok(Some(status))
+}
+
+fn write_daemon_status(root: &Path, status: &DaemonStatusRecord) -> Result<(), String> {
+    ensure_daemon_status_dir(root)?;
+    let path = daemon_status_path(root);
+    let json = serde_json::to_vec_pretty(status)
+        .map_err(|e| format!("failed to serialize daemon status: {e}"))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("failed to write daemon status `{}`: {e}", path.display()))
+}
+
+fn daemon_liveness(status: &DaemonStatusRecord, now: u128) -> DaemonLiveness {
+    if now.saturating_sub(status.last_heartbeat_unix_ms) <= DAEMON_HEARTBEAT_STALE_MS {
+        DaemonLiveness::Running
+    } else {
+        DaemonLiveness::Stale
+    }
+}
+
+fn active_daemon_status(root: &Path) -> Result<Option<DaemonStatusRecord>, String> {
+    let Some(status) = read_daemon_status(root)? else {
+        return Ok(None);
+    };
+    if daemon_liveness(&status, now_unix_ms()) == DaemonLiveness::Running {
+        Ok(Some(status))
+    } else {
+        Ok(None)
+    }
+}
+
+fn tracked_snapshot_file_count(snapshot: &agam_pkg::WorkspaceSnapshot) -> usize {
+    usize::from(snapshot.manifest.is_some())
+        + snapshot.source_files.len()
+        + snapshot.test_files.len()
+}
+
+fn workspace_diff_is_empty(diff: &agam_pkg::WorkspaceSnapshotDiff) -> bool {
+    diff.added_files.is_empty() && diff.changed_files.is_empty() && diff.removed_files.is_empty()
+}
+
+fn snapshot_diff_touches_manifest(
+    previous: &agam_pkg::WorkspaceSnapshot,
+    next: &agam_pkg::WorkspaceSnapshot,
+    diff: &agam_pkg::WorkspaceSnapshotDiff,
+) -> bool {
+    let previous_manifest = previous.manifest.as_ref().map(|file| &file.path);
+    let next_manifest = next.manifest.as_ref().map(|file| &file.path);
+    diff.added_files
+        .iter()
+        .chain(&diff.changed_files)
+        .chain(&diff.removed_files)
+        .any(|path| Some(path) == previous_manifest || Some(path) == next_manifest)
+}
+
+fn summarize_workspace_diff(
+    previous: Option<&agam_pkg::WorkspaceSnapshot>,
+    next: &agam_pkg::WorkspaceSnapshot,
+    diff: Option<&agam_pkg::WorkspaceSnapshotDiff>,
+) -> DaemonDiffSummary {
+    match (previous, diff) {
+        (Some(previous), Some(diff)) => DaemonDiffSummary {
+            added_files: diff.added_files.len(),
+            changed_files: diff.changed_files.len(),
+            removed_files: diff.removed_files.len(),
+            unchanged_files: diff.unchanged_files.len(),
+            manifest_changed: snapshot_diff_touches_manifest(previous, next, diff),
+        },
+        _ => DaemonDiffSummary {
+            added_files: tracked_snapshot_file_count(next),
+            ..DaemonDiffSummary::default()
+        },
+    }
+}
+
+fn daemon_diff_has_changes(summary: &DaemonDiffSummary) -> bool {
+    summary.manifest_changed
+        || summary.added_files > 0
+        || summary.changed_files > 0
+        || summary.removed_files > 0
+}
+
+fn build_daemon_status(
+    snapshot: &agam_pkg::WorkspaceSnapshot,
+    warm: WarmSummary,
+    last_diff: DaemonDiffSummary,
+    session_started_unix_ms: u128,
+) -> DaemonStatusRecord {
+    DaemonStatusRecord {
+        schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+        workspace_root: snapshot.session.layout.root.display().to_string(),
+        project_name: snapshot.session.layout.project_name.clone(),
+        pid: process::id(),
+        session_started_unix_ms,
+        last_heartbeat_unix_ms: now_unix_ms(),
+        snapshot_file_count: tracked_snapshot_file_count(snapshot),
+        warmed_file_count: snapshot.source_files.len() + snapshot.test_files.len(),
+        warmed_version_count: warm.warmed_version_count,
+        ast_decl_count: warm.ast_decl_count,
+        hir_function_count: warm.hir_function_count,
+        mir_function_count: warm.mir_function_count,
+        last_diff,
+    }
+}
+
+fn print_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), String> {
+    let workspace = resolve_workspace_layout(path)?;
+    let now = now_unix_ms();
+
+    println!("Agam Daemon Status");
+    println!("workspace: {}", workspace.root.display());
+    println!("project: {}", workspace.project_name);
+
+    let Some(status) = read_daemon_status(&workspace.root)? else {
+        println!("status: not running");
+        if verbose {
+            println!(
+                "status-file: {}",
+                daemon_status_path(&workspace.root).display()
+            );
+        }
+        return Ok(());
+    };
+
+    let heartbeat_age = now.saturating_sub(status.last_heartbeat_unix_ms);
+    match daemon_liveness(&status, now) {
+        DaemonLiveness::Running => println!("status: running"),
+        DaemonLiveness::Stale => println!("status: stale"),
+    }
+    println!("pid: {}", status.pid);
+    println!("heartbeat: {}", relative_age(heartbeat_age));
+    println!("tracked files: {}", status.snapshot_file_count);
+    println!("warm files: {}", status.warmed_file_count);
+    println!("warm versions: {}", status.warmed_version_count);
+    println!("parsed declarations: {}", status.ast_decl_count);
+    println!(
+        "lowered functions: HIR {} / MIR {}",
+        status.hir_function_count, status.mir_function_count
+    );
+    if status.last_diff.manifest_changed {
+        println!("last diff: manifest changed, full warm-state reset");
+    } else {
+        println!(
+            "last diff: +{} ~{} -{} ={}",
+            status.last_diff.added_files,
+            status.last_diff.changed_files,
+            status.last_diff.removed_files,
+            status.last_diff.unchanged_files
+        );
+    }
+    if verbose {
+        println!(
+            "status-file: {}",
+            daemon_status_path(&workspace.root).display()
+        );
+    }
+
+    Ok(())
+}
+
+fn refresh_daemon_session(
+    session: &mut DaemonSession,
+    next_snapshot: agam_pkg::WorkspaceSnapshot,
+    verbose: bool,
+) -> Result<(WarmSummary, DaemonDiffSummary), String> {
+    let diff_summary = if let Some(previous) = session.snapshot.as_ref() {
+        let diff = agam_pkg::diff_workspace_snapshots(previous, &next_snapshot);
+        let summary = summarize_workspace_diff(Some(previous), &next_snapshot, Some(&diff));
+        if workspace_diff_is_empty(&diff) {
+            session.snapshot = Some(next_snapshot);
+        } else {
+            let mut pipeline = IncrementalPipeline::new(session);
+            pipeline.apply_diff(next_snapshot, &diff);
+        }
+        summary
+    } else {
+        let summary = summarize_workspace_diff(None, &next_snapshot, None);
+        session.snapshot = Some(next_snapshot);
+        summary
+    };
+
+    let snapshot = session
+        .snapshot
+        .clone()
+        .ok_or_else(|| "internal error: daemon snapshot missing after refresh".to_string())?;
+    let warm = warm_workspace_session(session, &snapshot, verbose)?;
+    Ok((warm, diff_summary))
+}
+
+fn run_daemon_foreground(
+    path: Option<PathBuf>,
+    once: bool,
+    poll_ms: u64,
+    verbose: bool,
+) -> Result<(), String> {
+    let initial_snapshot = agam_pkg::snapshot_workspace(path)?;
+    let workspace = initial_snapshot.session.layout.clone();
+    let session_started_unix_ms = now_unix_ms();
+    let mut session = DaemonSession::default();
+    let mut first_cycle = true;
+
+    println!("Agam Daemon");
+    println!("workspace: {}", workspace.root.display());
+    println!("project: {}", workspace.project_name);
+    if let Some(manifest) = workspace.manifest_path.as_ref() {
+        println!("manifest: {}", manifest.display());
+    } else {
+        println!("manifest: none");
+    }
+    if once {
+        println!("mode: one-shot warm refresh");
+    } else {
+        println!("mode: foreground warm loop ({poll_ms} ms poll)");
+        println!(
+            "status-file: {}",
+            daemon_status_path(&workspace.root).display()
+        );
+    }
+
+    loop {
+        let snapshot = if first_cycle {
+            initial_snapshot.clone()
+        } else {
+            agam_pkg::snapshot_workspace_from_path(&workspace.root)?
+        };
+        let (warm, diff_summary) = refresh_daemon_session(&mut session, snapshot, verbose)?;
+        let snapshot = session
+            .snapshot
+            .clone()
+            .ok_or_else(|| "internal error: daemon snapshot missing".to_string())?;
+        let status = build_daemon_status(
+            &snapshot,
+            warm,
+            diff_summary.clone(),
+            session_started_unix_ms,
+        );
+
+        let should_log = first_cycle || daemon_diff_has_changes(&diff_summary);
+        if should_log {
+            println!(
+                "warm: {} file(s), {} version(s), AST {}, HIR {}, MIR {}",
+                status.warmed_file_count,
+                status.warmed_version_count,
+                status.ast_decl_count,
+                status.hir_function_count,
+                status.mir_function_count
+            );
+            if diff_summary.manifest_changed {
+                println!("invalidate: manifest changed, full warm-state reset");
+            } else if diff_summary.added_files > 0
+                || diff_summary.changed_files > 0
+                || diff_summary.removed_files > 0
+            {
+                println!(
+                    "invalidate: +{} ~{} -{} ={}",
+                    diff_summary.added_files,
+                    diff_summary.changed_files,
+                    diff_summary.removed_files,
+                    diff_summary.unchanged_files
+                );
+            }
+        }
+
+        if once {
+            return Ok(());
+        }
+
+        write_daemon_status(&workspace.root, &status)?;
+        std::thread::sleep(std::time::Duration::from_millis(poll_ms.max(100)));
+        first_cycle = false;
     }
 }
 
@@ -1955,6 +2507,68 @@ fn parse_source_file(path: &PathBuf, verbose: bool) -> Result<ParsedSource, Stri
         source_features,
         source,
     })
+}
+
+fn emit_resolve_error(emitter: &mut DiagnosticEmitter, error: &agam_sema::resolver::ResolveError) {
+    let diagnostic = if error.span.is_dummy() {
+        Diagnostic::error("E3001", error.message.clone())
+    } else {
+        Diagnostic::error("E3001", error.message.clone())
+            .with_label(Label::primary(error.span, error.message.clone()))
+    };
+    emitter.emit(diagnostic);
+}
+
+fn emit_type_error(emitter: &mut DiagnosticEmitter, error: &agam_sema::checker::TypeError) {
+    let diagnostic = if error.span.is_dummy() {
+        Diagnostic::error("E3002", error.message.clone())
+    } else {
+        Diagnostic::error("E3002", error.message.clone())
+            .with_label(Label::primary(error.span, error.message.clone()))
+    };
+    emitter.emit(diagnostic);
+}
+
+fn semantic_check_parsed_source(
+    path: &PathBuf,
+    parsed: &ParsedSource,
+    verbose: bool,
+) -> Result<(), String> {
+    let source_file = SourceFile::new(
+        SourceId(0),
+        path.to_string_lossy().to_string(),
+        parsed.source.clone(),
+    );
+    let mut emitter = DiagnosticEmitter::new();
+    emitter.add_source(source_file);
+
+    let mut resolver = agam_sema::resolver::Resolver::new();
+    resolver.resolve_module(&parsed.module);
+    let resolve_error_count = resolver.errors.len();
+    if verbose {
+        eprintln!("[agamc] Name resolution: {} error(s)", resolve_error_count);
+    }
+    for error in &resolver.errors {
+        emit_resolve_error(&mut emitter, error);
+    }
+    if resolve_error_count > 0 {
+        return Err(format!("{resolve_error_count} semantic error(s)"));
+    }
+
+    let mut checker = agam_sema::checker::TypeChecker::from_resolver(resolver);
+    checker.check_module(&parsed.module);
+    let type_error_count = checker.errors.len();
+    if verbose {
+        eprintln!("[agamc] Type checking: {} error(s)", type_error_count);
+    }
+    for error in &checker.errors {
+        emit_type_error(&mut emitter, error);
+    }
+    if type_error_count > 0 {
+        return Err(format!("{type_error_count} type error(s)"));
+    }
+
+    Ok(())
 }
 
 fn source_feature_flags_from_tokens(tokens: &[Token]) -> SourceFeatureFlags {
@@ -2140,15 +2754,33 @@ fn parse_annotation_name(tokens: &[Token], start: usize) -> Option<ParsedAnnotat
     })
 }
 
-/// Read, lex, and parse a source file. Returns Ok(()) if no errors.
+/// Read, parse, and run semantic checks without lowering or code generation.
 fn compile_file(path: &PathBuf, verbose: bool) -> Result<(), String> {
-    let _ = parse_source_file(path, verbose)?;
+    let parsed = parse_source_file(path, verbose)?;
+    semantic_check_parsed_source(path, &parsed, verbose)?;
     Ok(())
 }
 
-fn lower_parsed_to_optimized_mir(parsed: &ParsedSource, verbose: bool) -> agam_mir::ir::MirModule {
+/// Compile a file for `agamc dev`; only the runnable entry file needs warm lowered state.
+fn compile_dev_source_file(
+    path: &PathBuf,
+    keep_warm_state: bool,
+    verbose: bool,
+) -> Result<Option<WarmState>, String> {
+    if keep_warm_state {
+        Ok(Some(compile_file_with_warm_state(path, verbose)?))
+    } else {
+        compile_file(path, verbose)?;
+        Ok(None)
+    }
+}
+
+fn lower_module_to_hir_and_optimized_mir(
+    module: &agam_ast::Module,
+    verbose: bool,
+) -> (agam_hir::nodes::HirModule, agam_mir::ir::MirModule) {
     let mut hir_lowering = agam_hir::lower::HirLowering::new();
-    let hir = hir_lowering.lower_module(&parsed.module);
+    let hir = hir_lowering.lower_module(module);
 
     if verbose {
         eprintln!("[agamc] Lowered to HIR: {} functions", hir.functions.len());
@@ -2195,6 +2827,75 @@ fn lower_parsed_to_optimized_mir(parsed: &ParsedSource, verbose: bool) -> agam_m
         }
     }
 
+    (hir, mir)
+}
+
+fn build_warm_state(
+    path: &PathBuf,
+    parsed: ParsedSource,
+    verbose: bool,
+) -> Result<WarmState, String> {
+    semantic_check_parsed_source(path, &parsed, verbose)?;
+    let ParsedSource {
+        module,
+        source_features,
+        ..
+    } = parsed;
+    let (hir, mir) = lower_module_to_hir_and_optimized_mir(&module, verbose);
+    Ok(WarmState {
+        source_features: Some(source_features),
+        module: Some(module),
+        hir: Some(hir),
+        mir: Some(mir),
+    })
+}
+
+fn warm_workspace_session(
+    session: &mut DaemonSession,
+    snapshot: &agam_pkg::WorkspaceSnapshot,
+    verbose: bool,
+) -> Result<WarmSummary, String> {
+    let mut summary = WarmSummary::default();
+
+    for file in snapshot.source_files.iter().chain(&snapshot.test_files) {
+        let versions = session.cache.entry(file.path.clone()).or_default();
+        if versions.contains_key(&file.content_hash) {
+            summary.reused_files += 1;
+            continue;
+        }
+
+        let parsed = parse_source_file(&file.path, verbose)?;
+        let warm_state = build_warm_state(&file.path, parsed, verbose)?;
+        versions.clear();
+        versions.insert(file.content_hash.clone(), warm_state);
+        summary.warmed_files += 1;
+    }
+
+    for versions in session.cache.values() {
+        summary.warmed_version_count += versions.len();
+        for state in versions.values() {
+            if let Some(module) = state.module.as_ref() {
+                summary.ast_decl_count += module.declarations.len();
+            }
+            if let Some(hir) = state.hir.as_ref() {
+                summary.hir_function_count += hir.functions.len();
+            }
+            if let Some(mir) = state.mir.as_ref() {
+                summary.mir_function_count += mir.functions.len();
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+fn compile_file_with_warm_state(path: &PathBuf, verbose: bool) -> Result<WarmState, String> {
+    let parsed = parse_source_file(path, verbose)?;
+    build_warm_state(path, parsed, verbose)
+}
+
+fn lower_parsed_to_optimized_mir(parsed: &ParsedSource, verbose: bool) -> agam_mir::ir::MirModule {
+    let (_, mir) = lower_module_to_hir_and_optimized_mir(&parsed.module, verbose);
     mir
 }
 
@@ -2203,6 +2904,7 @@ fn lower_to_optimized_mir(
     verbose: bool,
 ) -> Result<(agam_mir::ir::MirModule, SourceFeatureFlags), String> {
     let parsed = parse_source_file(path, verbose)?;
+    semantic_check_parsed_source(path, &parsed, verbose)?;
     let mir = lower_parsed_to_optimized_mir(&parsed, verbose);
 
     Ok((mir, parsed.source_features))
@@ -2213,6 +2915,7 @@ fn build_portable_package_file(
     verbose: bool,
 ) -> Result<agam_pkg::PortablePackage, String> {
     let parsed = parse_source_file(path, verbose)?;
+    semantic_check_parsed_source(path, &parsed, verbose)?;
     let mir = lower_parsed_to_optimized_mir(&parsed, verbose);
     Ok(agam_pkg::build_portable_package(
         path,
@@ -3999,8 +4702,30 @@ fn run_with_llvm(
     verbose: bool,
     features: FeatureFlags,
 ) -> Result<i32, String> {
-    let allow_dev_wsl_llvm = allow_dev_wsl_llvm();
     let (mir, source_features) = lower_to_optimized_mir(path, verbose)?;
+    run_with_llvm_prelowered(
+        path,
+        args,
+        opt_level,
+        tuning,
+        &mir,
+        &source_features,
+        verbose,
+        features,
+    )
+}
+
+fn run_with_llvm_prelowered(
+    path: &PathBuf,
+    args: &[String],
+    opt_level: u8,
+    tuning: &ReleaseTuning,
+    mir: &agam_mir::ir::MirModule,
+    source_features: &SourceFeatureFlags,
+    verbose: bool,
+    features: FeatureFlags,
+) -> Result<i32, String> {
+    let allow_dev_wsl_llvm = allow_dev_wsl_llvm();
     let call_cache = effective_call_cache_selection(features, &source_features);
     let persisted_profile = if call_cache.is_enabled() {
         load_persisted_llvm_profile(path, &mir, &call_cache, verbose)
@@ -4237,6 +4962,17 @@ fn run_with_jit(
     features: FeatureFlags,
 ) -> Result<i32, String> {
     let (mir, source_features) = lower_to_optimized_mir(path, verbose)?;
+    run_with_jit_prelowered(path, args, &mir, &source_features, verbose, features)
+}
+
+fn run_with_jit_prelowered(
+    path: &PathBuf,
+    args: &[String],
+    mir: &agam_mir::ir::MirModule,
+    source_features: &SourceFeatureFlags,
+    verbose: bool,
+    features: FeatureFlags,
+) -> Result<i32, String> {
     let call_cache = effective_call_cache_selection(features, &source_features);
     let persisted_profile = if call_cache.is_enabled() {
         load_persisted_jit_profile(path, &mir, &call_cache, verbose)
@@ -4560,6 +5296,233 @@ mod tests {
         assert!(layout.manifest_path.is_none());
         assert_eq!(layout.entry_file, file);
         assert_eq!(layout.source_files, vec![layout.entry_file.clone()]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_compile_file_rejects_undeclared_identifier() {
+        let root = temp_dir("compile_semantic_error");
+        let file = root.join("broken.agam");
+        fs::write(&file, "fn main(): y\n").expect("write source");
+
+        let error = compile_file(&file, false).expect_err("compile should fail");
+        assert!(error.contains("semantic error"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_compile_file_accepts_builtin_println() {
+        let root = temp_dir("compile_builtin");
+        let file = root.join("builtin.agam");
+        fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
+
+        compile_file(&file, false).expect("compile should succeed");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_compile_dev_source_file_skips_warm_state_when_not_running() {
+        let root = temp_dir("compile_dev_no_run");
+        let file = root.join("main.agam");
+        fs::write(&file, "@lang.advance\nfn main() -> i32 { return 0; }\n").expect("write source");
+
+        let warm = compile_dev_source_file(&file, false, false).expect("dev compile should work");
+        assert!(warm.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_compile_dev_source_file_keeps_warm_state_for_run() {
+        let root = temp_dir("compile_dev_run");
+        let file = root.join("main.agam");
+        fs::write(&file, "@lang.advance\nfn main() -> i32 { return 0; }\n").expect("write source");
+
+        let warm =
+            compile_dev_source_file(&file, true, false).expect("warm dev compile should work");
+        let warm = warm.expect("warm state should be retained for runnable entry file");
+        assert!(warm.source_features.is_some());
+        assert_eq!(warm.mir.as_ref().expect("mir").functions.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_compile_file_with_warm_state_captures_mir_and_source_features() {
+        let root = temp_dir("compile_warm_state");
+        let file = root.join("warm.agam");
+        fs::write(&file, "@lang.advance\nfn main() -> i32 { return 0; }\n").expect("write source");
+
+        let warm = compile_file_with_warm_state(&file, false).expect("warm compile should succeed");
+        assert!(warm.source_features.is_some());
+        assert_eq!(warm.mir.as_ref().expect("mir").functions.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_lower_to_optimized_mir_rejects_type_errors() {
+        let root = temp_dir("lower_type_error");
+        let file = root.join("broken_type.agam");
+        fs::write(&file, "fn main(): while 42: let x = 1\n").expect("write source");
+
+        let error = lower_to_optimized_mir(&file, false).expect_err("lowering should fail");
+        assert!(error.contains("type error"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_lower_to_optimized_mir_accepts_valid_source() {
+        let root = temp_dir("lower_valid");
+        let file = root.join("ok.agam");
+        fs::write(&file, "fn main(): let x = 42\n").expect("write source");
+
+        let (mir, _) = lower_to_optimized_mir(&file, false).expect("lowering should succeed");
+        assert_eq!(mir.functions.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_incremental_pipeline_clears_all_warm_state_when_manifest_changes() {
+        let root = temp_dir("daemon_manifest_invalidation");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        agam_pkg::write_workspace_manifest_to_path(
+            &manifest,
+            &agam_pkg::scaffold_workspace_manifest("daemon-manifest"),
+        )
+        .expect("write manifest");
+        fs::write(&entry, render_project_entry("daemon-manifest")).expect("write entry");
+
+        let previous = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
+        let source_hash = previous.source_files[0].content_hash.clone();
+        let mut session = DaemonSession {
+            snapshot: Some(previous.clone()),
+            cache: BTreeMap::new(),
+        };
+        session.cache.entry(entry.clone()).or_default().insert(
+            source_hash,
+            WarmState {
+                source_features: None,
+                module: None,
+                hir: None,
+                mir: None,
+            },
+        );
+
+        let mut next_manifest = agam_pkg::scaffold_workspace_manifest("daemon-manifest");
+        next_manifest.project.version = "0.2.0".into();
+        agam_pkg::write_workspace_manifest_to_path(&manifest, &next_manifest)
+            .expect("rewrite manifest");
+
+        let next = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
+        let diff = agam_pkg::diff_workspace_snapshots(&previous, &next);
+        let mut pipeline = IncrementalPipeline::new(&mut session);
+        pipeline.apply_diff(next, &diff);
+
+        assert!(session.cache.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_refresh_daemon_session_reuses_unchanged_files_and_rewarms_changed_ones() {
+        let root = temp_dir("daemon_refresh");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        agam_pkg::write_workspace_manifest_to_path(
+            &manifest,
+            &agam_pkg::scaffold_workspace_manifest("daemon-refresh"),
+        )
+        .expect("write manifest");
+        fs::write(&entry, render_project_entry("daemon-refresh")).expect("write entry");
+
+        let mut session = DaemonSession::default();
+        let first_snapshot = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
+        let first_hash = first_snapshot.source_files[0].content_hash.clone();
+        let (first_warm, first_diff) =
+            refresh_daemon_session(&mut session, first_snapshot.clone(), false)
+                .expect("warm first snapshot");
+        assert_eq!(first_warm.warmed_files, 1);
+        assert_eq!(first_warm.reused_files, 0);
+        assert_eq!(first_diff.added_files, 2);
+        assert!(
+            session
+                .cache
+                .get(&entry)
+                .expect("entry cache")
+                .contains_key(&first_hash)
+        );
+
+        let repeat_snapshot = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
+        let (repeat_warm, repeat_diff) =
+            refresh_daemon_session(&mut session, repeat_snapshot, false)
+                .expect("warm repeated snapshot");
+        assert_eq!(repeat_warm.warmed_files, 0);
+        assert_eq!(repeat_warm.reused_files, 1);
+        assert_eq!(repeat_diff.changed_files, 0);
+        assert_eq!(repeat_diff.removed_files, 0);
+
+        fs::write(
+            &entry,
+            "@lang.advance\n\nfn main() -> i32 {\n    return 1;\n}\n",
+        )
+        .expect("rewrite entry");
+        let changed_snapshot = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
+        let changed_hash = changed_snapshot.source_files[0].content_hash.clone();
+        let (changed_warm, changed_diff) =
+            refresh_daemon_session(&mut session, changed_snapshot, false)
+                .expect("warm changed snapshot");
+        assert_eq!(changed_diff.changed_files, 1);
+        assert_eq!(changed_warm.warmed_files, 1);
+        assert_eq!(changed_warm.reused_files, 0);
+        let entry_versions = session.cache.get(&entry).expect("entry cache");
+        assert!(entry_versions.contains_key(&changed_hash));
+        assert!(!entry_versions.contains_key(&first_hash));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_active_daemon_status_requires_fresh_heartbeat() {
+        let root = temp_dir("daemon_status");
+        let mut status = DaemonStatusRecord {
+            schema_version: DAEMON_STATUS_SCHEMA_VERSION,
+            workspace_root: root.display().to_string(),
+            project_name: "daemon-status".into(),
+            pid: process::id(),
+            session_started_unix_ms: now_unix_ms(),
+            last_heartbeat_unix_ms: now_unix_ms(),
+            snapshot_file_count: 2,
+            warmed_file_count: 1,
+            warmed_version_count: 1,
+            ast_decl_count: 1,
+            hir_function_count: 1,
+            mir_function_count: 1,
+            last_diff: DaemonDiffSummary::default(),
+        };
+        write_daemon_status(&root, &status).expect("write fresh status");
+        assert!(active_daemon_status(&root).expect("read status").is_some());
+
+        status.last_heartbeat_unix_ms = now_unix_ms().saturating_sub(DAEMON_HEARTBEAT_STALE_MS + 1);
+        write_daemon_status(&root, &status).expect("write stale status");
+        assert!(
+            read_daemon_status(&root)
+                .expect("read stale status")
+                .is_some()
+        );
+        assert!(
+            active_daemon_status(&root)
+                .expect("read active status")
+                .is_none()
+        );
 
         let _ = fs::remove_dir_all(root);
     }
