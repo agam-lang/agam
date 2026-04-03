@@ -10,5 +10,6 @@
 //! - **Actors** (future) — message-passing actor system.
 
 pub mod arc;
+pub mod contract;
 pub mod hwinfo;
 pub mod simd;

@@ -9,6 +9,7 @@ license.workspace = true
 agam_sema = { path = "../agam_sema" }
 agam_hir = { path = "../agam_hir" }
 agam_errors = { path = "../agam_errors" }
+serde = { workspace = true }
 
 [dev-dependencies]
 agam_ast = { path = "../agam_ast" }

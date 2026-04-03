@@ -5,6 +5,7 @@
 //! information and metadata used by later compiler passes.
 
 use agam_errors::Span;
+use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a symbol within the compilation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -53,7 +54,7 @@ pub enum SymbolKind {
 }
 
 /// Unique identifier for an internal resolved type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TypeId(pub u32);
 
 /// A resolved symbol entry in the symbol table.
