@@ -2,6 +2,7 @@
 
 pub mod constant_fold;
 pub mod dce;
+pub mod escape;
 pub mod inline;
 pub mod loop_unroll;
 
@@ -27,4 +28,11 @@ pub fn optimize_module(module: &mut MirModule) -> bool {
     }
 
     changed_any
+}
+
+pub fn run_escape_and_promote(
+    module: &mut MirModule,
+    purity: &escape::CalleePurityInfo,
+) -> (escape::EscapeAnalysisResults, escape::StackPromotionResults) {
+    escape::run_escape_and_promote(module, purity)
 }
