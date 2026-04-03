@@ -698,6 +698,13 @@ fn main() {
                 eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
                 process::exit(1);
             }
+            let file = match resolve_entry_source_path(&file) {
+                Ok(file) => file,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            };
             if cli.verbose {
                 eprintln!("[agamc] Running {}...", file.display());
                 if !args.is_empty() {
@@ -745,6 +752,13 @@ fn main() {
 
         Command::Package { command } => match command {
             PackageCommand::Pack { file, output } => {
+                let file = match resolve_entry_source_path(&file) {
+                    Ok(file) => file,
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                };
                 let output = output.unwrap_or_else(|| agam_pkg::default_package_path(&file));
                 match build_portable_package_file(&file, cli.verbose) {
                     Ok(package) => {
@@ -1101,6 +1115,10 @@ fn default_native_binary_output_path(source: &Path, target: Option<&str>) -> Pat
     output
 }
 
+fn resolve_entry_source_path(path: &Path) -> Result<PathBuf, String> {
+    Ok(resolve_workspace_layout(Some(path.to_path_buf()))?.entry_file)
+}
+
 fn resolve_build_requests(
     files: &[PathBuf],
     output: Option<PathBuf>,
@@ -1122,12 +1140,12 @@ fn resolve_build_requests(
 
     Ok(files
         .iter()
-        .cloned()
-        .map(|file| {
+        .map(|path| -> Result<(PathBuf, PathBuf), String> {
+            let file = resolve_entry_source_path(path)?;
             let output = default_native_binary_output_path(&file, target);
-            (file, output)
+            Ok((file, output))
         })
-        .collect())
+        .collect::<Result<Vec<_>, _>>()?)
 }
 
 fn native_binary_extension(target: Option<&str>) -> Option<&'static str> {
@@ -5643,6 +5661,50 @@ mod tests {
         assert!(layout.manifest_path.is_none());
         assert_eq!(layout.entry_file, file);
         assert_eq!(layout.source_files, vec![layout.entry_file.clone()]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_resolve_entry_source_path_uses_workspace_root_entry_file() {
+        let root = temp_dir("entry_source_root");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        agam_pkg::write_workspace_manifest_to_path(
+            &manifest,
+            &agam_pkg::scaffold_workspace_manifest("entry-source-root"),
+        )
+        .expect("write manifest");
+        fs::write(&entry, render_project_entry("entry-source-root")).expect("write entry");
+
+        let resolved =
+            resolve_entry_source_path(&root).expect("workspace root should resolve to entry file");
+        assert_eq!(resolved, entry);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_resolve_build_requests_uses_workspace_manifest_entry_output() {
+        let root = temp_dir("build_requests_manifest");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        agam_pkg::write_workspace_manifest_to_path(
+            &manifest,
+            &agam_pkg::scaffold_workspace_manifest("build-requests-manifest"),
+        )
+        .expect("write manifest");
+        fs::write(&entry, render_project_entry("build-requests-manifest")).expect("write entry");
+
+        let requests = resolve_build_requests(
+            std::slice::from_ref(&manifest),
+            None,
+            Some("x86_64-pc-windows-msvc"),
+        )
+        .expect("manifest input should resolve to entry file");
+        assert_eq!(requests, vec![(entry.clone(), entry.with_extension("exe"))]);
 
         let _ = fs::remove_dir_all(root);
     }
