@@ -488,6 +488,17 @@ struct WarmSummary {
     pub mir_function_count: usize,
 }
 
+enum DaemonCycleOutcome {
+    Success {
+        status: DaemonStatusRecord,
+        diff_summary: DaemonDiffSummary,
+    },
+    Error {
+        status: DaemonStatusRecord,
+        error: String,
+    },
+}
+
 /// Daemon-owned compilation state for a specific file version.
 #[derive(Debug)]
 struct WarmState {
@@ -1799,6 +1810,14 @@ fn daemon_workspace_target_from_root(root: PathBuf) -> DaemonWorkspaceTarget {
     DaemonWorkspaceTarget { root, project_name }
 }
 
+fn daemon_refresh_snapshot_hint(workspace: &WorkspaceLayout) -> PathBuf {
+    if workspace.manifest_path.is_none() {
+        workspace.entry_file.clone()
+    } else {
+        workspace.root.clone()
+    }
+}
+
 fn resolve_daemon_workspace_target(path: Option<PathBuf>) -> Result<DaemonWorkspaceTarget, String> {
     let hint = match path {
         Some(path) => path,
@@ -2556,6 +2575,60 @@ fn refresh_daemon_session(
     Ok((warm, diff_summary))
 }
 
+fn run_daemon_cycle(
+    session: &mut DaemonSession,
+    refresh_hint: &Path,
+    initial_snapshot: &agam_pkg::WorkspaceSnapshot,
+    session_started_unix_ms: u128,
+    run_mode: DaemonRunMode,
+    verbose: bool,
+    first_cycle: bool,
+) -> Result<DaemonCycleOutcome, String> {
+    let snapshot = if first_cycle {
+        initial_snapshot.clone()
+    } else {
+        match agam_pkg::snapshot_workspace_from_path(refresh_hint) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let status = build_daemon_error_status(
+                    session.snapshot.as_ref().unwrap_or(initial_snapshot),
+                    session_started_unix_ms,
+                    run_mode,
+                    error.clone(),
+                );
+                return Ok(DaemonCycleOutcome::Error { status, error });
+            }
+        }
+    };
+    let (warm, diff_summary) = match refresh_daemon_session(session, snapshot.clone(), verbose) {
+        Ok(result) => result,
+        Err(error) => {
+            let status = build_daemon_error_status(
+                &snapshot,
+                session_started_unix_ms,
+                run_mode,
+                error.clone(),
+            );
+            return Ok(DaemonCycleOutcome::Error { status, error });
+        }
+    };
+    let snapshot = session
+        .snapshot
+        .clone()
+        .ok_or_else(|| "internal error: daemon snapshot missing".to_string())?;
+    let status = build_daemon_status(
+        &snapshot,
+        warm,
+        diff_summary.clone(),
+        session_started_unix_ms,
+        run_mode,
+    );
+    Ok(DaemonCycleOutcome::Success {
+        status,
+        diff_summary,
+    })
+}
+
 fn run_daemon_foreground(
     path: Option<PathBuf>,
     once: bool,
@@ -2567,6 +2640,8 @@ fn run_daemon_foreground(
     let session_started_unix_ms = now_unix_ms();
     let mut session = DaemonSession::default();
     let mut first_cycle = true;
+    let mut last_error = None;
+    let refresh_hint = daemon_refresh_snapshot_hint(&workspace);
     let run_mode = if once {
         DaemonRunMode::OneShot
     } else {
@@ -2592,78 +2667,62 @@ fn run_daemon_foreground(
     }
 
     loop {
-        let snapshot = if first_cycle {
-            initial_snapshot.clone()
-        } else {
-            match agam_pkg::snapshot_workspace_from_path(&workspace.root) {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    let status = build_daemon_error_status(
-                        session.snapshot.as_ref().unwrap_or(&initial_snapshot),
-                        session_started_unix_ms,
-                        run_mode,
-                        error.clone(),
-                    );
-                    write_daemon_status(&workspace.root, &status)?;
-                    return Err(error);
-                }
-            }
-        };
-        let (warm, diff_summary) =
-            match refresh_daemon_session(&mut session, snapshot.clone(), verbose) {
-                Ok(result) => result,
-                Err(error) => {
-                    let status = build_daemon_error_status(
-                        &snapshot,
-                        session_started_unix_ms,
-                        run_mode,
-                        error.clone(),
-                    );
-                    write_daemon_status(&workspace.root, &status)?;
-                    return Err(error);
-                }
-            };
-        let snapshot = session
-            .snapshot
-            .clone()
-            .ok_or_else(|| "internal error: daemon snapshot missing".to_string())?;
-        let status = build_daemon_status(
-            &snapshot,
-            warm,
-            diff_summary.clone(),
+        match run_daemon_cycle(
+            &mut session,
+            &refresh_hint,
+            &initial_snapshot,
             session_started_unix_ms,
             run_mode,
-        );
+            verbose,
+            first_cycle,
+        )? {
+            DaemonCycleOutcome::Success {
+                status,
+                diff_summary,
+            } => {
+                let should_log = first_cycle
+                    || daemon_diff_has_changes(&diff_summary)
+                    || last_error.take().is_some();
+                if should_log {
+                    println!(
+                        "warm: {} file(s), {} version(s), AST {}, HIR {}, MIR {}",
+                        status.warmed_file_count,
+                        status.warmed_version_count,
+                        status.ast_decl_count,
+                        status.hir_function_count,
+                        status.mir_function_count
+                    );
+                    if diff_summary.manifest_changed {
+                        println!("invalidate: manifest changed, full warm-state reset");
+                    } else if diff_summary.added_files > 0
+                        || diff_summary.changed_files > 0
+                        || diff_summary.removed_files > 0
+                    {
+                        println!(
+                            "invalidate: +{} ~{} -{} ={}",
+                            diff_summary.added_files,
+                            diff_summary.changed_files,
+                            diff_summary.removed_files,
+                            diff_summary.unchanged_files
+                        );
+                    }
+                }
 
-        let should_log = first_cycle || daemon_diff_has_changes(&diff_summary);
-        if should_log {
-            println!(
-                "warm: {} file(s), {} version(s), AST {}, HIR {}, MIR {}",
-                status.warmed_file_count,
-                status.warmed_version_count,
-                status.ast_decl_count,
-                status.hir_function_count,
-                status.mir_function_count
-            );
-            if diff_summary.manifest_changed {
-                println!("invalidate: manifest changed, full warm-state reset");
-            } else if diff_summary.added_files > 0
-                || diff_summary.changed_files > 0
-                || diff_summary.removed_files > 0
-            {
-                println!(
-                    "invalidate: +{} ~{} -{} ={}",
-                    diff_summary.added_files,
-                    diff_summary.changed_files,
-                    diff_summary.removed_files,
-                    diff_summary.unchanged_files
-                );
+                write_daemon_status(&workspace.root, &status)?;
+                if once {
+                    return Ok(());
+                }
             }
-        }
-
-        write_daemon_status(&workspace.root, &status)?;
-        if once {
-            return Ok(());
+            DaemonCycleOutcome::Error { status, error } => {
+                write_daemon_status(&workspace.root, &status)?;
+                if last_error.as_ref() != Some(&error) {
+                    eprintln!("[agamc] daemon refresh failed: {error}");
+                }
+                last_error = Some(error.clone());
+                if once {
+                    return Err(error);
+                }
+            }
         }
 
         std::thread::sleep(std::time::Duration::from_millis(poll_ms.max(100)));
@@ -5954,6 +6013,90 @@ mod tests {
     }
 
     #[test]
+    fn test_run_daemon_cycle_recovers_after_transient_semantic_error() {
+        let root = temp_dir("daemon_cycle_recovery");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
+
+        let initial_snapshot = agam_pkg::snapshot_workspace(Some(file.clone())).expect("snapshot");
+        let workspace = initial_snapshot.session.layout.clone();
+        let session_started_unix_ms = now_unix_ms();
+        let mut session = DaemonSession::default();
+
+        let first = run_daemon_cycle(
+            &mut session,
+            &daemon_refresh_snapshot_hint(&workspace),
+            &initial_snapshot,
+            session_started_unix_ms,
+            DaemonRunMode::ForegroundLoop,
+            false,
+            true,
+        )
+        .expect("first daemon cycle should succeed");
+        let (first_status, first_diff) = match first {
+            DaemonCycleOutcome::Success {
+                status,
+                diff_summary,
+            } => (status, diff_summary),
+            DaemonCycleOutcome::Error { error, .. } => {
+                panic!("unexpected daemon error on first cycle: {error}")
+            }
+        };
+        assert_eq!(first_status.last_error, None);
+        assert_eq!(first_status.warmed_file_count, 1);
+        assert_eq!(first_diff.added_files, 1);
+
+        fs::write(&file, "fn main(): missing_name\n").expect("write broken source");
+        let second = run_daemon_cycle(
+            &mut session,
+            &daemon_refresh_snapshot_hint(&workspace),
+            &initial_snapshot,
+            session_started_unix_ms,
+            DaemonRunMode::ForegroundLoop,
+            false,
+            false,
+        )
+        .expect("second daemon cycle should return an error status");
+        let (second_status, second_error) = match second {
+            DaemonCycleOutcome::Error { status, error } => (status, error),
+            DaemonCycleOutcome::Success { .. } => {
+                panic!("second daemon cycle should have failed");
+            }
+        };
+        assert!(!second_error.is_empty());
+        assert_eq!(
+            second_status.last_error.as_deref(),
+            Some(second_error.as_str())
+        );
+
+        fs::write(&file, "fn main(): println(\"recovered\")\n").expect("rewrite fixed source");
+        let third = run_daemon_cycle(
+            &mut session,
+            &daemon_refresh_snapshot_hint(&workspace),
+            &initial_snapshot,
+            session_started_unix_ms,
+            DaemonRunMode::ForegroundLoop,
+            false,
+            false,
+        )
+        .expect("third daemon cycle should recover");
+        let (third_status, third_diff) = match third {
+            DaemonCycleOutcome::Success {
+                status,
+                diff_summary,
+            } => (status, diff_summary),
+            DaemonCycleOutcome::Error { error, .. } => {
+                panic!("daemon cycle should have recovered: {error}")
+            }
+        };
+        assert_eq!(third_status.last_error, None);
+        assert_eq!(third_status.warmed_file_count, 1);
+        assert_eq!(third_diff.changed_files, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn test_clear_daemon_status_removes_persisted_status_file() {
         let root = temp_dir("daemon_clear_status");
         let file = root.join("main.agam");
@@ -6018,6 +6161,19 @@ mod tests {
         assert_eq!(daemon_target.root, root);
 
         let _ = fs::remove_dir_all(daemon_target.root);
+    }
+
+    #[test]
+    fn test_daemon_refresh_snapshot_hint_uses_entry_file_for_single_file_workspace() {
+        let root = temp_dir("daemon_refresh_hint_single_file");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
+
+        let layout = resolve_workspace_layout(Some(file.clone()))
+            .expect("single-file workspace should resolve");
+        assert_eq!(daemon_refresh_snapshot_hint(&layout), file);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
