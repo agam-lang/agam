@@ -489,6 +489,8 @@ struct DaemonStatusRecord {
     pub mir_function_count: usize,
     #[serde(default)]
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub prewarm: DaemonPrewarmSummary,
     pub last_diff: DaemonDiffSummary,
 }
 
@@ -518,10 +520,25 @@ struct WarmCacheSummary {
     pub mir_function_count: usize,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct DaemonPrewarmSummary {
+    #[serde(default)]
+    pub package_ready: bool,
+    #[serde(default)]
+    pub build_ready: bool,
+    #[serde(default)]
+    pub build_backend: Option<String>,
+    #[serde(default)]
+    pub build_artifact_kind: Option<String>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
 enum DaemonCycleOutcome {
     Success {
         status: DaemonStatusRecord,
         diff_summary: DaemonDiffSummary,
+        prewarm_ran: bool,
     },
     Error {
         status: DaemonStatusRecord,
@@ -543,6 +560,7 @@ struct WarmState {
 struct DaemonSession {
     pub snapshot: Option<agam_pkg::WorkspaceSnapshot>,
     pub cache: BTreeMap<PathBuf, BTreeMap<String, WarmState>>,
+    pub last_prewarm: DaemonPrewarmSummary,
 }
 
 /// Pipeline that takes a diff and reuses warm state where possible.
@@ -2326,6 +2344,16 @@ fn warm_state_source_features<'a>(
         .ok_or_else(|| format!("warm source features missing for `{}`", file.display()))
 }
 
+fn warm_state_module<'a>(
+    file: &Path,
+    warm_state: &'a WarmState,
+) -> Result<&'a agam_ast::Module, String> {
+    warm_state
+        .module
+        .as_ref()
+        .ok_or_else(|| format!("warm AST module missing for `{}`", file.display()))
+}
+
 fn run_source_file_with_optional_warm_state(
     file: &PathBuf,
     args: &[String],
@@ -2521,6 +2549,11 @@ fn run_dev_workflow(
         human_bytes(cache_status.total_bytes)
     );
     println!("{}", dev_daemon_status_message(&workspace.root)?);
+    if let Some(status) = read_daemon_status(&workspace.root)? {
+        if let Some(message) = daemon_prewarm_status_message(&status.prewarm) {
+            println!("{message}");
+        }
+    }
     println!(
         "toolchain: {}",
         native_llvm
@@ -2787,10 +2820,288 @@ fn daemon_diff_has_changes(summary: &DaemonDiffSummary) -> bool {
         || summary.removed_files > 0
 }
 
+fn daemon_entry_snapshot<'a>(
+    snapshot: &'a agam_pkg::WorkspaceSnapshot,
+) -> Option<&'a agam_pkg::WorkspaceFileSnapshot> {
+    snapshot
+        .source_files
+        .iter()
+        .chain(&snapshot.test_files)
+        .find(|file| file.path == snapshot.session.layout.entry_file)
+}
+
+fn warm_state_for_snapshot_file<'a>(
+    session: &'a DaemonSession,
+    file: &agam_pkg::WorkspaceFileSnapshot,
+) -> Option<&'a WarmState> {
+    session
+        .cache
+        .get(&file.path)
+        .and_then(|versions| versions.get(&file.content_hash))
+}
+
+fn record_prewarm_error(summary: &mut DaemonPrewarmSummary, message: String) {
+    match summary.last_error.as_mut() {
+        Some(existing) => {
+            existing.push_str(" | ");
+            existing.push_str(&message);
+        }
+        None => summary.last_error = Some(message),
+    }
+}
+
+fn daemon_prewarm_stage_dir(root: &Path) -> PathBuf {
+    root.join(".agam_cache").join("daemon").join("prewarm")
+}
+
+fn ensure_daemon_prewarm_stage_dir(root: &Path) -> Result<PathBuf, String> {
+    let dir = daemon_prewarm_stage_dir(root);
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        format!(
+            "failed to create daemon prewarm directory `{}`: {e}",
+            dir.display()
+        )
+    })?;
+    Ok(dir)
+}
+
+fn daemon_prewarm_stage_prefix(
+    root: &Path,
+    entry_file: &Path,
+    suffix: &str,
+) -> Result<PathBuf, String> {
+    let dir = ensure_daemon_prewarm_stage_dir(root)?;
+    let hash = agam_runtime::cache::hash_bytes(entry_file.to_string_lossy().as_bytes());
+    let stem = entry_file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("entry")
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    Ok(dir.join(format!("{stem}_{suffix}_{hash}")))
+}
+
+fn daemon_prewarm_package_output(root: &Path, entry_file: &Path) -> Result<PathBuf, String> {
+    Ok(daemon_prewarm_stage_prefix(root, entry_file, "package")?.with_extension("agpkg.json"))
+}
+
+fn daemon_prewarm_build_output(
+    root: &Path,
+    entry_file: &Path,
+    target: Option<&str>,
+    backend: Backend,
+) -> Result<PathBuf, String> {
+    let mut output =
+        daemon_prewarm_stage_prefix(root, entry_file, render_backend_cli_value(backend))?;
+    if native_binary_extension(target) == Some("exe") {
+        output.set_extension("exe");
+    }
+    Ok(output)
+}
+
+fn clean_prewarm_output(path: &Path) {
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+fn build_outcome_artifact_kind_label(backend: Backend, outcome: &BuildOutcome) -> &'static str {
+    if outcome.native_binary {
+        "native-binary"
+    } else {
+        match backend {
+            Backend::C => "c-source",
+            Backend::Llvm => "llvm-ir",
+            Backend::Auto | Backend::Jit => "artifact",
+        }
+    }
+}
+
+fn daemon_prewarm_status_message(prewarm: &DaemonPrewarmSummary) -> Option<String> {
+    if !prewarm.package_ready
+        && !prewarm.build_ready
+        && prewarm.build_backend.is_none()
+        && prewarm.last_error.is_none()
+    {
+        return None;
+    }
+
+    let package = if prewarm.package_ready {
+        "ready"
+    } else {
+        "cold"
+    };
+    let build = match prewarm.build_backend.as_deref() {
+        Some("jit") => "warm MIR only via jit".to_string(),
+        Some(backend) if prewarm.build_ready => {
+            let artifact = prewarm.build_artifact_kind.as_deref().unwrap_or("artifact");
+            format!("ready via {backend} ({artifact})")
+        }
+        Some(backend) => format!("cold via {backend}"),
+        None => "none".to_string(),
+    };
+
+    Some(format!("prewarm: package {package}, build {build}"))
+}
+
+fn prewarm_daemon_entry_artifacts(
+    session: &DaemonSession,
+    snapshot: &agam_pkg::WorkspaceSnapshot,
+    verbose: bool,
+) -> DaemonPrewarmSummary {
+    let mut summary = DaemonPrewarmSummary::default();
+    let Some(entry_snapshot) = daemon_entry_snapshot(snapshot) else {
+        record_prewarm_error(
+            &mut summary,
+            format!(
+                "entry file `{}` is missing from the daemon snapshot",
+                snapshot.session.layout.entry_file.display()
+            ),
+        );
+        return summary;
+    };
+    let Some(warm_state) = warm_state_for_snapshot_file(session, entry_snapshot) else {
+        record_prewarm_error(
+            &mut summary,
+            format!(
+                "warm state is missing for daemon entry file `{}`",
+                entry_snapshot.path.display()
+            ),
+        );
+        return summary;
+    };
+
+    let root = &snapshot.session.layout.root;
+    let entry_file = &entry_snapshot.path;
+    let source = match std::fs::read_to_string(entry_file) {
+        Ok(source) => source,
+        Err(error) => {
+            record_prewarm_error(
+                &mut summary,
+                format!(
+                    "failed to read daemon entry file `{}` for prewarm: {error}",
+                    entry_file.display()
+                ),
+            );
+            return summary;
+        }
+    };
+
+    let mir = match warm_state_mir(entry_file, warm_state) {
+        Ok(mir) => mir,
+        Err(error) => {
+            record_prewarm_error(&mut summary, error);
+            return summary;
+        }
+    };
+    let module = match warm_state_module(entry_file, warm_state) {
+        Ok(module) => module,
+        Err(error) => {
+            record_prewarm_error(&mut summary, error);
+            return summary;
+        }
+    };
+    let source_features = match warm_state_source_features(entry_file, warm_state) {
+        Ok(features) => features,
+        Err(error) => {
+            record_prewarm_error(&mut summary, error);
+            return summary;
+        }
+    };
+
+    match daemon_prewarm_package_output(root, entry_file) {
+        Ok(output) => {
+            let package = agam_pkg::build_portable_package(
+                entry_file,
+                &source,
+                module,
+                mir,
+                agam_runtime::contract::RuntimeBackend::Jit,
+            );
+            match write_portable_package_with_cache(entry_file, &output, &package, verbose) {
+                Ok(()) => {
+                    summary.package_ready = true;
+                    clean_prewarm_output(&output);
+                }
+                Err(error) => record_prewarm_error(
+                    &mut summary,
+                    format!(
+                        "portable package prewarm failed for `{}`: {error}",
+                        entry_file.display()
+                    ),
+                ),
+            }
+        }
+        Err(error) => record_prewarm_error(&mut summary, error),
+    }
+
+    let build_backend = resolve_backend(Backend::Auto, true);
+    summary.build_backend = Some(render_backend_cli_value(build_backend).to_string());
+    if build_backend == Backend::Jit {
+        return summary;
+    }
+
+    let tuning = ReleaseTuning {
+        target: None,
+        native_cpu: true,
+        lto: None,
+        pgo_generate: None,
+        pgo_use: None,
+    };
+    let call_cache = effective_call_cache_selection(FeatureFlags::default(), source_features);
+    match daemon_prewarm_build_output(root, entry_file, tuning.target.as_deref(), build_backend) {
+        Ok(output) => {
+            let allow_wsl_llvm = build_backend == Backend::Llvm && allow_dev_wsl_llvm();
+            match build_prelowered_file(
+                &entry_snapshot.path,
+                &output,
+                3,
+                build_backend,
+                &tuning,
+                mir,
+                &call_cache,
+                &[],
+                allow_wsl_llvm,
+                verbose,
+            ) {
+                Ok(outcome) => {
+                    summary.build_ready = true;
+                    summary.build_artifact_kind = Some(
+                        build_outcome_artifact_kind_label(build_backend, &outcome).to_string(),
+                    );
+                    clean_prewarm_output(&output);
+                    if outcome.generated_path != output {
+                        clean_prewarm_output(&outcome.generated_path);
+                    }
+                }
+                Err(error) => record_prewarm_error(
+                    &mut summary,
+                    format!(
+                        "build prewarm failed for `{}` via {}: {error}",
+                        entry_file.display(),
+                        render_backend_cli_value(build_backend)
+                    ),
+                ),
+            }
+        }
+        Err(error) => record_prewarm_error(&mut summary, error),
+    }
+
+    summary
+}
+
 fn build_daemon_status(
     snapshot: &agam_pkg::WorkspaceSnapshot,
     warm: WarmSummary,
     last_diff: DaemonDiffSummary,
+    prewarm: DaemonPrewarmSummary,
     session_started_unix_ms: u128,
     run_mode: DaemonRunMode,
 ) -> DaemonStatusRecord {
@@ -2809,6 +3120,7 @@ fn build_daemon_status(
         hir_function_count: warm.hir_function_count,
         mir_function_count: warm.mir_function_count,
         last_error: None,
+        prewarm,
         last_diff,
     }
 }
@@ -2816,6 +3128,7 @@ fn build_daemon_status(
 fn build_daemon_error_status(
     snapshot: &agam_pkg::WorkspaceSnapshot,
     warm_cache: WarmCacheSummary,
+    prewarm: DaemonPrewarmSummary,
     session_started_unix_ms: u128,
     run_mode: DaemonRunMode,
     error: String,
@@ -2835,6 +3148,7 @@ fn build_daemon_error_status(
         hir_function_count: warm_cache.hir_function_count,
         mir_function_count: warm_cache.mir_function_count,
         last_error: Some(error),
+        prewarm,
         last_diff: DaemonDiffSummary::default(),
     }
 }
@@ -2891,6 +3205,12 @@ fn print_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), Strin
     }
     if let Some(error) = status.last_error.as_ref() {
         println!("last error: {error}");
+    }
+    if let Some(message) = daemon_prewarm_status_message(&status.prewarm) {
+        println!("{message}");
+    }
+    if let Some(error) = status.prewarm.last_error.as_ref() {
+        println!("last prewarm error: {error}");
     }
     if verbose {
         println!(
@@ -2949,6 +3269,7 @@ fn run_daemon_cycle(
                 let status = build_daemon_error_status(
                     session.snapshot.as_ref().unwrap_or(initial_snapshot),
                     summarize_warm_cache(&session.cache),
+                    session.last_prewarm.clone(),
                     session_started_unix_ms,
                     run_mode,
                     error.clone(),
@@ -2963,6 +3284,7 @@ fn run_daemon_cycle(
             let status = build_daemon_error_status(
                 &snapshot,
                 summarize_warm_cache(&session.cache),
+                session.last_prewarm.clone(),
                 session_started_unix_ms,
                 run_mode,
                 error.clone(),
@@ -2970,6 +3292,12 @@ fn run_daemon_cycle(
             return Ok(DaemonCycleOutcome::Error { status, error });
         }
     };
+    let should_prewarm = first_cycle
+        || daemon_diff_has_changes(&diff_summary)
+        || session.last_prewarm.last_error.is_some();
+    if should_prewarm {
+        session.last_prewarm = prewarm_daemon_entry_artifacts(session, &snapshot, verbose);
+    }
     let snapshot = session
         .snapshot
         .clone()
@@ -2978,12 +3306,14 @@ fn run_daemon_cycle(
         &snapshot,
         warm,
         diff_summary.clone(),
+        session.last_prewarm.clone(),
         session_started_unix_ms,
         run_mode,
     );
     Ok(DaemonCycleOutcome::Success {
         status,
         diff_summary,
+        prewarm_ran: should_prewarm,
     })
 }
 
@@ -3037,6 +3367,7 @@ fn run_daemon_foreground(
             DaemonCycleOutcome::Success {
                 status,
                 diff_summary,
+                prewarm_ran,
             } => {
                 let should_log = first_cycle
                     || daemon_diff_has_changes(&diff_summary)
@@ -3063,6 +3394,16 @@ fn run_daemon_foreground(
                             diff_summary.removed_files,
                             diff_summary.unchanged_files
                         );
+                    }
+                    if let Some(message) = daemon_prewarm_status_message(&status.prewarm) {
+                        println!("{message}");
+                    }
+                }
+                if prewarm_ran {
+                    if let Some(error) = status.prewarm.last_error.as_ref() {
+                        eprintln!("[agamc] daemon prewarm failed: {error}");
+                    } else if verbose {
+                        eprintln!("[agamc] daemon prewarm refreshed");
                     }
                 }
 
@@ -6307,6 +6648,7 @@ mod tests {
         let mut session = DaemonSession {
             snapshot: Some(previous.clone()),
             cache: BTreeMap::new(),
+            last_prewarm: DaemonPrewarmSummary::default(),
         };
         session.cache.entry(entry.clone()).or_default().insert(
             source_hash,
@@ -6410,6 +6752,7 @@ mod tests {
             hir_function_count: 1,
             mir_function_count: 1,
             last_error: None,
+            prewarm: DaemonPrewarmSummary::default(),
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write fresh status");
@@ -6449,6 +6792,7 @@ mod tests {
             hir_function_count: 1,
             mir_function_count: 1,
             last_error: None,
+            prewarm: DaemonPrewarmSummary::default(),
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write snapshot status");
@@ -6483,6 +6827,7 @@ mod tests {
             hir_function_count: 0,
             mir_function_count: 0,
             last_error: Some("parse error".into()),
+            prewarm: DaemonPrewarmSummary::default(),
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write error status");
@@ -6513,6 +6858,7 @@ mod tests {
             hir_function_count: 1,
             mir_function_count: 1,
             last_error: None,
+            prewarm: DaemonPrewarmSummary::default(),
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write snapshot status");
@@ -6542,6 +6888,7 @@ mod tests {
             hir_function_count: 0,
             mir_function_count: 0,
             last_error: Some("semantic error".into()),
+            prewarm: DaemonPrewarmSummary::default(),
             last_diff: DaemonDiffSummary::default(),
         };
         write_daemon_status(&root, &status).expect("write daemon error status");
@@ -6596,6 +6943,7 @@ mod tests {
             .expect("status should parse");
         assert_eq!(status.run_mode, DaemonRunMode::ForegroundLoop);
         assert_eq!(status.last_error, None);
+        assert_eq!(status.prewarm, DaemonPrewarmSummary::default());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6617,6 +6965,60 @@ mod tests {
         assert_eq!(status.workspace_root, root.display().to_string());
         assert_eq!(status.warmed_file_count, 1);
         assert_eq!(status.snapshot_file_count, 1);
+        assert!(status.prewarm.package_ready);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_prewarm_daemon_entry_artifacts_populates_cache() {
+        let root = temp_dir("daemon_prewarm_cache");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        let snapshot = agam_pkg::snapshot_workspace(Some(file.clone())).expect("snapshot");
+        let mut session = DaemonSession::default();
+        refresh_daemon_session(&mut session, snapshot.clone(), false).expect("warm snapshot");
+
+        let summary = prewarm_daemon_entry_artifacts(&session, &snapshot, false);
+        let cache = agam_runtime::cache::CacheStore::for_path(&root).expect("cache store");
+        let status = cache.status(10).expect("cache status");
+        let expected_backend = resolve_backend(Backend::Auto, true);
+
+        assert!(summary.package_ready);
+        assert_eq!(
+            summary.build_backend.as_deref(),
+            Some(render_backend_cli_value(expected_backend))
+        );
+        assert_eq!(summary.last_error, None);
+        assert!(
+            status.by_kind.iter().any(|kind| {
+                kind.kind == agam_runtime::cache::CacheArtifactKind::PortablePackage
+            })
+        );
+        if expected_backend == Backend::Jit {
+            assert!(!summary.build_ready);
+        } else {
+            assert!(summary.build_ready);
+            assert!(status.by_kind.iter().any(|kind| {
+                matches!(
+                    kind.kind,
+                    agam_runtime::cache::CacheArtifactKind::NativeBinary
+                        | agam_runtime::cache::CacheArtifactKind::LlvmIr
+                        | agam_runtime::cache::CacheArtifactKind::CSource
+                )
+            }));
+        }
+
+        let prewarm_dir = daemon_prewarm_stage_dir(&root);
+        if prewarm_dir.is_dir() {
+            assert!(
+                fs::read_dir(&prewarm_dir)
+                    .expect("read prewarm dir")
+                    .next()
+                    .is_none()
+            );
+        }
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6672,6 +7074,7 @@ mod tests {
             DaemonCycleOutcome::Success {
                 status,
                 diff_summary,
+                ..
             } => (status, diff_summary),
             DaemonCycleOutcome::Error { error, .. } => {
                 panic!("unexpected daemon error on first cycle: {error}")
@@ -6721,6 +7124,7 @@ mod tests {
             DaemonCycleOutcome::Success {
                 status,
                 diff_summary,
+                ..
             } => (status, diff_summary),
             DaemonCycleOutcome::Error { error, .. } => {
                 panic!("daemon cycle should have recovered: {error}")

@@ -8,6 +8,7 @@
 - Route production failures through `agam_errors`; avoid `.unwrap()` and `.expect()` in compiler passes.
 - Preserve `SourceId`, `Span`, and debug metadata through lowering and optimization.
 - Run unsafe, FFI, executable-memory, and JIT validation in isolated subprocesses when practical.
+- Prefer the asymptotically best practical time and space complexity for every new implementation; if a tradeoff is unavoidable, state it explicitly and validate that the simpler path is still worth the cost.
 - Optimization work is not complete until `agam_profile` or an equivalent localized benchmark records the delta.
 - If compile time regresses materially or runtime gets slower, reject the change and rewrite it.
 
