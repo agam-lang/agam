@@ -21,6 +21,22 @@ pub const WORKSPACE_MANIFEST_FORMAT_VERSION: u32 = 1;
 /// First dependency lockfile format version.
 pub const LOCKFILE_FORMAT_VERSION: u32 = 1;
 
+/// The version compatibility policy for `agam.toml` manifests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestCompatibility {
+    V1Stable,
+    Unsupported(u32),
+}
+
+/// Check if a manifest version is supported by this compiler.
+pub fn check_manifest_compatibility(version: u32) -> ManifestCompatibility {
+    if version == WORKSPACE_MANIFEST_FORMAT_VERSION {
+        ManifestCompatibility::V1Stable
+    } else {
+        ManifestCompatibility::Unsupported(version)
+    }
+}
+
 /// A portable Agam package carrying verified MIR plus runtime metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortablePackage {
@@ -376,6 +392,7 @@ pub struct WorkspaceLayout {
 pub struct WorkspaceSession {
     pub layout: WorkspaceLayout,
     pub manifest: Option<WorkspaceManifest>,
+    pub members: Vec<WorkspaceSession>,
 }
 
 /// Fingerprint for one manifest, source, or test file in a workspace snapshot.
@@ -391,9 +408,19 @@ pub struct WorkspaceFileSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceSnapshot {
     pub session: WorkspaceSession,
-    pub manifest: Option<WorkspaceFileSnapshot>,
+    pub manifests: Vec<WorkspaceFileSnapshot>,
     pub source_files: Vec<WorkspaceFileSnapshot>,
     pub test_files: Vec<WorkspaceFileSnapshot>,
+}
+
+impl WorkspaceSnapshot {
+    /// Check if another snapshot differs from this one in any way.
+    pub fn is_stale(&self, other: &WorkspaceSnapshot) -> bool {
+        let diff = diff_workspace_snapshots(self, other);
+        !diff.added_files.is_empty()
+            || !diff.changed_files.is_empty()
+            || !diff.removed_files.is_empty()
+    }
 }
 
 /// Diff between two workspace snapshots.
@@ -450,15 +477,21 @@ pub fn read_workspace_manifest_from_path(path: &Path) -> Result<WorkspaceManifes
             path.display()
         )
     })?;
-    let root = path
-        .parent()
-        .ok_or_else(|| format!("workspace manifest `{}` has no parent directory", path.display()))?;
+    let root = path.parent().ok_or_else(|| {
+        format!(
+            "workspace manifest `{}` has no parent directory",
+            path.display()
+        )
+    })?;
     validate_workspace_manifest(root, &manifest)?;
     Ok(manifest)
 }
 
 /// Validate the user-facing `agam.toml` workspace contract.
-pub fn validate_workspace_manifest(root: &Path, manifest: &WorkspaceManifest) -> Result<(), String> {
+pub fn validate_workspace_manifest(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+) -> Result<(), String> {
     if manifest.format_version != WORKSPACE_MANIFEST_FORMAT_VERSION {
         return Err(format!(
             "unsupported `format_version` `{}`; expected `{WORKSPACE_MANIFEST_FORMAT_VERSION}`",
@@ -483,7 +516,8 @@ pub fn validate_workspace_manifest(root: &Path, manifest: &WorkspaceManifest) ->
         }
     }
 
-    let members = validate_workspace_member_list(root, &manifest.workspace.members, "workspace.members")?;
+    let members =
+        validate_workspace_member_list(root, &manifest.workspace.members, "workspace.members")?;
     let default_members = validate_workspace_member_list(
         root,
         &manifest.workspace.default_members,
@@ -529,11 +563,19 @@ pub fn resolve_workspace_layout(path: Option<PathBuf>) -> Result<WorkspaceLayout
 pub fn resolve_workspace_session(path: Option<PathBuf>) -> Result<WorkspaceSession, String> {
     let hint = match path {
         Some(path) => path,
-        None => std::env::current_dir()
-            .map_err(|e| format!("failed to read current directory: {e}"))?,
+        None => {
+            std::env::current_dir().map_err(|e| format!("failed to read current directory: {e}"))?
+        }
     };
 
     resolve_workspace_session_from_path(&hint)
+}
+
+/// Discover and resolve all explicit members in a workspace package.
+pub fn resolve_workspace_members(
+    session: &WorkspaceSession,
+) -> Result<Vec<WorkspaceSession>, String> {
+    Ok(session.members.clone())
 }
 
 /// Expand user-provided formatter/test inputs into concrete Agam source files.
@@ -558,22 +600,21 @@ pub fn expand_agam_inputs(files: Vec<PathBuf>) -> Result<Vec<PathBuf>, String> {
 
 /// Capture a fingerprinted workspace snapshot for future incremental invalidation work.
 pub fn snapshot_workspace(path: Option<PathBuf>) -> Result<WorkspaceSnapshot, String> {
-    Ok(snapshot_workspace_session(resolve_workspace_session(path)?)?)
+    Ok(snapshot_workspace_session(resolve_workspace_session(
+        path,
+    )?)?)
 }
 
 /// Capture a fingerprinted workspace snapshot from an explicit filesystem path.
 pub fn snapshot_workspace_from_path(path: &Path) -> Result<WorkspaceSnapshot, String> {
-    Ok(snapshot_workspace_session(resolve_workspace_session_from_path(path)?)?)
+    Ok(snapshot_workspace_session(
+        resolve_workspace_session_from_path(path)?,
+    )?)
 }
 
 /// Fingerprint a resolved workspace session.
 pub fn snapshot_workspace_session(session: WorkspaceSession) -> Result<WorkspaceSnapshot, String> {
-    let manifest = session
-        .layout
-        .manifest_path
-        .as_ref()
-        .map(|path| snapshot_file(path))
-        .transpose()?;
+    let manifests = snapshot_workspace_manifests(&session)?;
     let source_files = session
         .layout
         .source_files
@@ -589,7 +630,7 @@ pub fn snapshot_workspace_session(session: WorkspaceSession) -> Result<Workspace
 
     Ok(WorkspaceSnapshot {
         session,
-        manifest,
+        manifests,
         source_files,
         test_files,
     })
@@ -757,7 +798,7 @@ fn snapshot_file(path: &Path) -> Result<WorkspaceFileSnapshot, String> {
 
 fn tracked_snapshot_hashes(snapshot: &WorkspaceSnapshot) -> BTreeMap<PathBuf, String> {
     let mut files = BTreeMap::new();
-    if let Some(manifest) = snapshot.manifest.as_ref() {
+    for manifest in &snapshot.manifests {
         files.insert(manifest.path.clone(), manifest.content_hash.clone());
     }
     for file in &snapshot.source_files {
@@ -781,7 +822,10 @@ fn expand_agam_input(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> 
             out.push(path.to_path_buf());
             return Ok(());
         }
-        return Err(format!("`{}` is not an Agam source file or `agam.toml` manifest", path.display()));
+        return Err(format!(
+            "`{}` is not an Agam source file or `agam.toml` manifest",
+            path.display()
+        ));
     }
 
     if !path.is_dir() {
@@ -821,6 +865,15 @@ fn workspace_session_from_root(
     manifest_path: Option<PathBuf>,
     entry_override: Option<PathBuf>,
 ) -> Result<WorkspaceSession, String> {
+    workspace_session_from_root_inner(root, manifest_path, entry_override, true)
+}
+
+fn workspace_session_from_root_inner(
+    root: &Path,
+    manifest_path: Option<PathBuf>,
+    entry_override: Option<PathBuf>,
+    include_members: bool,
+) -> Result<WorkspaceSession, String> {
     let manifest = manifest_path
         .as_ref()
         .map(|path| read_workspace_manifest_from_path(path))
@@ -849,22 +902,23 @@ fn workspace_session_from_root(
         ));
     }
 
-    let mut source_files = Vec::new();
-    let src_dir = root.join("src");
-    if src_dir.is_dir() {
-        collect_agam_files(&src_dir, &mut source_files)?;
-    }
-    if !source_files.iter().any(|file| file == &entry_file) {
-        source_files.push(entry_file.clone());
+    let mut source_files = collect_workspace_source_files(root, &entry_file)?;
+    let mut test_files = collect_workspace_test_files(root)?;
+    let members = if include_members {
+        manifest
+            .as_ref()
+            .map(|manifest| resolve_workspace_member_sessions(root, manifest))
+            .transpose()?
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for member in &members {
+        source_files.extend(member.layout.source_files.iter().cloned());
+        test_files.extend(member.layout.test_files.iter().cloned());
     }
     source_files.sort();
     source_files.dedup();
-
-    let mut test_files = Vec::new();
-    let tests_dir = root.join("tests");
-    if tests_dir.is_dir() {
-        collect_agam_files(&tests_dir, &mut test_files)?;
-    }
     test_files.sort();
     test_files.dedup();
 
@@ -878,7 +932,87 @@ fn workspace_session_from_root(
             test_files,
         },
         manifest,
+        members,
     })
+}
+
+fn snapshot_workspace_manifests(
+    session: &WorkspaceSession,
+) -> Result<Vec<WorkspaceFileSnapshot>, String> {
+    let mut manifest_paths = Vec::new();
+    collect_workspace_manifest_paths(session, &mut manifest_paths);
+    manifest_paths.sort();
+    manifest_paths.dedup();
+    manifest_paths
+        .iter()
+        .map(|path| snapshot_file(path))
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn collect_workspace_manifest_paths(session: &WorkspaceSession, out: &mut Vec<PathBuf>) {
+    if let Some(path) = session.layout.manifest_path.as_ref() {
+        out.push(path.clone());
+    }
+    for member in &session.members {
+        collect_workspace_manifest_paths(member, out);
+    }
+}
+
+fn collect_workspace_source_files(root: &Path, entry_file: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut source_files = Vec::new();
+    let src_dir = root.join("src");
+    if src_dir.is_dir() {
+        collect_agam_files(&src_dir, &mut source_files)?;
+    }
+    if !source_files.iter().any(|file| file == entry_file) {
+        source_files.push(entry_file.to_path_buf());
+    }
+    source_files.sort();
+    source_files.dedup();
+    Ok(source_files)
+}
+
+fn collect_workspace_test_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut test_files = Vec::new();
+    let tests_dir = root.join("tests");
+    if tests_dir.is_dir() {
+        collect_agam_files(&tests_dir, &mut test_files)?;
+    }
+    test_files.sort();
+    test_files.dedup();
+    Ok(test_files)
+}
+
+fn resolve_workspace_member_sessions(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+) -> Result<Vec<WorkspaceSession>, String> {
+    let mut members = Vec::new();
+    for member in &manifest.workspace.members {
+        let member_path = workspace_relative_path(root, member, "workspace.members")?;
+        if !member_path.is_dir() {
+            return Err(format!(
+                "workspace member `{}` does not exist or is not a directory",
+                member_path.display()
+            ));
+        }
+        let member_manifest_path = default_manifest_path(&member_path);
+        if !member_manifest_path.is_file() {
+            return Err(format!(
+                "workspace member `{}` is missing `agam.toml`",
+                member_path.display()
+            ));
+        }
+        let member_session = workspace_session_from_root_inner(
+            &member_path,
+            Some(member_manifest_path),
+            None,
+            false,
+        )?;
+        members.push(member_session);
+    }
+    members.sort_by(|left, right| left.layout.root.cmp(&right.layout.root));
+    Ok(members)
 }
 
 fn manifest_entry_path(root: &Path, manifest: &WorkspaceManifest) -> Result<PathBuf, String> {
@@ -941,23 +1075,14 @@ fn validate_dependency_table(
         } else {
             false
         };
-        let has_git =
-            validate_optional_field(spec.git.as_deref(), &format!("{field_prefix}.git"))?;
-        let has_rev =
-            validate_optional_field(spec.rev.as_deref(), &format!("{field_prefix}.rev"))?;
-        let has_branch = validate_optional_field(
-            spec.branch.as_deref(),
-            &format!("{field_prefix}.branch"),
-        )?;
-        validate_optional_field(
-            spec.package.as_deref(),
-            &format!("{field_prefix}.package"),
-        )?;
+        let has_git = validate_optional_field(spec.git.as_deref(), &format!("{field_prefix}.git"))?;
+        let has_rev = validate_optional_field(spec.rev.as_deref(), &format!("{field_prefix}.rev"))?;
+        let has_branch =
+            validate_optional_field(spec.branch.as_deref(), &format!("{field_prefix}.branch"))?;
+        validate_optional_field(spec.package.as_deref(), &format!("{field_prefix}.package"))?;
 
         if has_branch && has_rev {
-            return Err(format!(
-                "{field_prefix} cannot set both `branch` and `rev`"
-            ));
+            return Err(format!("{field_prefix} cannot set both `branch` and `rev`"));
         }
         if (has_branch || has_rev) && !has_git {
             return Err(format!(
@@ -1036,7 +1161,9 @@ fn validate_workspace_member_list(
         validate_required_field(member, &item_field)?;
         workspace_relative_path(root, member, &item_field)?;
         if !seen.insert(member.clone()) {
-            return Err(format!("`{field_name}` contains duplicate entry `{member}`"));
+            return Err(format!(
+                "`{field_name}` contains duplicate entry `{member}`"
+            ));
         }
     }
     Ok(seen)
@@ -1356,8 +1483,8 @@ rev = "abc123"
         )
         .expect("write invalid manifest");
 
-        let error =
-            read_workspace_manifest_from_path(&path).expect_err("manifest should reject bad git metadata");
+        let error = read_workspace_manifest_from_path(&path)
+            .expect_err("manifest should reject bad git metadata");
 
         assert!(error.contains("requires `git`"));
 
@@ -1384,7 +1511,9 @@ agam = "0.1"
         let error = read_workspace_manifest_from_path(&path)
             .expect_err("manifest should reject empty environment metadata");
 
-        assert!(error.contains("must set at least one compiler, sdk, target, preferred backend, or profile"));
+        assert!(error.contains(
+            "must set at least one compiler, sdk, target, preferred backend, or profile"
+        ));
 
         let _ = fs::remove_dir_all(dir);
     }
@@ -1434,8 +1563,11 @@ agam = "0.1"
         let test_file = dir.join("tests").join("smoke.agam");
         fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
         fs::create_dir_all(test_file.parent().expect("test parent")).expect("create tests");
-        write_workspace_manifest_to_path(&default_manifest_path(&dir), &scaffold_workspace_manifest("snapshot"))
-            .expect("write workspace manifest");
+        write_workspace_manifest_to_path(
+            &default_manifest_path(&dir),
+            &scaffold_workspace_manifest("snapshot"),
+        )
+        .expect("write workspace manifest");
         fs::write(&entry, sample_source()).expect("write entry");
         fs::write(&helper, sample_source()).expect("write helper");
         fs::write(&test_file, "@test\nfn smoke() -> bool:\n    return true\n").expect("write test");
@@ -1443,7 +1575,7 @@ agam = "0.1"
         let snapshot = snapshot_workspace(Some(dir.clone())).expect("snapshot workspace");
 
         assert_eq!(snapshot.session.layout.project_name, "snapshot");
-        assert!(snapshot.manifest.is_some());
+        assert_eq!(snapshot.manifests.len(), 1);
         assert_eq!(snapshot.source_files.len(), 2);
         assert_eq!(snapshot.test_files.len(), 1);
 
@@ -1459,8 +1591,11 @@ agam = "0.1"
         let test_file = dir.join("tests").join("smoke.agam");
         fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
         fs::create_dir_all(test_file.parent().expect("test parent")).expect("create tests");
-        write_workspace_manifest_to_path(&default_manifest_path(&dir), &scaffold_workspace_manifest("snapshot-diff"))
-            .expect("write workspace manifest");
+        write_workspace_manifest_to_path(
+            &default_manifest_path(&dir),
+            &scaffold_workspace_manifest("snapshot-diff"),
+        )
+        .expect("write workspace manifest");
         fs::write(&entry, sample_source()).expect("write entry");
         fs::write(&helper, sample_source()).expect("write helper");
         fs::write(&test_file, "@test\nfn smoke() -> bool:\n    return true\n").expect("write test");
@@ -1478,8 +1613,11 @@ entry = "src/main.agam"
 "#,
         )
         .expect("rewrite manifest");
-        fs::write(&entry, "@lang.advance\nfn main() -> i32 {\n    return 1;\n}\n")
-            .expect("rewrite entry");
+        fs::write(
+            &entry,
+            "@lang.advance\nfn main() -> i32 {\n    return 1;\n}\n",
+        )
+        .expect("rewrite entry");
         fs::write(&extra, sample_source()).expect("write extra source");
         fs::remove_file(&test_file).expect("remove test file");
 
@@ -1627,8 +1765,11 @@ entry = "src/main.agam"
         fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
         fs::create_dir_all(test_file.parent().expect("test parent")).expect("create tests");
         fs::create_dir_all(loose_file.parent().expect("loose parent")).expect("create loose dir");
-        write_workspace_manifest_to_path(&root.join("agam.toml"), &scaffold_workspace_manifest("expand"))
-            .expect("write manifest");
+        write_workspace_manifest_to_path(
+            &root.join("agam.toml"),
+            &scaffold_workspace_manifest("expand"),
+        )
+        .expect("write manifest");
         fs::write(&entry, sample_source()).expect("write entry");
         fs::write(&test_file, "@test\nfn smoke() -> bool:\n    return true\n").expect("write test");
         fs::write(&loose_file, sample_source()).expect("write loose file");
@@ -1646,14 +1787,149 @@ entry = "src/main.agam"
         let entry = root.join("src").join("main.agam");
         let helper = root.join("src").join("helper.agam");
         fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
-        write_workspace_manifest_to_path(&root.join("agam.toml"), &scaffold_workspace_manifest("expand-file"))
-            .expect("write manifest");
+        write_workspace_manifest_to_path(
+            &root.join("agam.toml"),
+            &scaffold_workspace_manifest("expand-file"),
+        )
+        .expect("write manifest");
         fs::write(&entry, sample_source()).expect("write entry");
         fs::write(&helper, sample_source()).expect("write helper");
 
         let expanded = expand_agam_inputs(vec![helper.clone()]).expect("expand explicit file");
 
         assert_eq!(expanded, vec![helper]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_workspace_session_aggregates_explicit_workspace_members() {
+        let root = temp_dir("workspace_members_session");
+        let root_entry = root.join("src").join("main.agam");
+        let root_test = root.join("tests").join("smoke.agam");
+        let member_root = root.join("packages").join("core");
+        let member_entry = member_root.join("src").join("main.agam");
+        let member_test = member_root.join("tests").join("core.agam");
+        fs::create_dir_all(root_entry.parent().expect("root entry parent"))
+            .expect("create root src");
+        fs::create_dir_all(root_test.parent().expect("root test parent"))
+            .expect("create root tests");
+        fs::create_dir_all(member_entry.parent().expect("member entry parent"))
+            .expect("create member src");
+        fs::create_dir_all(member_test.parent().expect("member test parent"))
+            .expect("create member tests");
+
+        let mut root_manifest = scaffold_workspace_manifest("workspace-root");
+        root_manifest.workspace.members = vec!["packages/core".into()];
+        write_workspace_manifest_to_path(&root.join("agam.toml"), &root_manifest)
+            .expect("write root manifest");
+        write_workspace_manifest_to_path(
+            &member_root.join("agam.toml"),
+            &scaffold_workspace_manifest("workspace-core"),
+        )
+        .expect("write member manifest");
+        fs::write(&root_entry, sample_source()).expect("write root entry");
+        fs::write(
+            &root_test,
+            "@test\nfn root_smoke() -> bool:\n    return true\n",
+        )
+        .expect("write root test");
+        fs::write(&member_entry, sample_source()).expect("write member entry");
+        fs::write(
+            &member_test,
+            "@test\nfn member_smoke() -> bool:\n    return true\n",
+        )
+        .expect("write member test");
+
+        let session =
+            resolve_workspace_session(Some(root.clone())).expect("resolve workspace session");
+
+        assert_eq!(session.members.len(), 1);
+        assert_eq!(session.members[0].layout.root, member_root);
+        assert!(session.layout.source_files.contains(&root_entry));
+        assert!(session.layout.source_files.contains(&member_entry));
+        assert!(session.layout.test_files.contains(&root_test));
+        assert!(session.layout.test_files.contains(&member_test));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_workspace_tracks_member_manifests_and_manifest_diffs() {
+        let root = temp_dir("workspace_member_snapshot");
+        let root_entry = root.join("src").join("main.agam");
+        let member_root = root.join("packages").join("core");
+        let member_entry = member_root.join("src").join("main.agam");
+        fs::create_dir_all(root_entry.parent().expect("root entry parent"))
+            .expect("create root src");
+        fs::create_dir_all(member_entry.parent().expect("member entry parent"))
+            .expect("create member src");
+
+        let mut root_manifest = scaffold_workspace_manifest("workspace-root");
+        root_manifest.workspace.members = vec!["packages/core".into()];
+        write_workspace_manifest_to_path(&root.join("agam.toml"), &root_manifest)
+            .expect("write root manifest");
+        write_workspace_manifest_to_path(
+            &member_root.join("agam.toml"),
+            &scaffold_workspace_manifest("workspace-core"),
+        )
+        .expect("write member manifest");
+        fs::write(&root_entry, sample_source()).expect("write root entry");
+        fs::write(&member_entry, sample_source()).expect("write member entry");
+
+        let previous = snapshot_workspace(Some(root.clone())).expect("snapshot workspace");
+        assert_eq!(previous.manifests.len(), 2);
+
+        let mut member_manifest = scaffold_workspace_manifest("workspace-core");
+        member_manifest.project.version = "0.2.0".into();
+        write_workspace_manifest_to_path(&member_root.join("agam.toml"), &member_manifest)
+            .expect("rewrite member manifest");
+
+        let next = snapshot_workspace(Some(root.clone())).expect("snapshot workspace");
+        let diff = diff_workspace_snapshots(&previous, &next);
+
+        assert!(previous.is_stale(&next));
+        assert_eq!(diff.changed_files, vec![member_root.join("agam.toml")]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn expand_agam_inputs_includes_workspace_member_files() {
+        let root = temp_dir("workspace_members_expand");
+        let root_entry = root.join("src").join("main.agam");
+        let member_root = root.join("packages").join("core");
+        let member_entry = member_root.join("src").join("main.agam");
+        let member_test = member_root.join("tests").join("core.agam");
+        fs::create_dir_all(root_entry.parent().expect("root entry parent"))
+            .expect("create root src");
+        fs::create_dir_all(member_entry.parent().expect("member entry parent"))
+            .expect("create member src");
+        fs::create_dir_all(member_test.parent().expect("member test parent"))
+            .expect("create member tests");
+
+        let mut root_manifest = scaffold_workspace_manifest("workspace-root");
+        root_manifest.workspace.members = vec!["packages/core".into()];
+        write_workspace_manifest_to_path(&root.join("agam.toml"), &root_manifest)
+            .expect("write root manifest");
+        write_workspace_manifest_to_path(
+            &member_root.join("agam.toml"),
+            &scaffold_workspace_manifest("workspace-core"),
+        )
+        .expect("write member manifest");
+        fs::write(&root_entry, sample_source()).expect("write root entry");
+        fs::write(&member_entry, sample_source()).expect("write member entry");
+        fs::write(
+            &member_test,
+            "@test\nfn member_smoke() -> bool:\n    return true\n",
+        )
+        .expect("write member test");
+
+        let expanded = expand_agam_inputs(vec![root.clone()]).expect("expand workspace inputs");
+
+        assert!(expanded.contains(&root_entry));
+        assert!(expanded.contains(&member_entry));
+        assert!(expanded.contains(&member_test));
 
         let _ = fs::remove_dir_all(root);
     }

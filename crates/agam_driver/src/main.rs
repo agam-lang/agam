@@ -2887,9 +2887,7 @@ fn active_daemon_status(root: &Path) -> Result<Option<DaemonStatusRecord>, Strin
 }
 
 fn tracked_snapshot_file_count(snapshot: &agam_pkg::WorkspaceSnapshot) -> usize {
-    usize::from(snapshot.manifest.is_some())
-        + snapshot.source_files.len()
-        + snapshot.test_files.len()
+    snapshot.manifests.len() + snapshot.source_files.len() + snapshot.test_files.len()
 }
 
 fn workspace_diff_is_empty(diff: &agam_pkg::WorkspaceSnapshotDiff) -> bool {
@@ -2901,13 +2899,21 @@ fn snapshot_diff_touches_manifest(
     next: &agam_pkg::WorkspaceSnapshot,
     diff: &agam_pkg::WorkspaceSnapshotDiff,
 ) -> bool {
-    let previous_manifest = previous.manifest.as_ref().map(|file| &file.path);
-    let next_manifest = next.manifest.as_ref().map(|file| &file.path);
+    let previous_manifests = previous
+        .manifests
+        .iter()
+        .map(|file| &file.path)
+        .collect::<BTreeSet<_>>();
+    let next_manifests = next
+        .manifests
+        .iter()
+        .map(|file| &file.path)
+        .collect::<BTreeSet<_>>();
     diff.added_files
         .iter()
         .chain(&diff.changed_files)
         .chain(&diff.removed_files)
-        .any(|path| Some(path) == previous_manifest || Some(path) == next_manifest)
+        .any(|path| previous_manifests.contains(path) || next_manifests.contains(path))
 }
 
 fn summarize_workspace_diff(
@@ -6811,6 +6817,73 @@ mod tests {
         next_manifest.project.version = "0.2.0".into();
         agam_pkg::write_workspace_manifest_to_path(&manifest, &next_manifest)
             .expect("rewrite manifest");
+
+        let next = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
+        let diff = agam_pkg::diff_workspace_snapshots(&previous, &next);
+        let mut pipeline = IncrementalPipeline::new(&mut session);
+        pipeline.apply_diff(next, &diff);
+
+        assert!(session.cache.is_empty());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_incremental_pipeline_clears_all_warm_state_when_member_manifest_changes() {
+        let root = temp_dir("daemon_member_manifest_invalidation");
+        let manifest = root.join("agam.toml");
+        let entry = root.join("src").join("main.agam");
+        let member_root = root.join("packages").join("core");
+        let member_manifest = member_root.join("agam.toml");
+        let member_entry = member_root.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create root src");
+        fs::create_dir_all(member_entry.parent().expect("member entry parent"))
+            .expect("create member src");
+
+        let mut workspace_manifest = agam_pkg::scaffold_workspace_manifest("daemon-manifest");
+        workspace_manifest.workspace.members = vec!["packages/core".into()];
+        agam_pkg::write_workspace_manifest_to_path(&manifest, &workspace_manifest)
+            .expect("write root manifest");
+        agam_pkg::write_workspace_manifest_to_path(
+            &member_manifest,
+            &agam_pkg::scaffold_workspace_manifest("daemon-member"),
+        )
+        .expect("write member manifest");
+        fs::write(&entry, render_project_entry("daemon-manifest")).expect("write root entry");
+        fs::write(&member_entry, render_project_entry("daemon-member"))
+            .expect("write member entry");
+
+        let previous = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
+        let source_hash = previous
+            .source_files
+            .iter()
+            .find(|file| file.path == member_entry)
+            .expect("member entry should be tracked")
+            .content_hash
+            .clone();
+        let mut session = DaemonSession {
+            snapshot: Some(previous.clone()),
+            cache: BTreeMap::new(),
+            last_prewarm: DaemonPrewarmSummary::default(),
+        };
+        session
+            .cache
+            .entry(member_entry.clone())
+            .or_default()
+            .insert(
+                source_hash,
+                WarmState {
+                    source_features: None,
+                    module: None,
+                    hir: None,
+                    mir: None,
+                },
+            );
+
+        let mut next_member_manifest = agam_pkg::scaffold_workspace_manifest("daemon-member");
+        next_member_manifest.project.version = "0.2.0".into();
+        agam_pkg::write_workspace_manifest_to_path(&member_manifest, &next_member_manifest)
+            .expect("rewrite member manifest");
 
         let next = agam_pkg::snapshot_workspace(Some(root.clone())).expect("snapshot");
         let diff = agam_pkg::diff_workspace_snapshots(&previous, &next);

@@ -212,6 +212,7 @@ fn workspace_metadata(session: Option<&agam_pkg::WorkspaceSession>) -> Value {
         "entryFile": session.layout.entry_file.display().to_string(),
         "sourceFileCount": session.layout.source_files.len(),
         "testFileCount": session.layout.test_files.len(),
+        "workspaceMemberCount": session.members.len(),
         "manifestFormatVersion": manifest.map(|manifest| manifest.format_version),
         "dependencyCount": manifest.map(|manifest| {
             manifest.dependencies.len()
@@ -232,7 +233,9 @@ fn apply_did_open(state: &mut ServerState, params: &Value) {
     let Some(text) = document.get("text").and_then(Value::as_str) else {
         return;
     };
-    state.open_documents.insert(uri.to_string(), text.to_string());
+    state
+        .open_documents
+        .insert(uri.to_string(), text.to_string());
 }
 
 fn apply_did_change(state: &mut ServerState, params: &Value) {
@@ -254,7 +257,9 @@ fn apply_did_change(state: &mut ServerState, params: &Value) {
     else {
         return;
     };
-    state.open_documents.insert(uri.to_string(), text.to_string());
+    state
+        .open_documents
+        .insert(uri.to_string(), text.to_string());
 }
 
 fn apply_did_close(state: &mut ServerState, params: &Value) {
@@ -322,7 +327,9 @@ fn path_from_lsp_file_uri(uri: &str) -> Result<PathBuf, String> {
     let encoded_path = uri
         .strip_prefix("file://")
         .ok_or_else(|| format!("unsupported LSP URI `{uri}`; only `file://` is supported"))?;
-    let encoded_path = encoded_path.strip_prefix("localhost/").unwrap_or(encoded_path);
+    let encoded_path = encoded_path
+        .strip_prefix("localhost/")
+        .unwrap_or(encoded_path);
     let decoded_path = percent_decode(encoded_path)?;
 
     if cfg!(windows) {
@@ -365,9 +372,7 @@ fn decode_hex_digit(byte: u8, input: &str) -> Result<u8, String> {
         b'0'..=b'9' => Ok(byte - b'0'),
         b'a'..=b'f' => Ok(10 + (byte - b'a')),
         b'A'..=b'F' => Ok(10 + (byte - b'A')),
-        _ => Err(format!(
-            "invalid percent-encoding in LSP URI `{input}`"
-        )),
+        _ => Err(format!("invalid percent-encoding in LSP URI `{input}`")),
     }
 }
 
@@ -452,7 +457,10 @@ mod tests {
     }
 
     fn file_uri(path: &std::path::Path) -> String {
-        let raw = path.to_string_lossy().replace('\\', "/").replace(' ', "%20");
+        let raw = path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace(' ', "%20");
         if raw.starts_with('/') {
             format!("file://{raw}")
         } else {
@@ -494,6 +502,10 @@ mod tests {
         assert_eq!(
             response["result"]["capabilities"]["experimental"]["workspace"]["projectName"],
             "lsp-workspace"
+        );
+        assert_eq!(
+            response["result"]["capabilities"]["experimental"]["workspace"]["workspaceMemberCount"],
+            0
         );
         assert_eq!(
             state
