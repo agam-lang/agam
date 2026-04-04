@@ -2575,16 +2575,7 @@ fn run_source_file(
     verbose: bool,
     features: FeatureFlags,
 ) -> Result<i32, String> {
-    if let Some(prewarmed) = load_daemon_prewarmed_entry(file, verbose) {
-        let warm_state = WarmState {
-            source_features: Some(SourceFeatureFlags {
-                call_cache: prewarmed.call_cache,
-                experimental_usages: Vec::new(),
-            }),
-            module: None,
-            hir: None,
-            mir: Some(prewarmed.package.mir),
-        };
+    if let Some(warm_state) = load_daemon_prewarmed_warm_state(file, verbose) {
         return run_source_file_with_optional_warm_state(
             file,
             args,
@@ -2711,6 +2702,22 @@ fn load_daemon_prewarmed_entry(path: &PathBuf, verbose: bool) -> Option<DaemonPr
         package,
         call_cache: prewarm.call_cache.clone(),
     })
+}
+
+fn warm_state_from_daemon_prewarmed_entry(prewarmed: DaemonPrewarmedEntry) -> WarmState {
+    WarmState {
+        source_features: Some(SourceFeatureFlags {
+            call_cache: prewarmed.call_cache,
+            experimental_usages: Vec::new(),
+        }),
+        module: None,
+        hir: None,
+        mir: Some(prewarmed.package.mir),
+    }
+}
+
+fn load_daemon_prewarmed_warm_state(path: &PathBuf, verbose: bool) -> Option<WarmState> {
+    load_daemon_prewarmed_entry(path, verbose).map(warm_state_from_daemon_prewarmed_entry)
 }
 
 fn run_source_file_with_optional_warm_state(
@@ -4178,6 +4185,9 @@ fn run_check_request_locally(path: &PathBuf, verbose: bool) -> Result<(), String
 
 /// Read, parse, and run semantic checks without lowering or code generation.
 fn compile_file(path: &PathBuf, verbose: bool) -> Result<(), String> {
+    if load_daemon_prewarmed_warm_state(path, verbose).is_some() {
+        return Ok(());
+    }
     let parsed = parse_source_file(path, verbose)?;
     semantic_check_parsed_source(path, &parsed, verbose)?;
     Ok(())
@@ -4190,6 +4200,9 @@ fn compile_dev_source_file(
     verbose: bool,
 ) -> Result<Option<WarmState>, String> {
     if keep_warm_state {
+        if let Some(warm_state) = load_daemon_prewarmed_warm_state(path, verbose) {
+            return Ok(Some(warm_state));
+        }
         Ok(Some(compile_file_with_warm_state(path, verbose)?))
     } else {
         compile_file(path, verbose)?;
@@ -7726,6 +7739,24 @@ mod tests {
     }
 
     #[test]
+    fn test_load_daemon_prewarmed_warm_state_reuses_matching_snapshot() {
+        let root = temp_dir("daemon_prewarm_warm_state");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+            .expect("one-shot daemon run should succeed");
+
+        let warm_state =
+            load_daemon_prewarmed_warm_state(&file, false).expect("warm state should load");
+        assert!(warm_state.module.is_none());
+        assert!(warm_state.hir.is_none());
+        assert_eq!(warm_state.mir.as_ref().expect("mir").functions.len(), 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn test_load_daemon_prewarmed_entry_rejects_hash_mismatch() {
         let root = temp_dir("daemon_prewarm_hash_mismatch");
         let file = root.join("main.agam");
@@ -7736,6 +7767,25 @@ mod tests {
         fs::write(&file, "fn main() -> i32 { return 1; }\n").expect("rewrite source");
 
         assert!(load_daemon_prewarmed_entry(&file, false).is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_compile_dev_source_file_prefers_daemon_prewarm_for_run() {
+        let root = temp_dir("compile_dev_daemon_prewarm");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+            .expect("one-shot daemon run should succeed");
+
+        let warm =
+            compile_dev_source_file(&file, true, false).expect("warm dev compile should work");
+        let warm = warm.expect("warm state should be retained for runnable entry file");
+        assert!(warm.module.is_none());
+        assert!(warm.hir.is_none());
+        assert_eq!(warm.mir.as_ref().expect("mir").functions.len(), 1);
 
         let _ = fs::remove_dir_all(root);
     }
