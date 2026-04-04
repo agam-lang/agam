@@ -19,8 +19,13 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{self, Stdio};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
 
 use agam_ast::decl::DeclKind;
 use agam_errors::{Diagnostic, DiagnosticEmitter, Label, SourceFile, SourceId, Span};
@@ -168,6 +173,22 @@ struct ParsedSource {
 const DAEMON_STATUS_SCHEMA_VERSION: u32 = 1;
 const DAEMON_HEARTBEAT_STALE_MS: u128 = 5_000;
 const DAEMON_DEFAULT_POLL_MS: u64 = 1_000;
+const NESTED_BUILD_REQUEST_ENV: &str = "AGAM_NESTED_BUILD_REQUEST";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BuildRequest {
+    file: PathBuf,
+    output: PathBuf,
+}
+
+#[derive(Debug)]
+struct BuildRequestResult {
+    request: BuildRequest,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    succeeded: bool,
+    launch_error: Option<String>,
+}
 
 #[derive(Subcommand, Debug)]
 enum Command {
@@ -596,7 +617,7 @@ fn main() {
                 eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
                 process::exit(1);
             }
-            if cli.verbose {
+            if cli.verbose && !is_nested_build_request() {
                 eprintln!("[agamc] Building {} file(s)...", files.len());
                 if let Some(ref t) = target {
                     eprintln!("[agamc] Target: {}", t);
@@ -629,11 +650,52 @@ fn main() {
                     }
                 };
 
+            if build_requests.len() > 1 && !is_nested_build_request() {
+                let parallelism = build_request_parallelism(build_requests.len());
+                if cli.verbose {
+                    eprintln!(
+                        "[agamc] Scheduling {} independent build request(s) across {} worker(s)",
+                        build_requests.len(),
+                        parallelism
+                    );
+                }
+
+                let results =
+                    execute_build_requests_with_runner(&build_requests, parallelism, |request| {
+                        run_nested_build_request(
+                            request,
+                            opt_level,
+                            backend,
+                            &tuning,
+                            features,
+                            cli.verbose,
+                        )
+                    });
+
+                let mut had_errors = false;
+                for result in results {
+                    if let Err(error) = replay_build_request_output(&result) {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", error);
+                        had_errors = true;
+                    }
+                    if !result.succeeded {
+                        had_errors = true;
+                    }
+                }
+
+                if had_errors {
+                    process::exit(1);
+                }
+                return;
+            }
+
             let mut had_errors = false;
-            for (file, out_path) in build_requests {
+            for request in build_requests {
+                let file = &request.file;
+                let out_path = &request.output;
                 match build_file(
-                    &file,
-                    &out_path,
+                    file,
+                    out_path,
                     opt_level,
                     backend,
                     &tuning,
@@ -647,7 +709,7 @@ fn main() {
                                 file.display(),
                                 out_path.display()
                             );
-                            if outcome.generated_path != out_path {
+                            if outcome.generated_path != *out_path {
                                 eprintln!(
                                     "\x1b[1;32minfo\x1b[0m: Generated IR: {}",
                                     outcome.generated_path.display()
@@ -1138,7 +1200,7 @@ fn resolve_build_requests(
     files: &[PathBuf],
     output: Option<PathBuf>,
     target: Option<&str>,
-) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+) -> Result<Vec<BuildRequest>, String> {
     if files.is_empty() {
         return Err("at least one source file is required".into());
     }
@@ -1150,7 +1212,10 @@ fn resolve_build_requests(
                     .into(),
             );
         }
-        return Ok(vec![(resolve_entry_source_path(&files[0])?, output)]);
+        return Ok(vec![BuildRequest {
+            file: resolve_entry_source_path(&files[0])?,
+            output,
+        }]);
     }
 
     let mut seen = BTreeSet::new();
@@ -1161,10 +1226,201 @@ fn resolve_build_requests(
             continue;
         }
         let output = default_native_binary_output_path(&file, target);
-        requests.push((file, output));
+        requests.push(BuildRequest { file, output });
     }
 
     Ok(requests)
+}
+
+fn is_nested_build_request() -> bool {
+    std::env::var_os(NESTED_BUILD_REQUEST_ENV).is_some()
+}
+
+fn render_backend_cli_value(backend: Backend) -> &'static str {
+    match backend {
+        Backend::Auto => "auto",
+        Backend::C => "c",
+        Backend::Llvm => "llvm",
+        Backend::Jit => "jit",
+    }
+}
+
+fn render_lto_cli_value(mode: LtoMode) -> &'static str {
+    match mode {
+        LtoMode::Thin => "thin",
+        LtoMode::Full => "full",
+    }
+}
+
+fn build_request_parallelism(request_count: usize) -> usize {
+    if request_count <= 1 {
+        return 1;
+    }
+
+    let available = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .max(1);
+    request_count.min(available)
+}
+
+fn execute_build_requests_with_runner<F>(
+    requests: &[BuildRequest],
+    parallelism: usize,
+    runner: F,
+) -> Vec<BuildRequestResult>
+where
+    F: Fn(&BuildRequest) -> BuildRequestResult + Sync,
+{
+    if requests.is_empty() {
+        return Vec::new();
+    }
+
+    let worker_count = parallelism.max(1).min(requests.len());
+    let next_index = AtomicUsize::new(0);
+    let results = Mutex::new(
+        std::iter::repeat_with(|| None)
+            .take(requests.len())
+            .collect::<Vec<Option<BuildRequestResult>>>(),
+    );
+
+    std::thread::scope(|scope| {
+        let runner = &runner;
+        for _ in 0..worker_count {
+            scope.spawn(|| {
+                loop {
+                    let index = next_index.fetch_add(1, Ordering::Relaxed);
+                    if index >= requests.len() {
+                        break;
+                    }
+
+                    let result = runner(&requests[index]);
+                    results.lock().expect("build results mutex poisoned")[index] = Some(result);
+                }
+            });
+        }
+    });
+
+    results
+        .into_inner()
+        .expect("build results mutex poisoned")
+        .into_iter()
+        .map(|result| result.expect("build request result missing"))
+        .collect()
+}
+
+fn run_nested_build_request(
+    request: &BuildRequest,
+    opt_level: u8,
+    backend: Backend,
+    tuning: &ReleaseTuning,
+    features: FeatureFlags,
+    verbose: bool,
+) -> BuildRequestResult {
+    let current_exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            return BuildRequestResult {
+                request: request.clone(),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                succeeded: false,
+                launch_error: Some(format!(
+                    "failed to locate the current agamc executable for `{}`: {}",
+                    request.file.display(),
+                    error
+                )),
+            };
+        }
+    };
+
+    let mut command = std::process::Command::new(current_exe);
+    if verbose {
+        command.arg("--verbose");
+    }
+    command
+        .arg("build")
+        .arg(&request.file)
+        .arg("--output")
+        .arg(&request.output)
+        .arg("-O")
+        .arg(opt_level.to_string())
+        .arg("--backend")
+        .arg(render_backend_cli_value(backend))
+        .env(NESTED_BUILD_REQUEST_ENV, "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    if tuning.native_cpu {
+        command.arg("--fast");
+    }
+    if let Some(target) = tuning.target.as_ref() {
+        command.arg("--target").arg(target);
+    }
+    if let Some(lto) = tuning.lto {
+        command.arg("--lto").arg(render_lto_cli_value(lto));
+    }
+    if let Some(dir) = tuning.pgo_generate.as_ref() {
+        command.arg("--pgo-generate").arg(dir);
+    }
+    if let Some(profile) = tuning.pgo_use.as_ref() {
+        command.arg("--pgo-use").arg(profile);
+    }
+    if features.call_cache {
+        command.arg("--call-cache");
+    }
+
+    match command.output() {
+        Ok(output) => BuildRequestResult {
+            request: request.clone(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+            succeeded: output.status.success(),
+            launch_error: None,
+        },
+        Err(error) => BuildRequestResult {
+            request: request.clone(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            succeeded: false,
+            launch_error: Some(format!(
+                "failed to launch nested build for `{}`: {}",
+                request.file.display(),
+                error
+            )),
+        },
+    }
+}
+
+fn replay_build_request_output(result: &BuildRequestResult) -> Result<(), String> {
+    if !result.stdout.is_empty() {
+        std::io::stdout()
+            .write_all(&result.stdout)
+            .map_err(|error| format!("failed to replay build stdout: {error}"))?;
+        std::io::stdout()
+            .flush()
+            .map_err(|error| format!("failed to flush build stdout: {error}"))?;
+    }
+
+    if !result.stderr.is_empty() {
+        std::io::stderr()
+            .write_all(&result.stderr)
+            .map_err(|error| format!("failed to replay build stderr: {error}"))?;
+        std::io::stderr()
+            .flush()
+            .map_err(|error| format!("failed to flush build stderr: {error}"))?;
+    }
+
+    if let Some(error) = result.launch_error.as_ref() {
+        eprintln!("\x1b[1;31merror\x1b[0m: {}", error);
+    } else if !result.succeeded && result.stderr.is_empty() && result.stdout.is_empty() {
+        eprintln!(
+            "\x1b[1;31merror\x1b[0m: nested build failed for `{}` without diagnostic output",
+            result.request.file.display()
+        );
+    }
+
+    Ok(())
 }
 
 fn native_binary_extension(target: Option<&str>) -> Option<&'static str> {
@@ -5549,6 +5805,8 @@ fn lto_flag(mode: LtoMode) -> &'static str {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::time::Duration;
 
     fn parse_source_features(source: &str) -> SourceFeatureFlags {
         let tokens = agam_lexer::tokenize(source, SourceId(0));
@@ -5569,6 +5827,28 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    fn build_request(file: impl Into<PathBuf>, output: impl Into<PathBuf>) -> BuildRequest {
+        BuildRequest {
+            file: file.into(),
+            output: output.into(),
+        }
+    }
+
+    fn update_maximum(counter: &AtomicUsize, candidate: usize) {
+        let mut current = counter.load(AtomicOrdering::SeqCst);
+        while candidate > current {
+            match counter.compare_exchange(
+                current,
+                candidate,
+                AtomicOrdering::SeqCst,
+                AtomicOrdering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
     }
 
     #[test]
@@ -5725,7 +6005,13 @@ mod tests {
             Some("x86_64-pc-windows-msvc"),
         )
         .expect("manifest input should resolve to entry file");
-        assert_eq!(requests, vec![(entry.clone(), entry.with_extension("exe"))]);
+        assert_eq!(
+            requests,
+            vec![BuildRequest {
+                file: entry.clone(),
+                output: entry.with_extension("exe"),
+            }]
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5763,18 +6049,32 @@ mod tests {
 
     #[test]
     fn test_resolve_build_requests_uses_default_output_per_file() {
-        let files = vec![PathBuf::from("alpha.agam"), PathBuf::from("beta.agam")];
+        let root = temp_dir("build_requests_defaults");
+        let alpha = root.join("alpha.agam");
+        let beta = root.join("beta.agam");
+        fs::write(&alpha, "fn main() -> i32 { return 0; }\n").expect("write alpha source");
+        fs::write(&beta, "fn main() -> i32 { return 0; }\n").expect("write beta source");
+
+        let files = vec![alpha.clone(), beta.clone()];
         let requests = resolve_build_requests(&files, None, Some("x86_64-pc-windows-msvc"))
             .expect("build requests should resolve");
         assert_eq!(requests.len(), 2);
         assert_eq!(
             requests[0],
-            (PathBuf::from("alpha.agam"), PathBuf::from("alpha.exe"))
+            BuildRequest {
+                file: alpha.clone(),
+                output: alpha.with_extension("exe"),
+            }
         );
         assert_eq!(
             requests[1],
-            (PathBuf::from("beta.agam"), PathBuf::from("beta.exe"))
+            BuildRequest {
+                file: beta.clone(),
+                output: beta.with_extension("exe"),
+            }
         );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -5787,7 +6087,7 @@ mod tests {
         let output = root.join("program.exe");
         let requests = resolve_build_requests(&files, Some(output.clone()), None)
             .expect("single input should allow explicit output");
-        assert_eq!(requests, vec![(file, output)]);
+        assert_eq!(requests, vec![BuildRequest { file, output }]);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5809,7 +6109,13 @@ mod tests {
         let requests =
             resolve_build_requests(std::slice::from_ref(&root), Some(output.clone()), None)
                 .expect("workspace root should resolve to entry before output is applied");
-        assert_eq!(requests, vec![(entry.clone(), output)]);
+        assert_eq!(
+            requests,
+            vec![BuildRequest {
+                file: entry.clone(),
+                output,
+            }]
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -5833,9 +6139,78 @@ mod tests {
             Some("x86_64-pc-windows-msvc"),
         )
         .expect("overlapping workspace inputs should resolve");
-        assert_eq!(requests, vec![(entry.clone(), entry.with_extension("exe"))]);
+        assert_eq!(
+            requests,
+            vec![BuildRequest {
+                file: entry.clone(),
+                output: entry.with_extension("exe"),
+            }]
+        );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_execute_build_requests_with_runner_preserves_request_order() {
+        let requests = vec![
+            build_request("alpha.agam", "alpha.exe"),
+            build_request("beta.agam", "beta.exe"),
+            build_request("gamma.agam", "gamma.exe"),
+        ];
+
+        let results = execute_build_requests_with_runner(&requests, 3, |request| {
+            let delay_ms = match request.file.file_stem().and_then(|name| name.to_str()) {
+                Some("alpha") => 40,
+                Some("beta") => 5,
+                Some("gamma") => 20,
+                _ => 1,
+            };
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            BuildRequestResult {
+                request: request.clone(),
+                stdout: request.file.to_string_lossy().as_bytes().to_vec(),
+                stderr: Vec::new(),
+                succeeded: true,
+                launch_error: None,
+            }
+        });
+
+        let result_requests = results
+            .iter()
+            .map(|result| result.request.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(result_requests, requests);
+    }
+
+    #[test]
+    fn test_execute_build_requests_with_runner_respects_parallelism_limit() {
+        let requests = vec![
+            build_request("one.agam", "one.exe"),
+            build_request("two.agam", "two.exe"),
+            build_request("three.agam", "three.exe"),
+            build_request("four.agam", "four.exe"),
+        ];
+        let active = AtomicUsize::new(0);
+        let observed_max = AtomicUsize::new(0);
+
+        let results = execute_build_requests_with_runner(&requests, 2, |request| {
+            let now_active = active.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            update_maximum(&observed_max, now_active);
+            std::thread::sleep(Duration::from_millis(20));
+            active.fetch_sub(1, AtomicOrdering::SeqCst);
+
+            BuildRequestResult {
+                request: request.clone(),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                succeeded: true,
+                launch_error: None,
+            }
+        });
+
+        assert_eq!(results.len(), requests.len());
+        assert!(observed_max.load(AtomicOrdering::SeqCst) <= 2);
+        assert!(observed_max.load(AtomicOrdering::SeqCst) >= 2);
     }
 
     #[test]
