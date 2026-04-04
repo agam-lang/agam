@@ -12,11 +12,16 @@ That table should not be read as "Agam benchmarks only Fibonacci." The broader b
 ## Summary
 
 - runnable Agam workloads in-repo today: `38`
-- comparison-ready workloads in-repo today: `3`
+- comparison-ready workloads in-repo today: `8`
   - `fibonacci`
+  - `edit_distance`
   - `matrix_multiply`
+  - `polynomial_eval`
+  - `ring_buffer`
   - `tensor_matmul`
-- checked-in comparison-language sources today: `13`
+  - `token_frequency`
+  - `csv_scanning`
+- checked-in comparison-language sources today: `38`
 - planned or future workloads tracked below: `22`
 - total workload slots tracked in this matrix: `60`
 
@@ -36,14 +41,14 @@ That table should not be read as "Agam benchmarks only Fibonacci." The broader b
 | Workload | Repo source | Comparisons today | Constraint focus | Status |
 | --- | --- | --- | --- | --- |
 | `binary_search` | `01_algorithms/binary_search.agam` | none | branch prediction, cache-friendly lookup | `runnable` |
-| `edit_distance` | `01_algorithms/edit_distance.agam` | none | dynamic programming, string DP cost | `runnable` |
+| `edit_distance` | `01_algorithms/edit_distance.agam` | C/C++/Go/Rust/Python | dynamic programming, string DP cost | `comparison-ready` |
 | `fibonacci` | `01_algorithms/fibonacci.agam` | C/C++/Go/Rust/Python | recursion, branch behavior, call-cache reuse | `comparison-ready` |
 | `prime_sieve` | `01_algorithms/prime_sieve.agam` | none | integer math, loop throughput, memory locality | `runnable` |
 | `quicksort` | `01_algorithms/quicksort.agam` | none | branching, partitioning, recursion | `runnable` |
 | `fft` | `02_numerical_computation/fft.agam` | none | floating-point throughput, structured memory access | `runnable` |
 | `matrix_multiply` | `02_numerical_computation/matrix_multiply.agam` | C/C++/Rust/Python | arithmetic throughput, cache reuse, loop lowering | `comparison-ready` |
 | `monte_carlo_pi` | `02_numerical_computation/monte_carlo_pi.agam` | none | floating point, random sampling, branch noise | `runnable` |
-| `polynomial_eval` | `02_numerical_computation/polynomial_eval.agam` | none | scalar arithmetic, tight loop optimization | `runnable` |
+| `polynomial_eval` | `02_numerical_computation/polynomial_eval.agam` | C/C++/Go/Rust/Python | scalar arithmetic, tight loop optimization | `comparison-ready` |
 | `tensor_operations` | `02_numerical_computation/tensor_operations.agam` | none | vectorizable arithmetic, memory layout | `runnable` |
 | `autodiff` | `05_ml_primitives/autodiff.agam` | none | graph building, derivative propagation | `runnable` |
 | `convolution` | `05_ml_primitives/convolution.agam` | none | stencil-style memory reuse, arithmetic intensity | `runnable` |
@@ -51,7 +56,7 @@ That table should not be read as "Agam benchmarks only Fibonacci." The broader b
 | `tensor_matmul` | `05_ml_primitives/tensor_matmul.agam` | C/C++/Rust/Python | dense linear algebra, tensor lowering | `comparison-ready` |
 | `regex_matching` | `06_string_processing/regex_matching.agam` | none | pattern matching, branching, parser/runtime cost | `runnable` |
 | `string_search` | `06_string_processing/string_search.agam` | none | substring scan, branch prediction, memory locality | `runnable` |
-| `token_frequency` | `06_string_processing/token_frequency.agam` | none | tokenization, hashmap pressure, string handling | `runnable` |
+| `token_frequency` | `06_string_processing/token_frequency.agam` | C/C++/Go/Rust/Python | tokenization, hashmap pressure, string handling | `comparison-ready` |
 
 ## Current Memory, Data Structure, And I/O Workloads
 
@@ -60,13 +65,13 @@ That table should not be read as "Agam benchmarks only Fibonacci." The broader b
 | `btree_operations` | `03_data_structures/btree_operations.agam` | none | cache-aware tree traversal, allocator behavior | `runnable` |
 | `hashmap_operations` | `03_data_structures/hashmap_operations.agam` | none | hashing, probe locality, resize cost | `runnable` |
 | `linked_list` | `03_data_structures/linked_list.agam` | none | pointer chasing, cache misses, allocator cost | `runnable` |
-| `ring_buffer` | `03_data_structures/ring_buffer.agam` | none | circular-buffer indexing, branch-light queue traffic | `runnable` |
+| `ring_buffer` | `03_data_structures/ring_buffer.agam` | C/C++/Go/Rust/Python | circular-buffer indexing, branch-light queue traffic | `comparison-ready` |
 | `memory_allocation` | `04_memory_intensive/memory_allocation.agam` | none | allocator throughput, working-set growth | `runnable` |
 | `garbage_collection` | `04_memory_intensive/garbage_collection.agam` | none | retention pressure, traversal cost, reclaim behavior | `runnable` |
 | `arc_contention` | `04_memory_intensive/arc_contention.agam` | none | shared ownership traffic, atomic overhead | `runnable` |
 | `file_reading` | `07_io_operations/file_reading.agam` | none | sequential file I/O, parser boundary cost | `runnable` |
 | `json_parsing` | `07_io_operations/json_parsing.agam` | none | parsing throughput, allocation, string handling | `runnable` |
-| `csv_scanning` | `07_io_operations/csv_scanning.agam` | none | text scanning, token splitting, I/O throughput | `runnable` |
+| `csv_scanning` | `07_io_operations/csv_scanning.agam` | C/C++/Go/Rust/Python | text scanning, token splitting, I/O throughput | `comparison-ready` |
 
 ## Current JIT And Compilation Workloads
 
@@ -143,13 +148,12 @@ These matter, but they need dedicated harness work or subsystem integration befo
 
 If the goal is to move beyond Fibonacci without pretending the whole matrix already exists, the next practical comparison-language additions should be:
 
-1. `edit_distance`
-2. `quicksort`
-3. `fft`
-4. `polynomial_eval`
-5. `ring_buffer`
-6. `token_frequency`
-7. `csv_scanning`
-8. the four `call_cache_*` locality shapes
+1. `binary_search`
+2. `prime_sieve`
+3. `quicksort`
+4. `fft`
+5. `monte_carlo_pi`
+6. `hashmap_operations`
+7. the four `call_cache_*` locality shapes
 
-Those workloads are already present as Agam benchmarks, exercise different constraints, and would give a much better comparison surface before jumping to GPU/NPU/network-specific labs.
+Those remaining workloads are already present as Agam benchmarks, exercise different constraints, and are the next good comparison surface before jumping to GPU/NPU/network-specific labs.

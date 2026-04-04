@@ -1,26 +1,36 @@
 @lang.advance
 
 // Edit-distance style dynamic-programming lattice benchmark scaffold.
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
 fn edit_distance_cost(left: i64, right: i64) -> i64 {
-    let total: i64 = 0;
-    let row: i64 = 0;
+    let one: i64 = i64_const(1);
+    let two: i64 = i64_const(2);
+    let three: i64 = i64_const(3);
+    let eleven: i64 = i64_const(11);
+    let thirteen: i64 = i64_const(13);
+    let seventeen: i64 = i64_const(17);
+    let total: i64 = i64_const(0);
+    let row: i64 = i64_const(0);
     while row < left {
-        let col: i64 = 0;
+        let col: i64 = i64_const(0);
         while col < right {
-            let mismatch: i64 = ((row * 17) + (col * 13)) % 11;
-            if mismatch < 2 {
-                total = total + 1;
+            let mismatch: i64 = ((row * seventeen) + (col * thirteen)) % eleven;
+            if mismatch < two {
+                total = total + one;
             } else {
-                total = total + ((row + col) % 3);
+                total = total + ((row + col) % three);
             }
-            col = col + 1;
+            col = col + one;
         }
-        row = row + 1;
+        row = row + one;
     }
     return total;
 }
 
 fn main() -> i32 {
-    print_int(edit_distance_cost(2800, 2800));
+    print_int(edit_distance_cost(i64_const(2800), i64_const(2800)));
     return 0;
 }

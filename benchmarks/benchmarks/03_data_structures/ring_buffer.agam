@@ -1,25 +1,33 @@
 @lang.advance
 
 // Ring-buffer enqueue/dequeue arithmetic benchmark scaffold.
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
 fn ring_buffer_cost(capacity: i64, rounds: i64) -> i64 {
-    let head: i64 = 0;
-    let tail: i64 = 0;
-    let acc: i64 = 0;
-    let item: i64 = 0;
+    let one: i64 = i64_const(1);
+    let three: i64 = i64_const(3);
+    let seventeen: i64 = i64_const(17);
+    let modulus: i64 = i64_const(257);
+    let head: i64 = i64_const(0);
+    let tail: i64 = i64_const(0);
+    let acc: i64 = i64_const(0);
+    let item: i64 = i64_const(0);
     while item < rounds {
         let slot: i64 = (head + item) % capacity;
-        acc = acc + ((slot * 17) + item) % 257;
-        if (item % 3) == 0 {
-            tail = (tail + 1) % capacity;
+        acc = acc + ((slot * seventeen) + item) % modulus;
+        if (item % three) == 0 {
+            tail = (tail + one) % capacity;
             acc = acc + tail;
         }
-        head = (head + 1) % capacity;
-        item = item + 1;
+        head = (head + one) % capacity;
+        item = item + one;
     }
     return acc + head + tail;
 }
 
 fn main() -> i32 {
-    print_int(ring_buffer_cost(4096, 12000000));
+    print_int(ring_buffer_cost(i64_const(4096), i64_const(12000000)));
     return 0;
 }

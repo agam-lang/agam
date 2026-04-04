@@ -1,26 +1,36 @@
 @lang.advance
 
 // CSV-scanning benchmark scaffold using row/column delimiter pressure.
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
 fn csv_scan_cost(rows: i64, cols: i64) -> i64 {
-    let checksum: i64 = 0;
-    let row: i64 = 0;
+    let one: i64 = i64_const(1);
+    let ten: i64 = i64_const(10);
+    let thirteen: i64 = i64_const(13);
+    let thirty_seven: i64 = i64_const(37);
+    let forty_four: i64 = i64_const(44);
+    let field_modulus: i64 = i64_const(1009);
+    let checksum: i64 = i64_const(0);
+    let row: i64 = i64_const(0);
     while row < rows {
-        let col: i64 = 0;
+        let col: i64 = i64_const(0);
         while col < cols {
-            let field: i64 = ((row * 37) + (col * 13)) % 1009;
-            if (col + 1) < cols {
-                checksum = checksum + field + 44;
+            let field: i64 = ((row * thirty_seven) + (col * thirteen)) % field_modulus;
+            if (col + one) < cols {
+                checksum = checksum + field + forty_four;
             } else {
-                checksum = checksum + field + 10;
+                checksum = checksum + field + ten;
             }
-            col = col + 1;
+            col = col + one;
         }
-        row = row + 1;
+        row = row + one;
     }
     return checksum;
 }
 
 fn main() -> i32 {
-    print_int(csv_scan_cost(900000, 9));
+    print_int(csv_scan_cost(i64_const(900000), i64_const(9)));
     return 0;
 }

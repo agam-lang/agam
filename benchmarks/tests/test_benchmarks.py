@@ -37,6 +37,33 @@ class BenchmarkWorkspaceShapeTests(unittest.TestCase):
         agam_sources = discover_benchmarks(language_filters={"agam"})
         self.assertGreaterEqual(len(agam_sources), 35)
 
+    def test_workspace_keeps_35_plus_comparison_sources(self) -> None:
+        comparison_sources = [
+            path
+            for path in discover_benchmarks(include_comparisons=True)
+            if "comparisons" in path.parts
+        ]
+        self.assertGreaterEqual(len(comparison_sources), 35)
+
+    def test_cross_language_workloads_exist_for_new_constraint_slice(self) -> None:
+        expected = {
+            "01_algorithms": {"edit_distance"},
+            "02_numerical_computation": {"polynomial_eval"},
+            "03_data_structures": {"ring_buffer"},
+            "06_string_processing": {"token_frequency"},
+            "07_io_operations": {"csv_scanning"},
+        }
+        expected_suffixes = {".c", ".cpp", ".go", ".py", ".rs"}
+        for suite, workload_names in expected.items():
+            comparison_dir = SUITE_ROOT / suite / "comparisons"
+            by_stem: dict[str, set[str]] = {}
+            for path in comparison_dir.iterdir():
+                if not path.is_file() or path.suffix not in expected_suffixes:
+                    continue
+                by_stem.setdefault(path.stem, set()).add(path.suffix)
+            for workload_name in workload_names:
+                self.assertEqual(by_stem.get(workload_name), expected_suffixes)
+
     def test_jit_suite_keeps_multiple_call_cache_shapes(self) -> None:
         jit_sources = discover_benchmarks(
             suite_filters=["08_jit_optimization"],

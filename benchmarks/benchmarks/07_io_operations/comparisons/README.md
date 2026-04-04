@@ -1,4 +1,14 @@
 # I/O Comparisons
 
-Add file and JSON workload equivalents here once the Agam-native I/O benchmark contract is ready.
+Current runnable comparison workloads:
 
+- `csv_scanning.c`
+- `csv_scanning.cpp`
+- `csv_scanning.go`
+- `csv_scanning.rs`
+- `csv_scanning.py`
+
+Planned next additions:
+
+- file-reading workloads
+- JSON parsing workloads

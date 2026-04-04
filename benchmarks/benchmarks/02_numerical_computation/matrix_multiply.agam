@@ -1,27 +1,34 @@
 @lang.advance
 
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
 fn matrix_checksum(size: i64) -> i64 {
-    let sum: i64 = 0;
-    let row: i64 = 0;
+    let one: i64 = i64_const(1);
+    let three: i64 = i64_const(3);
+    let five: i64 = i64_const(5);
+    let modulus: i64 = i64_const(104729);
+    let sum: i64 = i64_const(0);
+    let row: i64 = i64_const(0);
     while row < size {
-        let col: i64 = 0;
+        let col: i64 = i64_const(0);
         while col < size {
-            let inner: i64 = 0;
-            let cell: i64 = 0;
+            let inner: i64 = i64_const(0);
+            let cell: i64 = i64_const(0);
             while inner < size {
-                cell = cell + (((row * inner) + 3) * ((inner * col) + 5));
-                inner = inner + 1;
+                cell = cell + (((row * inner) + three) * ((inner * col) + five));
+                inner = inner + one;
             }
-            sum = sum + (cell % 104729);
-            col = col + 1;
+            sum = sum + (cell % modulus);
+            col = col + one;
         }
-        row = row + 1;
+        row = row + one;
     }
     return sum;
 }
 
 fn main() -> i32 {
-    print_int(matrix_checksum(64));
+    print_int(matrix_checksum(i64_const(64)));
     return 0;
 }
-
