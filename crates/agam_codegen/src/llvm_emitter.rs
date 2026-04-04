@@ -609,18 +609,25 @@ fn build_call_cache_analysis(
     layouts: &HashMap<String, FunctionLayout>,
     options: &LlvmEmitOptions,
 ) -> CallCacheAnalysis {
+    let semantic_reasons = agam_mir::analysis::semantic_call_cache_rejection_reasons(module);
     let support_reasons = module
         .functions
         .iter()
         .map(|function| {
-            let reasons = layouts
+            let mut reasons = semantic_reasons
                 .get(&function.name)
-                .map(llvm_call_cache_support_reasons)
-                .unwrap_or_else(|| {
-                    vec![CallCacheRejectReason::UnsupportedReturnType {
-                        description: "function layout analysis failed".into(),
-                    }]
-                });
+                .cloned()
+                .unwrap_or_default();
+            reasons.extend(
+                layouts
+                    .get(&function.name)
+                    .map(llvm_call_cache_support_reasons)
+                    .unwrap_or_else(|| {
+                        vec![CallCacheRejectReason::UnsupportedReturnType {
+                            description: "function layout analysis failed".into(),
+                        }]
+                    }),
+            );
             (function.name.clone(), reasons)
         })
         .collect();
@@ -2044,13 +2051,7 @@ impl LlvmEmitter {
                     .unwrap_or_else(LlvmType::default_int);
                 if !emitted_locals.contains(name) {
                     let ptr_name = format!("%local_{}", sanitize_name(name));
-                    writeln!(
-                        out,
-                        "  {} = alloca {}",
-                        ptr_name,
-                        local_ty.ir(),
-                    )
-                    .unwrap();
+                    writeln!(out, "  {} = alloca {}", ptr_name, local_ty.ir(),).unwrap();
                     locals.insert(name.clone(), (local_ty, ptr_name));
                     emitted_locals.insert(name.clone());
                 }

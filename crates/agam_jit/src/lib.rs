@@ -1868,18 +1868,25 @@ fn build_call_cache_analysis(
     layouts: &HashMap<String, FunctionLayout>,
     options: &JitOptions,
 ) -> CallCacheAnalysis {
+    let semantic_reasons = agam_mir::analysis::semantic_call_cache_rejection_reasons(module);
     let support_reasons = module
         .functions
         .iter()
         .map(|function| {
-            let reasons = layouts
+            let mut reasons = semantic_reasons
                 .get(&function.name)
-                .map(jit_call_cache_support_reasons)
-                .unwrap_or_else(|| {
-                    vec![CallCacheRejectReason::UnsupportedReturnType {
-                        description: "function layout analysis failed".into(),
-                    }]
-                });
+                .cloned()
+                .unwrap_or_default();
+            reasons.extend(
+                layouts
+                    .get(&function.name)
+                    .map(jit_call_cache_support_reasons)
+                    .unwrap_or_else(|| {
+                        vec![CallCacheRejectReason::UnsupportedReturnType {
+                            description: "function layout analysis failed".into(),
+                        }]
+                    }),
+            );
             (function.name.clone(), reasons)
         })
         .collect();
