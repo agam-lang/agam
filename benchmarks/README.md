@@ -59,7 +59,7 @@ The canonical implemented-vs-future workload map now lives in `COVERAGE_MATRIX.m
   - `csv_scanning`
 - planned or future workloads tracked beyond the current runnable set: `22`
 
-For the checked-in result roots themselves, including which raw run backs the published same-host table and why the current aggregated CSVs are compile-only, see `results/README.md`.
+For the checked-in result roots themselves, including which raw run backs the published same-host table, which comparison-ready workloads are currently measured vs dry-run validated vs source-only, and why the current aggregated CSVs are compile-only, see `results/README.md`.
 
 The public Fibonacci table exists because it is the only workload that currently has both a checked-in measured same-host result set and the broadest checked-in comparison coverage across C, C++, Go, Rust, and Python. It is a snapshot, not the benchmark boundary.
 

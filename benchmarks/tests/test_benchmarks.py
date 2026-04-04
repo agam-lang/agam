@@ -64,6 +64,29 @@ class BenchmarkWorkspaceShapeTests(unittest.TestCase):
             for workload_name in workload_names:
                 self.assertEqual(by_stem.get(workload_name), expected_suffixes)
 
+    def test_results_readme_tracks_result_status_by_workload(self) -> None:
+        text = (BENCHMARK_ROOT / "results" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("## Comparison-Ready Result Coverage", text)
+        self.assertIn("## Agam-Only Call-Cache Result Coverage", text)
+        for workload_name in (
+            "fibonacci",
+            "edit_distance",
+            "matrix_multiply",
+            "polynomial_eval",
+            "ring_buffer",
+            "tensor_matmul",
+            "token_frequency",
+            "csv_scanning",
+            "call_cache_hotset",
+            "call_cache_mixed_locality",
+            "call_cache_phase_shift",
+            "call_cache_unique_inputs",
+        ):
+            self.assertIn(f"`{workload_name}`", text)
+        self.assertIn("`measured snapshot`", text)
+        self.assertIn("`dry-run validated`", text)
+        self.assertIn("`source-present only`", text)
+
     def test_jit_suite_keeps_multiple_call_cache_shapes(self) -> None:
         jit_sources = discover_benchmarks(
             suite_filters=["08_jit_optimization"],

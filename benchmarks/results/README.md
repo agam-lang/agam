@@ -80,6 +80,32 @@ Validated workloads:
 
 Because that invocation used `dry_run`, it does not contain measured runtime rows and its compilation durations are intentionally `null`. The useful signal in this run is harness coverage: the workspace discovered the new workloads, planned them correctly, and populated the expected build-root entries under `raw/2026-04-04_07-25-36/build/`.
 
+## Comparison-Ready Result Coverage
+
+The table below answers "which comparison-ready workloads already have real result rows nearby?" without pretending unmeasured workloads already have timings.
+
+| Workload | Comparison coverage in repo | Checked-in result status | Nearby result root | Notes |
+| --- | --- | --- | --- | --- |
+| `fibonacci` | C/C++/Go/Rust/Python | `measured snapshot` | `raw/2026-04-02_17-00-55/` | Full runtime, compile-time, SSD-footprint, and RSS rows are published above and in `../../README.md`. |
+| `edit_distance` | C/C++/Go/Rust/Python | `dry-run validated` | `raw/2026-04-04_07-25-36/` | Harness discovery and planning are validated; runtime and compile numbers are intentionally absent because the run used `--dry-run`. |
+| `matrix_multiply` | C/C++/Rust/Python | `source-present only` | none | Comparison sources are checked in, but no measured or dry-run result root is checked in yet. |
+| `polynomial_eval` | C/C++/Go/Rust/Python | `dry-run validated` | `raw/2026-04-04_07-25-36/` | Harness discovery and planning are validated; measured timing rows are still pending. |
+| `ring_buffer` | C/C++/Go/Rust/Python | `dry-run validated` | `raw/2026-04-04_07-25-36/` | Harness discovery and planning are validated; measured timing rows are still pending. |
+| `tensor_matmul` | C/C++/Rust/Python | `source-present only` | none | Comparison sources are checked in, but no measured or dry-run result root is checked in yet. |
+| `token_frequency` | C/C++/Go/Rust/Python | `dry-run validated` | `raw/2026-04-04_07-25-36/` | Harness discovery and planning are validated; measured timing rows are still pending. |
+| `csv_scanning` | C/C++/Go/Rust/Python | `dry-run validated` | `raw/2026-04-04_07-25-36/` | Harness discovery and planning are validated; measured timing rows are still pending. |
+
+## Agam-Only Call-Cache Result Coverage
+
+These workloads exist to judge call-cache behavior across different locality shapes. They are not comparison-ready across other languages yet, but the checked-in result tree now records whether they have at least been validated through the harness.
+
+| Workload | Checked-in result status | Nearby result root | Notes |
+| --- | --- | --- | --- |
+| `call_cache_hotset` | `dry-run validated` | `raw/2026-04-04_07-25-36/` | High-hit-rate locality shape for best-case call-cache reuse. |
+| `call_cache_mixed_locality` | `dry-run validated` | `raw/2026-04-04_07-25-36/` | Mixed hit/miss shape to expose cache churn. |
+| `call_cache_phase_shift` | `dry-run validated` | `raw/2026-04-04_07-25-36/` | Working-set shifts over time to expose eviction behavior. |
+| `call_cache_unique_inputs` | `dry-run validated` | `raw/2026-04-04_07-25-36/` | Near-zero reuse shape to expose call-cache overhead. |
+
 ## Why The Aggregated Files Look Partial
 
 The formatter outputs under `aggregated/` and `reports/` always reflect the latest run written to `results/`.
