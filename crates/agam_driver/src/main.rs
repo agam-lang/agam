@@ -3344,6 +3344,21 @@ fn build_outcome_artifact_kind_label(backend: Backend, outcome: &BuildOutcome) -
     }
 }
 
+fn daemon_prewarm_package_artifact_missing(prewarm: &DaemonPrewarmSummary) -> bool {
+    if !prewarm.package_ready {
+        return false;
+    }
+    prewarm
+        .package_artifact_path
+        .as_deref()
+        .map(|path| !Path::new(path).is_file())
+        .unwrap_or(true)
+}
+
+fn daemon_prewarm_needs_refresh(prewarm: &DaemonPrewarmSummary) -> bool {
+    daemon_prewarm_package_artifact_missing(prewarm)
+}
+
 fn daemon_prewarm_status_message(prewarm: &DaemonPrewarmSummary) -> Option<String> {
     if !prewarm.package_ready
         && !prewarm.build_ready
@@ -3353,7 +3368,9 @@ fn daemon_prewarm_status_message(prewarm: &DaemonPrewarmSummary) -> Option<Strin
         return None;
     }
 
-    let package = if prewarm.package_ready {
+    let package = if daemon_prewarm_package_artifact_missing(prewarm) {
+        "stale (artifact missing)"
+    } else if prewarm.package_ready {
         "ready"
     } else {
         "cold"
@@ -3718,7 +3735,8 @@ fn run_daemon_cycle(
     };
     let should_prewarm = first_cycle
         || daemon_diff_has_changes(&diff_summary)
-        || session.last_prewarm.last_error.is_some();
+        || session.last_prewarm.last_error.is_some()
+        || daemon_prewarm_needs_refresh(&session.last_prewarm);
     if should_prewarm {
         session.last_prewarm = prewarm_daemon_entry_artifacts(session, &snapshot, verbose);
     }
@@ -7722,6 +7740,24 @@ mod tests {
     }
 
     #[test]
+    fn test_daemon_prewarm_status_message_reports_missing_package_artifact() {
+        let root = temp_dir("daemon_prewarm_status_missing_package");
+        let missing_package = root.join("missing.agpkg.json");
+        let summary = DaemonPrewarmSummary {
+            package_ready: true,
+            package_artifact_path: Some(missing_package.display().to_string()),
+            build_backend: Some("jit".into()),
+            ..DaemonPrewarmSummary::default()
+        };
+
+        let message =
+            daemon_prewarm_status_message(&summary).expect("prewarm status message should exist");
+        assert!(message.contains("package stale (artifact missing)"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn test_load_daemon_prewarmed_entry_reuses_matching_snapshot() {
         let root = temp_dir("daemon_prewarm_reuse");
         let file = root.join("main.agam");
@@ -7900,6 +7936,79 @@ mod tests {
         assert_eq!(third_status.last_error, None);
         assert_eq!(third_status.warmed_file_count, 1);
         assert_eq!(third_diff.changed_files, 1);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_run_daemon_cycle_rewarms_missing_package_artifact() {
+        let root = temp_dir("daemon_cycle_missing_prewarm");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        let initial_snapshot = agam_pkg::snapshot_workspace(Some(file.clone())).expect("snapshot");
+        let workspace = initial_snapshot.session.layout.clone();
+        let session_started_unix_ms = now_unix_ms();
+        let mut session = DaemonSession::default();
+
+        let first = run_daemon_cycle(
+            &mut session,
+            &daemon_refresh_snapshot_hint(&workspace),
+            &initial_snapshot,
+            session_started_unix_ms,
+            DaemonRunMode::ForegroundLoop,
+            false,
+            true,
+        )
+        .expect("first daemon cycle should succeed");
+        let first_status = match first {
+            DaemonCycleOutcome::Success { status, .. } => status,
+            DaemonCycleOutcome::Error { error, .. } => {
+                panic!("unexpected daemon error on first cycle: {error}")
+            }
+        };
+        let package_artifact = PathBuf::from(
+            first_status
+                .prewarm
+                .package_artifact_path
+                .clone()
+                .expect("package artifact path should exist"),
+        );
+        assert!(package_artifact.is_file());
+
+        fs::remove_file(&package_artifact).expect("remove daemon prewarm package artifact");
+        assert!(!package_artifact.exists());
+
+        let second = run_daemon_cycle(
+            &mut session,
+            &daemon_refresh_snapshot_hint(&workspace),
+            &initial_snapshot,
+            session_started_unix_ms,
+            DaemonRunMode::ForegroundLoop,
+            false,
+            false,
+        )
+        .expect("second daemon cycle should succeed");
+        let (second_status, second_diff, prewarm_ran) = match second {
+            DaemonCycleOutcome::Success {
+                status,
+                diff_summary,
+                prewarm_ran,
+            } => (status, diff_summary, prewarm_ran),
+            DaemonCycleOutcome::Error { error, .. } => {
+                panic!("daemon cycle should have rewarmed missing package artifact: {error}")
+            }
+        };
+        assert!(prewarm_ran);
+        assert_eq!(second_diff.changed_files, 0);
+        assert!(second_status.prewarm.package_ready);
+        let rerwarmed_artifact = PathBuf::from(
+            second_status
+                .prewarm
+                .package_artifact_path
+                .expect("package artifact path should be restored"),
+        );
+        assert!(rerwarmed_artifact.is_file());
 
         let _ = fs::remove_dir_all(root);
     }
