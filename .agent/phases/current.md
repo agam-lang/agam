@@ -13,7 +13,7 @@
    - Detail file: `details/15F.md`
 2. **Phase 15G: First-Party Premium Experience Layer**
    - Status: partial
-   - Done: `agamc doctor`, `agamc new`, `agamc dev`, `agamc cache status`, workspace-aware `agamc check` input expansion, shared entry-file resolution for workspace-root build/run/package commands, and a broadened benchmark workspace with 38 Agam workloads plus dedicated call-cache locality/miss study cases and a result-root README that explains the checked-in measured snapshot versus later dry-run validation artifacts
+   - Done: `agamc doctor`, `agamc new`, `agamc dev`, `agamc cache status`, workspace-aware `agamc check` input expansion, shared entry-file resolution for workspace-root build/run/package commands, and a broadened benchmark workspace with 38 Agam workloads plus dedicated call-cache locality/miss study cases, a result-root README that explains the checked-in measured snapshot versus later dry-run validation artifacts, and a 60-workload coverage matrix that separates runnable, comparison-ready, planned, and future-lab benchmark slots
    - Next work: unify tooling, package/runtime/cache metadata, and workspace conventions behind one stable contract
    - Detail file: `details/15G.md`
 3. **Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles**

@@ -20,6 +20,15 @@ This workspace follows a measurement-first process. The benchmark result is part
 6. Separate Agam-native runs from comparison-language runs in reporting, then show side-by-side deltas.
 7. Compare like with like: platform, backend, compiler/runtime target, and call-cache state are all part of the experiment key.
 
+## Constraint Coverage
+
+Do not let one public same-workload table stand in for the entire benchmark program.
+
+- Use [`COVERAGE_MATRIX.md`](./COVERAGE_MATRIX.md) as the canonical map of implemented, comparison-ready, planned, and future-lab workloads.
+- Keep CPU, memory/cache, parser/I/O, JIT, and compile-time constraint classes represented in the runnable set.
+- Add GPU, NPU, network, storage, and interconnect workloads only when the harness can measure them honestly instead of publishing placeholder numbers.
+- If a workload is important but not yet runnable, keep it in the coverage matrix as `planned` or `future-lab` instead of silently dropping that constraint class from the benchmark story.
+
 ## Runtime Measurements
 
 - Default warmup runs: `2`

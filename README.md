@@ -455,7 +455,7 @@ The organized benchmark workspace now lives under `benchmarks/`:
 
 Use `.agent/test/` for narrow phase-work microbenchmarks and generated inspection artifacts tied to active optimization slices.
 
-The checked-in same-host table below is one constant-workload snapshot, not the full benchmark inventory. The repo currently ships `38` Agam benchmark sources across nine suites and `13` comparison-language sources. For call-cache work specifically, the benchmark workspace now includes dedicated hot-set, mixed-locality, phase-shift, and unique-input call-cache cases under `benchmarks/benchmarks/08_jit_optimization/`.
+The checked-in same-host table below is one constant-workload snapshot, not the full benchmark inventory. The repo currently ships `38` Agam benchmark sources across nine suites and `13` comparison-language sources. The broader implemented-vs-future workload map now lives in `benchmarks/COVERAGE_MATRIX.md`, which tracks `60` benchmark slots across runnable, comparison-ready, planned, and future-lab categories. For call-cache work specifically, the benchmark workspace now includes dedicated hot-set, mixed-locality, phase-shift, and unique-input call-cache cases under `benchmarks/benchmarks/08_jit_optimization/`.
 
 ### Same-Host Comparison Snapshot
 

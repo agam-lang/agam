@@ -9,6 +9,7 @@ class BenchmarkWorkspaceShapeTests(unittest.TestCase):
     def test_workspace_docs_exist(self) -> None:
         self.assertTrue((BENCHMARK_ROOT / "README.md").is_file())
         self.assertTrue((BENCHMARK_ROOT / "METHODOLOGY.md").is_file())
+        self.assertTrue((BENCHMARK_ROOT / "COVERAGE_MATRIX.md").is_file())
         self.assertTrue((BENCHMARK_ROOT / "results" / "README.md").is_file())
 
     def test_required_suite_directories_exist(self) -> None:

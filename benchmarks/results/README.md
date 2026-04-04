@@ -2,7 +2,7 @@
 
 This directory is the checked-in result root for the Agam benchmark workspace.
 
-Use [`../README.md`](../README.md) for benchmark inventory and harness usage. Use this file to understand which result sets are currently present in git and how to read the files under `raw/`, `aggregated/`, `reports/`, and `plots/`.
+Use [`../README.md`](../README.md) for benchmark inventory and harness usage, and [`../COVERAGE_MATRIX.md`](../COVERAGE_MATRIX.md) for the broader 60-workload implemented-vs-future benchmark map. Use this file to understand which result sets are currently present in git and how to read the files under `raw/`, `aggregated/`, `reports/`, and `plots/`.
 
 ## Layout
 

@@ -44,8 +44,19 @@ The workspace is broader than the published single-workload snapshot in the top-
 - Agam benchmark sources: `38`
 - comparison-language sources: `13`
 - total runnable benchmark sources in `benchmarks/benchmarks/`: `51`
+- broad workload slots tracked in `COVERAGE_MATRIX.md`: `60`
+
+The canonical implemented-vs-future workload map now lives in `COVERAGE_MATRIX.md`.
+
+- comparison-ready today: `3` workloads
+  - `fibonacci`
+  - `matrix_multiply`
+  - `tensor_matmul`
+- planned or future workloads tracked beyond the current runnable set: `22`
 
 For the checked-in result roots themselves, including which raw run backs the published same-host table and why the current aggregated CSVs are compile-only, see `results/README.md`.
+
+The public Fibonacci table exists because it is the only workload that currently has both a checked-in measured same-host result set and the broadest checked-in comparison coverage across C, C++, Go, Rust, and Python. It is a snapshot, not the benchmark boundary.
 
 Current Agam suite counts:
 
