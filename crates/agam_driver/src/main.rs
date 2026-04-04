@@ -205,6 +205,18 @@ struct CheckRequestResult {
     launch_error: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TestRequest {
+    file: PathBuf,
+}
+
+#[derive(Debug)]
+struct TestRequestResult {
+    request: TestRequest,
+    summary: Option<agam_test::FileTestSummary>,
+    error: Option<String>,
+}
+
 #[derive(Debug)]
 struct DaemonPrewarmedEntry {
     package: agam_pkg::PortablePackage,
@@ -1383,6 +1395,51 @@ where
         .collect()
 }
 
+fn execute_test_requests_with_runner<F>(
+    requests: &[TestRequest],
+    parallelism: usize,
+    runner: F,
+) -> Vec<TestRequestResult>
+where
+    F: Fn(&TestRequest) -> TestRequestResult + Sync,
+{
+    if requests.is_empty() {
+        return Vec::new();
+    }
+
+    let worker_count = parallelism.max(1).min(requests.len());
+    let next_index = AtomicUsize::new(0);
+    let results = Mutex::new(
+        std::iter::repeat_with(|| None)
+            .take(requests.len())
+            .collect::<Vec<Option<TestRequestResult>>>(),
+    );
+
+    std::thread::scope(|scope| {
+        let runner = &runner;
+        for _ in 0..worker_count {
+            scope.spawn(|| {
+                loop {
+                    let index = next_index.fetch_add(1, Ordering::Relaxed);
+                    if index >= requests.len() {
+                        break;
+                    }
+
+                    let result = runner(&requests[index]);
+                    results.lock().expect("test results mutex poisoned")[index] = Some(result);
+                }
+            });
+        }
+    });
+
+    results
+        .into_inner()
+        .expect("test results mutex poisoned")
+        .into_iter()
+        .map(|result| result.expect("test request result missing"))
+        .collect()
+}
+
 fn execute_build_requests_with_runner<F>(
     requests: &[BuildRequest],
     parallelism: usize,
@@ -2463,7 +2520,20 @@ fn workspace_relative_path(
 fn run_agam_tests(files: &[PathBuf], verbose: bool) -> Result<TestRunTotals, String> {
     let mut totals = TestRunTotals::default();
 
-    for file_summary in agam_test::run_paths(files)? {
+    let requests = files
+        .iter()
+        .cloned()
+        .map(|file| TestRequest { file })
+        .collect::<Vec<_>>();
+    let results = execute_parallel_test_requests(&requests);
+
+    for result in results {
+        if let Some(error) = result.error {
+            return Err(error);
+        }
+        let file_summary = result
+            .summary
+            .ok_or_else(|| "internal error: missing Agam test summary".to_string())?;
         let file = &file_summary.path;
         let summary = &file_summary.summary;
         if summary.results.is_empty() && verbose {
@@ -4074,6 +4144,27 @@ fn execute_parallel_check_requests(
     let parallelism = check_request_parallelism(requests.len());
     execute_check_requests_with_runner(requests, parallelism, |request| {
         run_nested_check_request(request, verbose)
+    })
+}
+
+fn execute_parallel_test_requests(requests: &[TestRequest]) -> Vec<TestRequestResult> {
+    let parallelism = request_parallelism(requests.len());
+    execute_test_requests_with_runner(requests, parallelism, |request| {
+        match agam_test::run_file(&request.file) {
+            Ok(summary) => TestRequestResult {
+                request: request.clone(),
+                summary: Some(agam_test::FileTestSummary {
+                    path: request.file.clone(),
+                    summary,
+                }),
+                error: None,
+            },
+            Err(error) => TestRequestResult {
+                request: request.clone(),
+                summary: None,
+                error: Some(error),
+            },
+        }
     })
 }
 
@@ -6572,6 +6663,10 @@ mod tests {
         CheckRequest { file: file.into() }
     }
 
+    fn test_request(file: impl Into<PathBuf>) -> TestRequest {
+        TestRequest { file: file.into() }
+    }
+
     fn update_maximum(counter: &AtomicUsize, candidate: usize) {
         let mut current = counter.load(AtomicOrdering::SeqCst);
         while candidate > current {
@@ -7004,6 +7099,71 @@ mod tests {
                 stderr: Vec::new(),
                 succeeded: true,
                 launch_error: None,
+            }
+        });
+
+        assert_eq!(results.len(), requests.len());
+        assert!(observed_max.load(AtomicOrdering::SeqCst) <= 2);
+        assert!(observed_max.load(AtomicOrdering::SeqCst) >= 2);
+    }
+
+    #[test]
+    fn test_execute_test_requests_with_runner_preserves_request_order() {
+        let requests = vec![
+            test_request("alpha.agam"),
+            test_request("beta.agam"),
+            test_request("gamma.agam"),
+        ];
+
+        let results = execute_test_requests_with_runner(&requests, 3, |request| {
+            let delay_ms = match request.file.file_stem().and_then(|name| name.to_str()) {
+                Some("alpha") => 40,
+                Some("beta") => 5,
+                Some("gamma") => 20,
+                _ => 1,
+            };
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            TestRequestResult {
+                request: request.clone(),
+                summary: Some(agam_test::FileTestSummary {
+                    path: request.file.clone(),
+                    summary: agam_test::TestSummary::default(),
+                }),
+                error: None,
+            }
+        });
+
+        let result_requests = results
+            .iter()
+            .map(|result| result.request.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(result_requests, requests);
+    }
+
+    #[test]
+    fn test_execute_test_requests_with_runner_respects_parallelism_limit() {
+        let requests = vec![
+            test_request("one.agam"),
+            test_request("two.agam"),
+            test_request("three.agam"),
+            test_request("four.agam"),
+        ];
+        let active = AtomicUsize::new(0);
+        let observed_max = AtomicUsize::new(0);
+
+        let results = execute_test_requests_with_runner(&requests, 2, |request| {
+            let now_active = active.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            update_maximum(&observed_max, now_active);
+            std::thread::sleep(Duration::from_millis(20));
+            active.fetch_sub(1, AtomicOrdering::SeqCst);
+
+            TestRequestResult {
+                request: request.clone(),
+                summary: Some(agam_test::FileTestSummary {
+                    path: request.file.clone(),
+                    summary: agam_test::TestSummary::default(),
+                }),
+                error: None,
             }
         });
 
