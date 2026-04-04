@@ -174,6 +174,7 @@ const DAEMON_STATUS_SCHEMA_VERSION: u32 = 1;
 const DAEMON_HEARTBEAT_STALE_MS: u128 = 5_000;
 const DAEMON_DEFAULT_POLL_MS: u64 = 1_000;
 const NESTED_BUILD_REQUEST_ENV: &str = "AGAM_NESTED_BUILD_REQUEST";
+const NESTED_CHECK_REQUEST_ENV: &str = "AGAM_NESTED_CHECK_REQUEST";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BuildRequest {
@@ -181,9 +182,23 @@ struct BuildRequest {
     output: PathBuf,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CheckRequest {
+    file: PathBuf,
+}
+
 #[derive(Debug)]
 struct BuildRequestResult {
     request: BuildRequest,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    succeeded: bool,
+    launch_error: Option<String>,
+}
+
+#[derive(Debug)]
+struct CheckRequestResult {
+    request: CheckRequest,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     succeeded: bool,
@@ -953,28 +968,43 @@ fn main() {
                 }
             };
 
-            if cli.verbose {
+            let nested_check = is_nested_check_request();
+            if cli.verbose && !nested_check {
                 eprintln!("[agamc] Checking {} file(s)...", files.len());
             }
 
             let mut had_errors = false;
-            for file in &files {
-                match compile_file(file, cli.verbose) {
-                    Ok(()) => {
-                        if cli.verbose {
-                            eprintln!("[agamc] {} — OK", file.display());
+            if !nested_check && files.len() > 1 {
+                let requests = files
+                    .iter()
+                    .cloned()
+                    .map(|file| CheckRequest { file })
+                    .collect::<Vec<_>>();
+                let results = execute_parallel_check_requests(&requests, cli.verbose);
+                for result in &results {
+                    match replay_check_request_output(result) {
+                        Ok(succeeded) => had_errors |= !succeeded,
+                        Err(error) => {
+                            eprintln!("\x1b[1;31merror\x1b[0m: {}", error);
+                            had_errors = true;
                         }
                     }
-                    Err(e) => {
-                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
-                        had_errors = true;
+                }
+            } else {
+                for file in &files {
+                    match run_check_request_locally(file, cli.verbose) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                            had_errors = true;
+                        }
                     }
                 }
             }
 
             if had_errors {
                 process::exit(1);
-            } else {
+            } else if !nested_check {
                 eprintln!("\x1b[1;32m✓\x1b[0m All checks passed.");
             }
         }
@@ -1268,6 +1298,10 @@ fn is_nested_build_request() -> bool {
     std::env::var_os(NESTED_BUILD_REQUEST_ENV).is_some()
 }
 
+fn is_nested_check_request() -> bool {
+    std::env::var_os(NESTED_CHECK_REQUEST_ENV).is_some()
+}
+
 fn render_backend_cli_value(backend: Backend) -> &'static str {
     match backend {
         Backend::Auto => "auto",
@@ -1285,6 +1319,14 @@ fn render_lto_cli_value(mode: LtoMode) -> &'static str {
 }
 
 fn build_request_parallelism(request_count: usize) -> usize {
+    request_parallelism(request_count)
+}
+
+fn check_request_parallelism(request_count: usize) -> usize {
+    request_parallelism(request_count)
+}
+
+fn request_parallelism(request_count: usize) -> usize {
     if request_count <= 1 {
         return 1;
     }
@@ -1294,6 +1336,51 @@ fn build_request_parallelism(request_count: usize) -> usize {
         .unwrap_or(1)
         .max(1);
     request_count.min(available)
+}
+
+fn execute_check_requests_with_runner<F>(
+    requests: &[CheckRequest],
+    parallelism: usize,
+    runner: F,
+) -> Vec<CheckRequestResult>
+where
+    F: Fn(&CheckRequest) -> CheckRequestResult + Sync,
+{
+    if requests.is_empty() {
+        return Vec::new();
+    }
+
+    let worker_count = parallelism.max(1).min(requests.len());
+    let next_index = AtomicUsize::new(0);
+    let results = Mutex::new(
+        std::iter::repeat_with(|| None)
+            .take(requests.len())
+            .collect::<Vec<Option<CheckRequestResult>>>(),
+    );
+
+    std::thread::scope(|scope| {
+        let runner = &runner;
+        for _ in 0..worker_count {
+            scope.spawn(|| {
+                loop {
+                    let index = next_index.fetch_add(1, Ordering::Relaxed);
+                    if index >= requests.len() {
+                        break;
+                    }
+
+                    let result = runner(&requests[index]);
+                    results.lock().expect("check results mutex poisoned")[index] = Some(result);
+                }
+            });
+        }
+    });
+
+    results
+        .into_inner()
+        .expect("check results mutex poisoned")
+        .into_iter()
+        .map(|result| result.expect("check request result missing"))
+        .collect()
 }
 
 fn execute_build_requests_with_runner<F>(
@@ -1424,6 +1511,57 @@ fn run_nested_build_request(
     }
 }
 
+fn run_nested_check_request(request: &CheckRequest, verbose: bool) -> CheckRequestResult {
+    let current_exe = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            return CheckRequestResult {
+                request: request.clone(),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                succeeded: false,
+                launch_error: Some(format!(
+                    "failed to locate the current agamc executable for `{}`: {}",
+                    request.file.display(),
+                    error
+                )),
+            };
+        }
+    };
+
+    let mut command = std::process::Command::new(current_exe);
+    if verbose {
+        command.arg("--verbose");
+    }
+    command
+        .arg("check")
+        .arg(&request.file)
+        .env(NESTED_CHECK_REQUEST_ENV, "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    match command.output() {
+        Ok(output) => CheckRequestResult {
+            request: request.clone(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+            succeeded: output.status.success(),
+            launch_error: None,
+        },
+        Err(error) => CheckRequestResult {
+            request: request.clone(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            succeeded: false,
+            launch_error: Some(format!(
+                "failed to launch nested check for `{}`: {}",
+                request.file.display(),
+                error
+            )),
+        },
+    }
+}
+
 fn replay_build_request_output(result: &BuildRequestResult) -> Result<(), String> {
     if !result.stdout.is_empty() {
         std::io::stdout()
@@ -1453,6 +1591,40 @@ fn replay_build_request_output(result: &BuildRequestResult) -> Result<(), String
     }
 
     Ok(())
+}
+
+fn replay_check_request_output(result: &CheckRequestResult) -> Result<bool, String> {
+    if !result.stdout.is_empty() {
+        std::io::stdout()
+            .write_all(&result.stdout)
+            .map_err(|error| format!("failed to replay check stdout: {error}"))?;
+        std::io::stdout()
+            .flush()
+            .map_err(|error| format!("failed to flush check stdout: {error}"))?;
+    }
+
+    if !result.stderr.is_empty() {
+        std::io::stderr()
+            .write_all(&result.stderr)
+            .map_err(|error| format!("failed to replay check stderr: {error}"))?;
+        std::io::stderr()
+            .flush()
+            .map_err(|error| format!("failed to flush check stderr: {error}"))?;
+    }
+
+    if let Some(error) = result.launch_error.as_ref() {
+        eprintln!("\x1b[1;31merror\x1b[0m: {}", error);
+        return Ok(false);
+    }
+    if !result.succeeded && result.stderr.is_empty() && result.stdout.is_empty() {
+        eprintln!(
+            "\x1b[1;31merror\x1b[0m: nested check failed for `{}` without diagnostic output",
+            result.request.file.display()
+        );
+        return Ok(false);
+    }
+
+    Ok(result.succeeded)
 }
 
 fn native_binary_extension(target: Option<&str>) -> Option<&'static str> {
@@ -2704,16 +2876,64 @@ fn run_dev_workflow(
         eprintln!("\x1b[1;32m✓\x1b[0m Formatted {} file(s).", changed.len());
     }
 
+    let mut ordered_check_files = workspace
+        .source_files
+        .iter()
+        .map(|file| (file.clone(), *file == workspace.entry_file && !no_run))
+        .collect::<Vec<_>>();
+    ordered_check_files.extend(
+        workspace
+            .test_files
+            .iter()
+            .cloned()
+            .map(|file| (file, false)),
+    );
+
+    let nested_check_requests = ordered_check_files
+        .iter()
+        .filter(|(_, keep_warm_state)| !keep_warm_state)
+        .map(|(file, _)| CheckRequest { file: file.clone() })
+        .collect::<Vec<_>>();
+    let parallel_nested_checks = nested_check_requests.len() > 1;
+    let nested_results = if parallel_nested_checks {
+        execute_parallel_check_requests(&nested_check_requests, verbose)
+    } else {
+        Vec::new()
+    };
+
+    let mut had_errors = false;
     let mut warmed_entry_state = None;
-    for file in &workspace.source_files {
-        if *file == workspace.entry_file {
-            warmed_entry_state = compile_dev_source_file(file, !no_run, verbose)?;
-        } else {
-            compile_file(file, verbose)?;
+    let mut next_nested_result = 0usize;
+    for (file, keep_warm_state) in &ordered_check_files {
+        if *keep_warm_state {
+            match compile_dev_source_file(file, true, verbose) {
+                Ok(warm) => warmed_entry_state = warm,
+                Err(error) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", error);
+                    had_errors = true;
+                }
+            }
+            continue;
+        }
+
+        if parallel_nested_checks {
+            let result = &nested_results[next_nested_result];
+            next_nested_result += 1;
+            match replay_check_request_output(result) {
+                Ok(succeeded) => had_errors |= !succeeded,
+                Err(error) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", error);
+                    had_errors = true;
+                }
+            }
+        } else if let Err(error) = run_check_request_locally(file, verbose) {
+            eprintln!("\x1b[1;31merror\x1b[0m: {}", error);
+            had_errors = true;
         }
     }
-    for file in &workspace.test_files {
-        compile_file(file, verbose)?;
+
+    if had_errors {
+        return Err("type checks failed".into());
     }
     eprintln!("\x1b[1;32m✓\x1b[0m Type checks passed.");
 
@@ -3845,6 +4065,24 @@ fn parse_annotation_name(tokens: &[Token], start: usize) -> Option<ParsedAnnotat
         span: Span::new(source_id, start_span, end_span),
         next_index: index,
     })
+}
+
+fn execute_parallel_check_requests(
+    requests: &[CheckRequest],
+    verbose: bool,
+) -> Vec<CheckRequestResult> {
+    let parallelism = check_request_parallelism(requests.len());
+    execute_check_requests_with_runner(requests, parallelism, |request| {
+        run_nested_check_request(request, verbose)
+    })
+}
+
+fn run_check_request_locally(path: &PathBuf, verbose: bool) -> Result<(), String> {
+    compile_file(path, verbose)?;
+    if verbose {
+        eprintln!("[agamc] {} — OK", path.display());
+    }
+    Ok(())
 }
 
 /// Read, parse, and run semantic checks without lowering or code generation.
@@ -6330,6 +6568,10 @@ mod tests {
         }
     }
 
+    fn check_request(file: impl Into<PathBuf>) -> CheckRequest {
+        CheckRequest { file: file.into() }
+    }
+
     fn update_maximum(counter: &AtomicUsize, candidate: usize) {
         let mut current = counter.load(AtomicOrdering::SeqCst);
         while candidate > current {
@@ -6694,6 +6936,69 @@ mod tests {
             active.fetch_sub(1, AtomicOrdering::SeqCst);
 
             BuildRequestResult {
+                request: request.clone(),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                succeeded: true,
+                launch_error: None,
+            }
+        });
+
+        assert_eq!(results.len(), requests.len());
+        assert!(observed_max.load(AtomicOrdering::SeqCst) <= 2);
+        assert!(observed_max.load(AtomicOrdering::SeqCst) >= 2);
+    }
+
+    #[test]
+    fn test_execute_check_requests_with_runner_preserves_request_order() {
+        let requests = vec![
+            check_request("alpha.agam"),
+            check_request("beta.agam"),
+            check_request("gamma.agam"),
+        ];
+
+        let results = execute_check_requests_with_runner(&requests, 3, |request| {
+            let delay_ms = match request.file.file_stem().and_then(|name| name.to_str()) {
+                Some("alpha") => 40,
+                Some("beta") => 5,
+                Some("gamma") => 20,
+                _ => 1,
+            };
+            std::thread::sleep(Duration::from_millis(delay_ms));
+            CheckRequestResult {
+                request: request.clone(),
+                stdout: request.file.to_string_lossy().as_bytes().to_vec(),
+                stderr: Vec::new(),
+                succeeded: true,
+                launch_error: None,
+            }
+        });
+
+        let result_requests = results
+            .iter()
+            .map(|result| result.request.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(result_requests, requests);
+    }
+
+    #[test]
+    fn test_execute_check_requests_with_runner_respects_parallelism_limit() {
+        let requests = vec![
+            check_request("one.agam"),
+            check_request("two.agam"),
+            check_request("three.agam"),
+            check_request("four.agam"),
+        ];
+        let active = AtomicUsize::new(0);
+        let observed_max = AtomicUsize::new(0);
+
+        let results = execute_check_requests_with_runner(&requests, 2, |request| {
+            let now_active = active.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+            update_maximum(&observed_max, now_active);
+            std::thread::sleep(Duration::from_millis(20));
+            active.fetch_sub(1, AtomicOrdering::SeqCst);
+
+            CheckRequestResult {
                 request: request.clone(),
                 stdout: Vec::new(),
                 stderr: Vec::new(),
