@@ -455,6 +455,8 @@ The organized benchmark workspace now lives under `benchmarks/`:
 
 Use `.agent/test/` for narrow phase-work microbenchmarks and generated inspection artifacts tied to active optimization slices.
 
+The checked-in same-host table below is one constant-workload snapshot, not the full benchmark inventory. The repo currently ships `38` Agam benchmark sources across nine suites and `13` comparison-language sources. For call-cache work specifically, the benchmark workspace now includes dedicated hot-set, mixed-locality, phase-shift, and unique-input call-cache cases under `benchmarks/benchmarks/08_jit_optimization/`.
+
 ### Same-Host Comparison Snapshot
 
 The current published snapshot was captured on `2026-04-02` from one `benchmark_harness` invocation on the same Win11 host and environment profile: `local_windows_win11` (`Windows-11-10.0.26200-SP0`, AMD64, 8 physical cores / 16 logical cores). Every row below ran the same `01_algorithms/fibonacci` workload with `--match fibonacci`, runtime warmups `2`, measured runs `7`, and compile warmup runs `1`.

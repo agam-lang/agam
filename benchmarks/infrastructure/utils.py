@@ -56,10 +56,20 @@ COMPLEXITY_HINTS: dict[str, dict[str, str]] = {
         "space_complexity": "O(1)",
         "complexity_notes": "Current benchmark uses direct primality scans, not a dense sieve array.",
     },
+    "edit_distance": {
+        "time_complexity": "O(rows*cols)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Edit-distance lattice scaffold without materializing the full DP matrix.",
+    },
     "matrix_multiply": {
         "time_complexity": "O(n^3)",
         "space_complexity": "O(1)",
         "complexity_notes": "Checksum-oriented multiply without explicit output matrix storage.",
+    },
+    "polynomial_eval": {
+        "time_complexity": "O(points*degree)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Horner-style polynomial evaluation scaffold.",
     },
     "tensor_operations": {
         "time_complexity": "O(w*h*d)",
@@ -90,6 +100,11 @@ COMPLEXITY_HINTS: dict[str, dict[str, str]] = {
         "time_complexity": "O(n)",
         "space_complexity": "O(1)",
         "complexity_notes": "Pointer-chasing pressure benchmark.",
+    },
+    "ring_buffer": {
+        "time_complexity": "O(rounds)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Circular enqueue/dequeue arithmetic workload.",
     },
     "memory_allocation": {
         "time_complexity": "O(chunks*width)",
@@ -136,10 +151,20 @@ COMPLEXITY_HINTS: dict[str, dict[str, str]] = {
         "space_complexity": "O(1)",
         "complexity_notes": "Branch-heavy regex-style matching scaffold.",
     },
+    "token_frequency": {
+        "time_complexity": "O(n)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Scalar token-bucketing and frequency-style benchmark.",
+    },
     "file_reading": {
         "time_complexity": "O(n)",
         "space_complexity": "O(1)",
         "complexity_notes": "Chunk-based I/O accounting scaffold.",
+    },
+    "csv_scanning": {
+        "time_complexity": "O(rows*cols)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Row and delimiter scanning benchmark scaffold.",
     },
     "json_parsing": {
         "time_complexity": "O(objects*fields)",
@@ -160,6 +185,26 @@ COMPLEXITY_HINTS: dict[str, dict[str, str]] = {
         "time_complexity": "O(n)",
         "space_complexity": "O(1)",
         "complexity_notes": "Adaptive scoring branch-shape benchmark.",
+    },
+    "call_cache_hotset": {
+        "time_complexity": "O(iterations)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Small hot-set benchmark for high call-cache hit-rate studies.",
+    },
+    "call_cache_mixed_locality": {
+        "time_complexity": "O(iterations)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Mixed hot/cold key locality benchmark for call-cache studies.",
+    },
+    "call_cache_phase_shift": {
+        "time_complexity": "O(phases*iterations)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Shifting working-set benchmark that can outrun small cache capacities.",
+    },
+    "call_cache_unique_inputs": {
+        "time_complexity": "O(iterations)",
+        "space_complexity": "O(1)",
+        "complexity_notes": "Low-reuse benchmark for call-cache miss and admission overhead.",
     },
     "tiny_program": {
         "time_complexity": "O(1)",

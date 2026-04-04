@@ -37,6 +37,26 @@ Prepare optional benchmark dependencies:
 bash benchmarks/setup.sh
 ```
 
+## Current Inventory
+
+The workspace is broader than the published single-workload snapshot in the top-level README.
+
+- Agam benchmark sources: `38`
+- comparison-language sources: `13`
+- total runnable benchmark sources in `benchmarks/benchmarks/`: `51`
+
+Current Agam suite counts:
+
+- `01_algorithms`: `5`
+- `02_numerical_computation`: `5`
+- `03_data_structures`: `4`
+- `04_memory_intensive`: `3`
+- `05_ml_primitives`: `4`
+- `06_string_processing`: `3`
+- `07_io_operations`: `3`
+- `08_jit_optimization`: `7`
+- `09_compilation_metrics`: `4`
+
 Run the default benchmark pass:
 
 ```bash
@@ -66,6 +86,28 @@ Run explicit Agam backend and call-cache comparisons:
 ```bash
 python -m benchmarks.infrastructure.benchmark_harness \
   --suite 08_jit_optimization \
+  --target agam_llvm_o3_call_cache_off \
+  --target agam_llvm_o3_call_cache_on \
+  --target agam_jit_o2_call_cache_off \
+  --target agam_jit_o2_call_cache_on
+```
+
+Call-cache study workloads now include several distinct locality shapes instead of only recursive overlap:
+
+- `08_jit_optimization/call_cache_hotset.agam`
+- `08_jit_optimization/call_cache_mixed_locality.agam`
+- `08_jit_optimization/call_cache_phase_shift.agam`
+- `08_jit_optimization/call_cache_unique_inputs.agam`
+- `08_jit_optimization/call_cache_profile.agam`
+- `08_jit_optimization/specialization_demo.agam`
+- `08_jit_optimization/adaptive_optimization.agam`
+
+Run just the call-cache locality set across on/off targets:
+
+```bash
+python -m benchmarks.infrastructure.benchmark_harness \
+  --suite 08_jit_optimization \
+  --match call_cache \
   --target agam_llvm_o3_call_cache_off \
   --target agam_llvm_o3_call_cache_on \
   --target agam_jit_o2_call_cache_off \

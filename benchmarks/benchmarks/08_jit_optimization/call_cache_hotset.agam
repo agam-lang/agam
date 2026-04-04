@@ -1,0 +1,22 @@
+@lang.advance
+
+fn hot(n: i64) -> i64 {
+    let total: i64 = 0;
+    let i: i64 = 0;
+    while i < 600 {
+        total = total + ((n * 31) + (i * 17) + (n % 7)) % 1021;
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    let acc: i64 = 0;
+    let i: i64 = 0;
+    while i < 600000 {
+        acc = acc + hot(i % 8);
+        i = i + 1;
+    }
+    print_int(acc);
+    return 0;
+}

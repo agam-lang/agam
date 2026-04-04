@@ -1,0 +1,26 @@
+@lang.advance
+
+fn hot(n: i64) -> i64 {
+    let total: i64 = 0;
+    let i: i64 = 0;
+    while i < 450 {
+        total = total + ((n * 29) + (i * 11) + ((n + i) % 13)) % 1237;
+        i = i + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    let acc: i64 = 0;
+    let phase: i64 = 0;
+    while phase < 96 {
+        let i: i64 = 0;
+        while i < 4096 {
+            acc = acc + hot((phase * 32) + (i % 32));
+            i = i + 1;
+        }
+        phase = phase + 1;
+    }
+    print_int(acc);
+    return 0;
+}

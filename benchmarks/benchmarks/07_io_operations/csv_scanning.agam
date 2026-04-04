@@ -1,0 +1,26 @@
+@lang.advance
+
+// CSV-scanning benchmark scaffold using row/column delimiter pressure.
+fn csv_scan_cost(rows: i64, cols: i64) -> i64 {
+    let checksum: i64 = 0;
+    let row: i64 = 0;
+    while row < rows {
+        let col: i64 = 0;
+        while col < cols {
+            let field: i64 = ((row * 37) + (col * 13)) % 1009;
+            if (col + 1) < cols {
+                checksum = checksum + field + 44;
+            } else {
+                checksum = checksum + field + 10;
+            }
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(csv_scan_cost(900000, 9));
+    return 0;
+}

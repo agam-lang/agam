@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from benchmarks.infrastructure.utils import BENCHMARK_ROOT, SUITE_ROOT
+from benchmarks.infrastructure.utils import BENCHMARK_ROOT, SUITE_ROOT, discover_benchmarks
 
 
 class BenchmarkWorkspaceShapeTests(unittest.TestCase):
@@ -30,6 +30,17 @@ class BenchmarkWorkspaceShapeTests(unittest.TestCase):
         self.assertTrue(
             (SUITE_ROOT / "02_numerical_computation" / "comparisons" / "matrix_multiply.cpp").is_file()
         )
+
+    def test_workspace_keeps_30_plus_agam_benchmarks(self) -> None:
+        agam_sources = discover_benchmarks(language_filters={"agam"})
+        self.assertGreaterEqual(len(agam_sources), 35)
+
+    def test_jit_suite_keeps_multiple_call_cache_shapes(self) -> None:
+        jit_sources = discover_benchmarks(
+            suite_filters=["08_jit_optimization"],
+            language_filters={"agam"},
+        )
+        self.assertGreaterEqual(len(jit_sources), 7)
 
 
 if __name__ == "__main__":

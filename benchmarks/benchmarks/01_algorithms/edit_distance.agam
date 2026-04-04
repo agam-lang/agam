@@ -1,0 +1,26 @@
+@lang.advance
+
+// Edit-distance style dynamic-programming lattice benchmark scaffold.
+fn edit_distance_cost(left: i64, right: i64) -> i64 {
+    let total: i64 = 0;
+    let row: i64 = 0;
+    while row < left {
+        let col: i64 = 0;
+        while col < right {
+            let mismatch: i64 = ((row * 17) + (col * 13)) % 11;
+            if mismatch < 2 {
+                total = total + 1;
+            } else {
+                total = total + ((row + col) % 3);
+            }
+            col = col + 1;
+        }
+        row = row + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(edit_distance_cost(2800, 2800));
+    return 0;
+}

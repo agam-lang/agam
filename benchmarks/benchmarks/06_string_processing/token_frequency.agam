@@ -1,0 +1,26 @@
+@lang.advance
+
+// Token-frequency benchmark scaffold using scalar bucket arithmetic.
+fn token_frequency_cost(tokens: i64, buckets: i64) -> i64 {
+    let total: i64 = 0;
+    let token: i64 = 0;
+    while token < tokens {
+        let bucket: i64 = ((token * 19) + (token / 7)) % buckets;
+        if bucket < 8 {
+            total = total + (bucket * 7) + 3;
+        } else {
+            if bucket < 24 {
+                total = total + (bucket * 3) + 1;
+            } else {
+                total = total + bucket + 11;
+            }
+        }
+        token = token + 1;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(token_frequency_cost(7000000, 64));
+    return 0;
+}

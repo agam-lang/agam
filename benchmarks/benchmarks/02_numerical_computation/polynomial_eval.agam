@@ -1,0 +1,24 @@
+@lang.advance
+
+// Horner-style polynomial evaluation benchmark scaffold.
+fn polynomial_cost(points: i64, degree: i64) -> i64 {
+    let checksum: i64 = 0;
+    let point: i64 = 0;
+    while point < points {
+        let x: i64 = (point % 97) + 3;
+        let coeff: i64 = degree;
+        let value: i64 = 1;
+        while coeff > 0 {
+            value = ((value * x) + ((coeff * 11) + (point % 29))) % 1000003;
+            coeff = coeff - 1;
+        }
+        checksum = checksum + value;
+        point = point + 1;
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(polynomial_cost(800000, 16));
+    return 0;
+}
