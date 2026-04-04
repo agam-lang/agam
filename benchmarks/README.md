@@ -44,9 +44,9 @@ The workspace is broader than the published single-workload snapshot in the top-
 - Agam benchmark sources: `38`
 - comparison-language sources: `38`
 - total runnable benchmark sources in `benchmarks/benchmarks/`: `76`
-- broad workload slots tracked in `COVERAGE_MATRIX.md`: `60`
+- broad workload slots tracked in `COVERAGE_MATRIX.md`: `130`
 
-The canonical implemented-vs-future workload map now lives in `COVERAGE_MATRIX.md`.
+The canonical implemented-vs-future workload map now lives in `COVERAGE_MATRIX.md`, and it now includes the broader CPU, memory, storage, network, accelerator, interconnect, and quantum-simulator backlog from the methodology list instead of stopping near the initial CPU-first slice.
 
 - comparison-ready today: `8` workloads
   - `fibonacci`

@@ -22,8 +22,8 @@ That table should not be read as "Agam benchmarks only Fibonacci." The broader b
   - `token_frequency`
   - `csv_scanning`
 - checked-in comparison-language sources today: `38`
-- planned or future workloads tracked below: `22`
-- total workload slots tracked in this matrix: `60`
+- planned or future workloads tracked below: `92`
+- total workload slots tracked in this matrix: `130`
 
 ## Status Legend
 
@@ -98,21 +98,45 @@ These should fit the current benchmark workspace model once the corresponding `.
 | `rsa_encrypt_decrypt` | C/C++/Rust/Python | big-integer arithmetic, modular exponentiation | `planned` |
 | `aes256_software` | C/C++/Rust/Python | byte-level ALU work without AES-NI shortcuts | `planned` |
 | `sha256_hash` | C/C++/Rust/Python | bit mixing, tight loop hashing throughput | `planned` |
+| `sha3_hash` | C/C++/Rust/Python | sponge-style hashing, bit mixing, round scheduling | `planned` |
 | `collatz_iteration` | C/C++/Rust/Python | branch-heavy integer iteration | `planned` |
 | `ackermann_function` | C/C++/Rust/Python | extreme recursion, stack pressure, call overhead | `planned` |
+| `ecdsa_sign_verify` | C/C++/Rust/Python | elliptic-curve arithmetic, modular inversion, scalar multiply | `planned` |
+| `mersenne_twister_rng` | C/C++/Go/Rust/Python | PRNG state updates, integer throughput, predictable branching | `planned` |
 | `n_queens` | C/C++/Rust/Python | combinatorial search, branch prediction | `planned` |
 | `sudoku_backtracking` | C/C++/Rust/Python | recursive constraint solving | `planned` |
 | `a_star_dense_grid` | C++/Rust/Python | priority queues, graph search, heuristic branching | `planned` |
 | `traveling_salesman_dp` | C++/Rust/Python | dynamic programming, combinatorial explosion | `planned` |
+| `minimax_tree_search` | C++/Rust/Python | adversarial tree search, pruning behavior, branch locality | `planned` |
 | `mandelbrot` | C/C++/Rust/Python | floating point, branch divergence, escape-time loops | `planned` |
 | `n_body_simulation` | C/C++/Rust/Python | floating point, data layout, pairwise force loops | `planned` |
+| `taylor_series_eval` | C/C++/Rust/Python | polynomial accumulation, floating-point convergence, scalar math | `planned` |
+| `finite_element_mesh` | C++/Rust/Python | sparse assembly, floating-point kernels, mesh traversal | `planned` |
+| `burrows_wheeler_transform` | C++/Rust/Python | suffix-style ordering, string transforms, memory traffic | `planned` |
 | `huffman_codec` | C++/Rust/Python | tree building, bit packing, compression logic | `planned` |
 | `lz77_compression` | C++/Rust/Python | window scanning, dictionary reuse, I/O-bound parsing | `planned` |
 | `xml_parsing_massive` | C++/Rust/Python | parser throughput, allocation pressure, branching | `planned` |
+| `page_rank` | C++/Rust/Python | graph iteration, sparse updates, memory locality | `planned` |
 | `sparse_matrix_vector` | C/C++/Rust/Python | memory bandwidth, sparse access locality | `planned` |
 | `bloom_filter` | C/C++/Rust/Python | hashing throughput, probabilistic set membership | `planned` |
+| `fisher_yates_shuffle` | C/C++/Go/Rust/Python | random indexing, memory writes, swap traffic | `planned` |
+| `graph_bfs_unorganized` | C++/Rust/Python | pointer-heavy frontier traversal, cache misses, queue churn | `planned` |
 | `stream_triad` | C/C++/Rust | memory bandwidth ceiling, sustained sequential throughput | `planned` |
+| `mergesort_out_of_place` | C/C++/Rust/Python | sequential memory bandwidth, large working sets, copy traffic | `planned` |
 | `matrix_transpose_out_of_cache` | C/C++/Rust | cache misses, bandwidth, stride penalties | `planned` |
+| `radix_sort_large_ints` | C/C++/Rust | counting passes, sequential memory traffic, branch-light sorting | `planned` |
+| `memcpy_bandwidth` | C/C++/Rust | bulk copy throughput, memory controller pressure, cache bypass effects | `planned` |
+| `blocked_tiled_matrix_multiply` | C/C++/Rust | cache-fitting tiles, arithmetic intensity, L2/L3 reuse | `planned` |
+| `prefix_sum_scan` | C/C++/Rust/Python | linear reductions, dependency chains, bandwidth pressure | `planned` |
+| `sliding_window_strings` | C/C++/Rust/Python | rolling state updates, branch locality, cache reuse | `planned` |
+| `histogram_generation` | C/C++/Rust/Python | contention-free counting, cache residency, integer throughput | `planned` |
+| `bitboard_movegen` | C/C++/Rust | bit-twiddling throughput, branch-light mask operations | `planned` |
+| `log_appending` | Agam/Rust/Python plus filesystem tooling | append-heavy sequential I/O, fsync policy, small-write overhead | `planned` |
+| `tarball_create_extract` | Agam/Rust/Python plus archive tooling | archive streaming, metadata churn, sequential file I/O | `planned` |
+| `file_dedup_chunking` | Agam/Rust/Python | chunk hashing, rolling windows, large-file scan throughput | `planned` |
+| `external_sort` | Agam/C++/Rust/Python | data-larger-than-RAM sorting, spill files, merge passes | `planned` |
+| `directory_tree_indexing` | Agam/Rust/Python plus OS metadata APIs | inode or directory metadata walks, syscall overhead, small-file locality | `planned` |
+| `checkpoint_large_state` | Agam/Rust/Python | large snapshot serialization, write amplification, restore symmetry | `planned` |
 
 ## Future Lab Workloads
 
@@ -120,29 +144,83 @@ These matter, but they need dedicated harness work or subsystem integration befo
 
 | Workload | Planned comparisons | Constraint focus | Status |
 | --- | --- | --- | --- |
+| `video_io_8k` | Agam/Rust/C++ plus dataset tooling | multi-gigabyte sequential read/write throughput, large-buffer staging | `future-lab` |
+| `video_transcoding_io_phase` | Agam/C++/Python plus codec tooling | media pipeline read/write pressure, staging throughput, temporary-file churn | `future-lab` |
+| `random_block_io_4k` | fio-style tooling plus Agam wrappers | random IOPS, latency tails, SSD firmware behavior | `future-lab` |
 | `sqlite_concurrent_inserts` | Agam/Rust/Python plus SQLite tooling | fsync overhead, random I/O, transaction latency | `future-lab` |
+| `btree_page_faults` | Agam/C++/Rust plus DB-page fixtures | on-disk page walks, fault latency, cache eviction behavior | `future-lab` |
 | `grpc_serialization` | Agam/Rust/Python/C++ | protocol overhead, network-facing serialization cost | `future-lab` |
+| `http_get_flood` | Agam/Rust/Go plus loopback or lab network harness | request fan-out, socket churn, protocol overhead | `future-lab` |
+| `large_file_transfer_socket` | Agam/Rust/Go/C++ | socket-stream throughput, buffer sizing, copy avoidance | `future-lab` |
+| `bittorrent_chunk_seeding` | Agam/Rust/Go plus peer harness | peer scheduling, chunk hashing, network and disk overlap | `future-lab` |
+| `video_streaming_packets` | Agam/Rust/Go plus media harness | sustained packetization, jitter sensitivity, throughput shaping | `future-lab` |
+| `tcp_handshake_storm` | Agam/Rust/Go plus loopback or lab network harness | connection setup rate, kernel handoff overhead, socket churn | `future-lab` |
+| `icmp_echo_flood` | Agam plus network harness tooling | packet latency and rate handling outside normal app-layer paths | `future-lab` |
+| `dns_resolution_lookups` | Agam/Rust/Go plus resolver harness | name-resolution latency, cache effects, protocol overhead | `future-lab` |
+| `dht_routing` | Agam/Rust/Go plus distributed test harness | distributed lookup hops, routing-table churn, serialization | `future-lab` |
+| `multiplayer_state_sync` | Agam/Rust/Go plus UDP harness | packet parsing, state-delta encoding, jitter tolerance | `future-lab` |
+| `bgp_route_updates` | Agam/C++/Rust plus routing-table fixtures | large control-plane table churn, parsing, update propagation | `future-lab` |
 | `transformer_self_attention` | Agam/Python/C++ accelerator path | tensor math, softmax, bandwidth vs compute balance | `future-lab` |
+| `gpu_ray_tracing` | CUDA/HIP/Metal or Vulkan compute path | incoherent traversal, BVH access, massive parallel shading | `future-lab` |
+| `gpu_rasterization_microtriangles` | Vulkan/DirectX/Metal harness | geometry throughput, fixed-function saturation, tiny-primitive pressure | `future-lab` |
+| `gpu_global_illumination` | CUDA/HIP/Vulkan or engine harness | bounce accumulation, irregular memory access, shader occupancy | `future-lab` |
+| `gpu_sgemm_dgemm` | BLAS or accelerator toolchain | dense matrix throughput, tensor-core or SIMD saturation, VRAM bandwidth | `future-lab` |
+| `gpu_image_convolution` | CUDA/HIP/OpenCL/Vulkan compute | stencil throughput, shared-memory tiling, image bandwidth | `future-lab` |
+| `gpu_fft` | cuFFT/rocFFT or equivalent | structured global-memory traffic, butterfly kernels, occupancy | `future-lab` |
+| `fluid_dynamics_navier_stokes` | CUDA/HIP/C++ simulation harness | stencil sweeps, solver iterations, memory bandwidth and stability | `future-lab` |
+| `molecular_dynamics` | CUDA/HIP/C++ simulation harness | neighbor lists, pairwise force kernels, memory locality | `future-lab` |
+| `soft_body_cloth_physics` | CUDA/HIP/C++ simulation harness | constraint solves, irregular mesh access, iterative relaxation | `future-lab` |
+| `particle_swarm_optimization` | Agam/Python/C++ accelerator path | swarm updates, reduction patterns, heuristic convergence cost | `future-lab` |
+| `ethash_kawpow` | GPU mining kernels or equivalent | random memory access, hashing throughput, bandwidth pressure | `future-lab` |
+| `bitonic_sort` | GPU compute or SIMD harness | compare-swap network regularity, parallel sorting throughput | `future-lab` |
+| `parallel_reduction` | GPU compute or threaded host harness | tree reductions, synchronization, memory bandwidth | `future-lab` |
+| `parallel_prefix_sum` | GPU compute or threaded host harness | scan primitives, synchronization, bandwidth | `future-lab` |
+| `llm_prefill` | Agam/Python/C++ accelerator path | large batched GEMMs, attention setup, tensor-core saturation | `future-lab` |
+| `llm_decode` | Agam/Python/C++ accelerator path | KV-cache bandwidth, small-step latency, token-by-token throughput | `future-lab` |
+| `cnn_forward_pass` | Agam/Python/C++ accelerator path | convolution-heavy inference, layout transforms, activation bandwidth | `future-lab` |
+| `lora_updates` | Agam/Python/C++ accelerator path | low-rank matrix updates, optimizer traffic, mixed precision | `future-lab` |
+| `quantized_matrix_vector` | Agam/Python/C++ accelerator path | INT8 or INT4 dequantization, dot products, memory bandwidth | `future-lab` |
+| `softmax_large_vocab` | Agam/Python/C++ accelerator path | wide reductions, exponentials, large-logit bandwidth | `future-lab` |
+| `moe_token_routing` | Agam/Python/C++ accelerator path | gating, dispatch imbalance, scatter/gather traffic | `future-lab` |
+| `embedding_table_lookup` | Agam/Python/C++ accelerator path | sparse lookup bandwidth, cache behavior, gather latency | `future-lab` |
+| `activation_mapping` | Agam/Python/C++ accelerator path | GELU/Swish/ReLU kernels, elementwise throughput, vectorization | `future-lab` |
 | `host_to_device_copy` | CUDA/HIP or equivalent device tooling | PCIe or accelerator interconnect saturation | `future-lab` |
+| `device_to_host_copy` | CUDA/HIP or equivalent device tooling | return-path PCIe bandwidth, staging latency, synchronization cost | `future-lab` |
+| `gpu_peer_to_peer_copy` | NVLink/PCIe peer harness | inter-GPU transfer throughput, topology sensitivity, copy overlap | `future-lab` |
+| `rdma_operations` | RDMA-capable lab hardware and verbs tooling | zero-copy transport latency, NIC offload, queue-pair overhead | `future-lab` |
+| `nvme_direct_storage` | DirectStorage or GPUDirect-style harness | bypassed copy paths, storage-to-device throughput, queue depth behavior | `future-lab` |
+| `texture_streaming_to_gpu` | graphics engine or GPU asset harness | asset upload pacing, decompression overlap, bus saturation | `future-lab` |
+| `shors_algorithm_sim` | quantum simulator tooling | large-state simulation cost, arithmetic structure, exponential scaling | `future-lab` |
+| `grovers_algorithm_sim` | quantum simulator tooling | amplitude amplification, oracle cost, simulator memory growth | `future-lab` |
+| `quantum_fourier_transform_sim` | quantum simulator tooling | structured gate patterns, simulator bandwidth, phase arithmetic | `future-lab` |
+| `vqe_optimization` | quantum simulator plus optimizer tooling | variational loops, expectation aggregation, hybrid control overhead | `future-lab` |
 
 ## Constraint Clusters To Watch
 
 - compute and branch behavior
   - current: `fibonacci`, `prime_sieve`, `quicksort`, `binary_search`, `edit_distance`, `regex_matching`
-  - next: `rsa_encrypt_decrypt`, `aes256_software`, `sha256_hash`, `n_queens`, `sudoku_backtracking`
+  - next: `rsa_encrypt_decrypt`, `aes256_software`, `sha256_hash`, `sha3_hash`, `ecdsa_sign_verify`, `mersenne_twister_rng`, `collatz_iteration`, `ackermann_function`, `n_queens`, `sudoku_backtracking`, `a_star_dense_grid`, `traveling_salesman_dp`, `minimax_tree_search`
 - floating-point and numerical throughput
-  - current: `fft`, `matrix_multiply`, `monte_carlo_pi`, `polynomial_eval`, `tensor_matmul`, `convolution`, `softmax`
-  - next: `mandelbrot`, `n_body_simulation`
+  - current: `fft`, `matrix_multiply`, `monte_carlo_pi`, `polynomial_eval`, `tensor_matmul`, `tensor_operations`, `convolution`, `softmax`
+  - next: `mandelbrot`, `n_body_simulation`, `taylor_series_eval`, `finite_element_mesh`, `blocked_tiled_matrix_multiply`
 - memory latency and bandwidth
-  - current: `linked_list`, `hashmap_operations`, `btree_operations`, `ring_buffer`, `memory_allocation`, `garbage_collection`
-  - next: `sparse_matrix_vector`, `bloom_filter`, `stream_triad`, `matrix_transpose_out_of_cache`
+  - current: `linked_list`, `hashmap_operations`, `btree_operations`, `ring_buffer`, `memory_allocation`, `garbage_collection`, `arc_contention`
+  - next: `page_rank`, `sparse_matrix_vector`, `bloom_filter`, `fisher_yates_shuffle`, `graph_bfs_unorganized`, `stream_triad`, `mergesort_out_of_place`, `matrix_transpose_out_of_cache`, `radix_sort_large_ints`, `memcpy_bandwidth`, `prefix_sum_scan`, `sliding_window_strings`, `histogram_generation`, `bitboard_movegen`
 - I/O and parser pressure
   - current: `file_reading`, `json_parsing`, `csv_scanning`, `token_frequency`
-  - next: `xml_parsing_massive`, `huffman_codec`, `lz77_compression`, `sqlite_concurrent_inserts`
+  - next: `burrows_wheeler_transform`, `huffman_codec`, `lz77_compression`, `xml_parsing_massive`, `log_appending`, `tarball_create_extract`, `file_dedup_chunking`, `external_sort`, `directory_tree_indexing`, `checkpoint_large_state`
+- storage-heavy lab workloads
+  - future: `video_io_8k`, `video_transcoding_io_phase`, `random_block_io_4k`, `sqlite_concurrent_inserts`, `btree_page_faults`
 - compiler, JIT, and cache-policy behavior
   - current: all `08_jit_optimization/*` cases plus `09_compilation_metrics/*`
 - accelerator and interconnect work
-  - future: `transformer_self_attention`, `host_to_device_copy`
+  - future: `transformer_self_attention`, `gpu_ray_tracing`, `gpu_rasterization_microtriangles`, `gpu_global_illumination`, `gpu_sgemm_dgemm`, `gpu_image_convolution`, `gpu_fft`, `fluid_dynamics_navier_stokes`, `molecular_dynamics`, `soft_body_cloth_physics`, `particle_swarm_optimization`, `ethash_kawpow`, `bitonic_sort`, `parallel_reduction`, `parallel_prefix_sum`, `host_to_device_copy`, `device_to_host_copy`, `gpu_peer_to_peer_copy`, `rdma_operations`, `nvme_direct_storage`, `texture_streaming_to_gpu`
+- AI accelerator workloads
+  - future: `llm_prefill`, `llm_decode`, `transformer_self_attention`, `cnn_forward_pass`, `lora_updates`, `quantized_matrix_vector`, `softmax_large_vocab`, `moe_token_routing`, `embedding_table_lookup`, `activation_mapping`
+- network and distributed-system workloads
+  - future: `grpc_serialization`, `http_get_flood`, `large_file_transfer_socket`, `bittorrent_chunk_seeding`, `video_streaming_packets`, `tcp_handshake_storm`, `icmp_echo_flood`, `dns_resolution_lookups`, `dht_routing`, `multiplayer_state_sync`, `bgp_route_updates`
+- quantum-simulator workloads
+  - future: `shors_algorithm_sim`, `grovers_algorithm_sim`, `quantum_fourier_transform_sim`, `vqe_optimization`
 
 ## Immediate Next Comparisons To Add
 

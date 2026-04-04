@@ -87,6 +87,26 @@ class BenchmarkWorkspaceShapeTests(unittest.TestCase):
         self.assertIn("`dry-run validated`", text)
         self.assertIn("`source-present only`", text)
 
+    def test_coverage_matrix_tracks_broader_methodology_backlog(self) -> None:
+        text = (BENCHMARK_ROOT / "COVERAGE_MATRIX.md").read_text(encoding="utf-8")
+        self.assertIn("planned or future workloads tracked below: `92`", text)
+        self.assertIn("total workload slots tracked in this matrix: `130`", text)
+        for workload_name in (
+            "sha3_hash",
+            "ecdsa_sign_verify",
+            "minimax_tree_search",
+            "finite_element_mesh",
+            "page_rank",
+            "blocked_tiled_matrix_multiply",
+            "gpu_ray_tracing",
+            "llm_prefill",
+            "random_block_io_4k",
+            "http_get_flood",
+            "nvme_direct_storage",
+            "quantum_fourier_transform_sim",
+        ):
+            self.assertIn(f"`{workload_name}`", text)
+
     def test_jit_suite_keeps_multiple_call_cache_shapes(self) -> None:
         jit_sources = discover_benchmarks(
             suite_filters=["08_jit_optimization"],
