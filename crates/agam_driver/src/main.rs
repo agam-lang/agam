@@ -73,7 +73,7 @@ struct SourceFeatureFlags {
     experimental_usages: Vec<ExperimentalFeatureUsage>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct CallCacheSelection {
     disable_all: bool,
     enable_all: bool,
@@ -188,6 +188,12 @@ struct BuildRequestResult {
     stderr: Vec<u8>,
     succeeded: bool,
     launch_error: Option<String>,
+}
+
+#[derive(Debug)]
+struct DaemonPrewarmedEntry {
+    package: agam_pkg::PortablePackage,
+    call_cache: CallCacheSelection,
 }
 
 #[derive(Subcommand, Debug)]
@@ -524,6 +530,14 @@ struct WarmCacheSummary {
 struct DaemonPrewarmSummary {
     #[serde(default)]
     pub package_ready: bool,
+    #[serde(default)]
+    pub entry_path: Option<String>,
+    #[serde(default)]
+    pub entry_content_hash: Option<String>,
+    #[serde(default)]
+    pub package_artifact_path: Option<String>,
+    #[serde(default)]
+    pub call_cache: CallCacheSelection,
     #[serde(default)]
     pub build_ready: bool,
     #[serde(default)]
@@ -2319,6 +2333,28 @@ fn run_source_file(
     verbose: bool,
     features: FeatureFlags,
 ) -> Result<i32, String> {
+    if let Some(prewarmed) = load_daemon_prewarmed_entry(file, verbose) {
+        let warm_state = WarmState {
+            source_features: Some(SourceFeatureFlags {
+                call_cache: prewarmed.call_cache,
+                experimental_usages: Vec::new(),
+            }),
+            module: None,
+            hir: None,
+            mir: Some(prewarmed.package.mir),
+        };
+        return run_source_file_with_optional_warm_state(
+            file,
+            args,
+            backend,
+            opt_level,
+            tuning,
+            verbose,
+            features,
+            Some(&warm_state),
+        );
+    }
+
     run_source_file_with_optional_warm_state(
         file, args, backend, opt_level, tuning, verbose, features, None,
     )
@@ -2352,6 +2388,87 @@ fn warm_state_module<'a>(
         .module
         .as_ref()
         .ok_or_else(|| format!("warm AST module missing for `{}`", file.display()))
+}
+
+fn load_daemon_prewarmed_entry(path: &PathBuf, verbose: bool) -> Option<DaemonPrewarmedEntry> {
+    let workspace = match resolve_daemon_workspace_target(Some(path.clone())) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            if verbose {
+                eprintln!("[agamc] daemon prewarm lookup skipped: {error}");
+            }
+            return None;
+        }
+    };
+    let status = match read_daemon_status(&workspace.root) {
+        Ok(Some(status)) => status,
+        Ok(None) => return None,
+        Err(error) => {
+            if verbose {
+                eprintln!("[agamc] daemon prewarm status unavailable: {error}");
+            }
+            return None;
+        }
+    };
+    let prewarm = &status.prewarm;
+    if !prewarm.package_ready {
+        return None;
+    }
+
+    let Some(entry_path) = prewarm.entry_path.as_deref() else {
+        return None;
+    };
+    if Path::new(entry_path) != path.as_path() {
+        return None;
+    }
+
+    let source = match std::fs::read(path) {
+        Ok(source) => source,
+        Err(error) => {
+            if verbose {
+                eprintln!(
+                    "[agamc] daemon prewarm source hash check failed for `{}`: {}",
+                    path.display(),
+                    error
+                );
+            }
+            return None;
+        }
+    };
+    let source_hash = agam_runtime::cache::hash_bytes(&source);
+    if prewarm.entry_content_hash.as_deref() != Some(source_hash.as_str()) {
+        return None;
+    }
+
+    let Some(package_artifact_path) = prewarm.package_artifact_path.as_ref() else {
+        return None;
+    };
+    let artifact_path = PathBuf::from(package_artifact_path);
+    let package = match agam_pkg::read_package_from_path(&artifact_path) {
+        Ok(package) => package,
+        Err(error) => {
+            if verbose {
+                eprintln!(
+                    "[agamc] daemon prewarm package load failed from `{}`: {}",
+                    artifact_path.display(),
+                    error
+                );
+            }
+            return None;
+        }
+    };
+
+    if verbose {
+        eprintln!(
+            "[agamc] Reused daemon prewarmed entry package: {}",
+            artifact_path.display()
+        );
+    }
+
+    Some(DaemonPrewarmedEntry {
+        package,
+        call_cache: prewarm.call_cache.clone(),
+    })
 }
 
 fn run_source_file_with_optional_warm_state(
@@ -2980,6 +3097,8 @@ fn prewarm_daemon_entry_artifacts(
 
     let root = &snapshot.session.layout.root;
     let entry_file = &entry_snapshot.path;
+    summary.entry_path = Some(entry_file.display().to_string());
+    summary.entry_content_hash = Some(entry_snapshot.content_hash.clone());
     let source = match std::fs::read_to_string(entry_file) {
         Ok(source) => source,
         Err(error) => {
@@ -3015,6 +3134,7 @@ fn prewarm_daemon_entry_artifacts(
             return summary;
         }
     };
+    summary.call_cache = source_features.call_cache.clone();
 
     match daemon_prewarm_package_output(root, entry_file) {
         Ok(output) => {
@@ -3026,8 +3146,9 @@ fn prewarm_daemon_entry_artifacts(
                 agam_runtime::contract::RuntimeBackend::Jit,
             );
             match write_portable_package_with_cache(entry_file, &output, &package, verbose) {
-                Ok(()) => {
+                Ok(hit) => {
                     summary.package_ready = true;
+                    summary.package_artifact_path = Some(hit.artifact_path.display().to_string());
                     clean_prewarm_output(&output);
                 }
                 Err(error) => record_prewarm_error(
@@ -3895,6 +4016,10 @@ fn build_portable_package_file(
     path: &PathBuf,
     verbose: bool,
 ) -> Result<agam_pkg::PortablePackage, String> {
+    if let Some(prewarmed) = load_daemon_prewarmed_entry(path, verbose) {
+        return Ok(prewarmed.package);
+    }
+
     let parsed = parse_source_file(path, verbose)?;
     semantic_check_parsed_source(path, &parsed, verbose)?;
     let mir = lower_parsed_to_optimized_mir(&parsed, verbose);
@@ -3912,7 +4037,7 @@ fn write_portable_package_with_cache(
     output: &PathBuf,
     package: &agam_pkg::PortablePackage,
     verbose: bool,
-) -> Result<(), String> {
+) -> Result<agam_runtime::cache::CacheHit, String> {
     let cache = agam_runtime::cache::CacheStore::for_path(source_path)?;
     let source = std::fs::read(source_path).map_err(|e| {
         format!(
@@ -3935,7 +4060,8 @@ fn write_portable_package_with_cache(
         if verbose {
             eprintln!("[agamc] Package cache hit: {}", hit.id);
         }
-        return cache.restore_to_path(&hit, output);
+        cache.restore_to_path(&hit, output)?;
+        return Ok(hit);
     }
 
     let bytes = serde_json::to_vec_pretty(package)
@@ -3953,7 +4079,8 @@ fn write_portable_package_with_cache(
     if verbose {
         eprintln!("[agamc] Package cache miss; stored {}", hit.id);
     }
-    cache.restore_to_path(&hit, output)
+    cache.restore_to_path(&hit, output)?;
+    Ok(hit)
 }
 
 fn run_portable_package_file(
@@ -5243,6 +5370,26 @@ fn build_file(
     features: FeatureFlags,
     verbose: bool,
 ) -> Result<BuildOutcome, String> {
+    if let Some(prewarmed) = load_daemon_prewarmed_entry(path, verbose) {
+        let source_features = SourceFeatureFlags {
+            call_cache: prewarmed.call_cache,
+            experimental_usages: Vec::new(),
+        };
+        let call_cache = effective_call_cache_selection(features, &source_features);
+        return build_prelowered_file(
+            path,
+            output,
+            opt_level,
+            backend,
+            tuning,
+            &prewarmed.package.mir,
+            &call_cache,
+            &[],
+            false,
+            verbose,
+        );
+    }
+
     let (mir, source_features) = lower_to_optimized_mir(path, verbose)?;
     let call_cache = effective_call_cache_selection(features, &source_features);
     build_prelowered_file(
@@ -7019,6 +7166,38 @@ mod tests {
                     .is_none()
             );
         }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_load_daemon_prewarmed_entry_reuses_matching_snapshot() {
+        let root = temp_dir("daemon_prewarm_reuse");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+            .expect("one-shot daemon run should succeed");
+
+        let prewarmed =
+            load_daemon_prewarmed_entry(&file, false).expect("prewarmed entry should load");
+        assert_eq!(prewarmed.package.mir.functions.len(), 1);
+        assert_eq!(prewarmed.call_cache, CallCacheSelection::default());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_load_daemon_prewarmed_entry_rejects_hash_mismatch() {
+        let root = temp_dir("daemon_prewarm_hash_mismatch");
+        let file = root.join("main.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
+
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+            .expect("one-shot daemon run should succeed");
+        fs::write(&file, "fn main() -> i32 { return 1; }\n").expect("rewrite source");
+
+        assert!(load_daemon_prewarmed_entry(&file, false).is_none());
 
         let _ = fs::remove_dir_all(root);
     }

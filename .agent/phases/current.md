@@ -8,7 +8,7 @@
 
 1. **Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation**
    - Status: partial
-   - Done: shared workspace snapshot and invalidation-diff contract in `agam_pkg`, a real foreground warm-state daemon/status loop in `agam_driver`, intra-invocation warm-state reuse for `agamc dev`, a semantic-only `agamc dev --no-run` entry path that skips unnecessary lowering, deterministic multi-input `agamc build` request planning that stops dropping every file after the first one, deterministic multi-input `agamc build` worker scheduling that runs independent single-file builds in parallel while replaying diagnostics in request order, and daemon-side entry-file prewarm that fills package/build caches from warm MIR without polluting the workspace
+   - Done: shared workspace snapshot and invalidation-diff contract in `agam_pkg`, a real foreground warm-state daemon/status loop in `agam_driver`, intra-invocation warm-state reuse for `agamc dev`, a semantic-only `agamc dev --no-run` entry path that skips unnecessary lowering, deterministic multi-input `agamc build` request planning that stops dropping every file after the first one, deterministic multi-input `agamc build` worker scheduling that runs independent single-file builds in parallel while replaying diagnostics in request order, daemon-side entry-file prewarm that fills package/build caches from warm MIR without polluting the workspace, and cross-process reuse of daemon-prewarmed entry packages in `agamc build`, `agamc run`, and `agamc package pack`
    - Next work: connect build/run/dev flows to daemon-owned warm state and parallelize independent work deterministically
    - Detail file: `details/15F.md`
 2. **Phase 15G: First-Party Premium Experience Layer**
