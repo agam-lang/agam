@@ -23,7 +23,7 @@ It complements the localized phase-work microbenchmarks under `.agent/test/` wit
 - `harness/`
   - language-specific runners for Agam, Rust, CPython, Clang C, Clang++, and Go
 - `results/`
-  - raw runs, aggregated summaries, reports, and plots
+  - raw runs, aggregated summaries, reports, plots, and a checked-in result-set index in `results/README.md`
 - `ci/`
   - baseline management, regression detection, and CI defaults
 - `tests/`
@@ -44,6 +44,8 @@ The workspace is broader than the published single-workload snapshot in the top-
 - Agam benchmark sources: `38`
 - comparison-language sources: `13`
 - total runnable benchmark sources in `benchmarks/benchmarks/`: `51`
+
+For the checked-in result roots themselves, including which raw run backs the published same-host table and why the current aggregated CSVs are compile-only, see `results/README.md`.
 
 Current Agam suite counts:
 
