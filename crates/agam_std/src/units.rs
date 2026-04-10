@@ -17,53 +17,93 @@ pub struct Unit {
 }
 
 impl Unit {
-    pub const DIMENSIONLESS: Unit = Unit { exponents: [0, 0, 0, 0, 0, 0, 0] };
-    pub const METER: Unit     = Unit { exponents: [0, 1, 0, 0, 0, 0, 0] };
-    pub const KILOGRAM: Unit  = Unit { exponents: [1, 0, 0, 0, 0, 0, 0] };
-    pub const SECOND: Unit    = Unit { exponents: [0, 0, 1, 0, 0, 0, 0] };
-    pub const AMPERE: Unit    = Unit { exponents: [0, 0, 0, 1, 0, 0, 0] };
-    pub const KELVIN: Unit    = Unit { exponents: [0, 0, 0, 0, 1, 0, 0] };
-    pub const MOLE: Unit      = Unit { exponents: [0, 0, 0, 0, 0, 1, 0] };
-    pub const CANDELA: Unit   = Unit { exponents: [0, 0, 0, 0, 0, 0, 1] };
+    pub const DIMENSIONLESS: Unit = Unit {
+        exponents: [0, 0, 0, 0, 0, 0, 0],
+    };
+    pub const METER: Unit = Unit {
+        exponents: [0, 1, 0, 0, 0, 0, 0],
+    };
+    pub const KILOGRAM: Unit = Unit {
+        exponents: [1, 0, 0, 0, 0, 0, 0],
+    };
+    pub const SECOND: Unit = Unit {
+        exponents: [0, 0, 1, 0, 0, 0, 0],
+    };
+    pub const AMPERE: Unit = Unit {
+        exponents: [0, 0, 0, 1, 0, 0, 0],
+    };
+    pub const KELVIN: Unit = Unit {
+        exponents: [0, 0, 0, 0, 1, 0, 0],
+    };
+    pub const MOLE: Unit = Unit {
+        exponents: [0, 0, 0, 0, 0, 1, 0],
+    };
+    pub const CANDELA: Unit = Unit {
+        exponents: [0, 0, 0, 0, 0, 0, 1],
+    };
 
     // Derived units
     /// m/s
-    pub const VELOCITY: Unit = Unit { exponents: [0, 1, -1, 0, 0, 0, 0] };
+    pub const VELOCITY: Unit = Unit {
+        exponents: [0, 1, -1, 0, 0, 0, 0],
+    };
     /// m/s²
-    pub const ACCELERATION: Unit = Unit { exponents: [0, 1, -2, 0, 0, 0, 0] };
+    pub const ACCELERATION: Unit = Unit {
+        exponents: [0, 1, -2, 0, 0, 0, 0],
+    };
     /// kg·m/s² = Newton
-    pub const NEWTON: Unit = Unit { exponents: [1, 1, -2, 0, 0, 0, 0] };
+    pub const NEWTON: Unit = Unit {
+        exponents: [1, 1, -2, 0, 0, 0, 0],
+    };
     /// kg·m²/s² = Joule
-    pub const JOULE: Unit = Unit { exponents: [1, 2, -2, 0, 0, 0, 0] };
+    pub const JOULE: Unit = Unit {
+        exponents: [1, 2, -2, 0, 0, 0, 0],
+    };
     /// kg·m²/s³ = Watt
-    pub const WATT: Unit = Unit { exponents: [1, 2, -3, 0, 0, 0, 0] };
+    pub const WATT: Unit = Unit {
+        exponents: [1, 2, -3, 0, 0, 0, 0],
+    };
     /// A·s = Coulomb
-    pub const COULOMB: Unit = Unit { exponents: [0, 0, 1, 1, 0, 0, 0] };
+    pub const COULOMB: Unit = Unit {
+        exponents: [0, 0, 1, 1, 0, 0, 0],
+    };
     /// kg·m²/(A·s³) = Volt
-    pub const VOLT: Unit = Unit { exponents: [1, 2, -3, -1, 0, 0, 0] };
+    pub const VOLT: Unit = Unit {
+        exponents: [1, 2, -3, -1, 0, 0, 0],
+    };
     /// kg/(m·s²) = Pascal
-    pub const PASCAL: Unit = Unit { exponents: [1, -1, -2, 0, 0, 0, 0] };
+    pub const PASCAL: Unit = Unit {
+        exponents: [1, -1, -2, 0, 0, 0, 0],
+    };
     /// 1/s = Hertz
-    pub const HERTZ: Unit = Unit { exponents: [0, 0, -1, 0, 0, 0, 0] };
+    pub const HERTZ: Unit = Unit {
+        exponents: [0, 0, -1, 0, 0, 0, 0],
+    };
 
     /// Multiply units: add exponents.
     pub fn mul(self, other: Unit) -> Unit {
         let mut e = [0i8; 7];
-        for i in 0..7 { e[i] = self.exponents[i] + other.exponents[i]; }
+        for i in 0..7 {
+            e[i] = self.exponents[i] + other.exponents[i];
+        }
         Unit { exponents: e }
     }
 
     /// Divide units: subtract exponents.
     pub fn div(self, other: Unit) -> Unit {
         let mut e = [0i8; 7];
-        for i in 0..7 { e[i] = self.exponents[i] - other.exponents[i]; }
+        for i in 0..7 {
+            e[i] = self.exponents[i] - other.exponents[i];
+        }
         Unit { exponents: e }
     }
 
     /// Raise to integer power.
     pub fn pow(self, n: i8) -> Unit {
         let mut e = [0i8; 7];
-        for i in 0..7 { e[i] = self.exponents[i] * n; }
+        for i in 0..7 {
+            e[i] = self.exponents[i] * n;
+        }
         Unit { exponents: e }
     }
 
@@ -86,32 +126,49 @@ pub struct Quantity {
 }
 
 impl Quantity {
-    pub fn new(value: f64, unit: Unit) -> Self { Self { value, unit } }
+    pub fn new(value: f64, unit: Unit) -> Self {
+        Self { value, unit }
+    }
 
     pub fn add(self, other: Quantity) -> Result<Quantity, &'static str> {
         if !self.unit.is_compatible(other.unit) {
             return Err("incompatible units for addition");
         }
-        Ok(Quantity { value: self.value + other.value, unit: self.unit })
+        Ok(Quantity {
+            value: self.value + other.value,
+            unit: self.unit,
+        })
     }
 
     pub fn sub(self, other: Quantity) -> Result<Quantity, &'static str> {
         if !self.unit.is_compatible(other.unit) {
             return Err("incompatible units for subtraction");
         }
-        Ok(Quantity { value: self.value - other.value, unit: self.unit })
+        Ok(Quantity {
+            value: self.value - other.value,
+            unit: self.unit,
+        })
     }
 
     pub fn mul(self, other: Quantity) -> Quantity {
-        Quantity { value: self.value * other.value, unit: self.unit.mul(other.unit) }
+        Quantity {
+            value: self.value * other.value,
+            unit: self.unit.mul(other.unit),
+        }
     }
 
     pub fn div(self, other: Quantity) -> Quantity {
-        Quantity { value: self.value / other.value, unit: self.unit.div(other.unit) }
+        Quantity {
+            value: self.value / other.value,
+            unit: self.unit.div(other.unit),
+        }
     }
 
     pub fn pow(self, n: i8) -> Quantity {
-        Quantity { value: self.value.powi(n as i32), unit: self.unit.pow(n) }
+        Quantity {
+            value: self.value.powi(n as i32),
+            unit: self.unit.pow(n),
+        }
     }
 }
 

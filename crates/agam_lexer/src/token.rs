@@ -75,8 +75,8 @@ pub enum TokenKind {
     Pub,
     As,
     Type,
-    Self_,       // `self`
-    SelfType,    // `Self`
+    Self_,    // `self`
+    SelfType, // `Self`
     Async,
     Await,
     Spawn,

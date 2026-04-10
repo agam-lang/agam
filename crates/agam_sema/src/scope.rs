@@ -4,9 +4,9 @@
 //! Pushing a new scope happens when entering a function body, block,
 //! loop, or any other construct that introduces a new binding context.
 
-use std::collections::HashMap;
 use crate::symbol::{Symbol, SymbolId, SymbolKind};
 use agam_errors::Span;
+use std::collections::HashMap;
 
 /// A single lexical scope containing name → SymbolId bindings.
 #[derive(Debug)]
@@ -65,7 +65,12 @@ impl ScopeStack {
     /// Returns `Ok(SymbolId)` on success, `Err(SymbolId)` if a symbol
     /// with the same name already exists **in the same scope** (shadowing
     /// across scopes is allowed).
-    pub fn declare(&mut self, name: String, kind: SymbolKind, span: Span) -> Result<SymbolId, SymbolId> {
+    pub fn declare(
+        &mut self,
+        name: String,
+        kind: SymbolKind,
+        span: Span,
+    ) -> Result<SymbolId, SymbolId> {
         let scope = self.scopes.last_mut().expect("no active scope");
 
         // Check for redeclaration in the *same* scope.
@@ -134,16 +139,23 @@ mod tests {
     use super::*;
     use crate::symbol::TypeId;
 
-    fn dummy_span() -> Span { Span::dummy() }
+    fn dummy_span() -> Span {
+        Span::dummy()
+    }
 
     #[test]
     fn test_declare_and_lookup() {
         let mut scopes = ScopeStack::new();
-        let id = scopes.declare(
-            "x".into(),
-            SymbolKind::Variable { mutable: false, ty: TypeId(4) },
-            dummy_span(),
-        ).unwrap();
+        let id = scopes
+            .declare(
+                "x".into(),
+                SymbolKind::Variable {
+                    mutable: false,
+                    ty: TypeId(4),
+                },
+                dummy_span(),
+            )
+            .unwrap();
 
         assert_eq!(scopes.lookup("x"), Some(id));
         assert_eq!(scopes.lookup("y"), None);
@@ -152,18 +164,28 @@ mod tests {
     #[test]
     fn test_shadowing_across_scopes() {
         let mut scopes = ScopeStack::new();
-        let id_outer = scopes.declare(
-            "x".into(),
-            SymbolKind::Variable { mutable: false, ty: TypeId(4) },
-            dummy_span(),
-        ).unwrap();
+        let id_outer = scopes
+            .declare(
+                "x".into(),
+                SymbolKind::Variable {
+                    mutable: false,
+                    ty: TypeId(4),
+                },
+                dummy_span(),
+            )
+            .unwrap();
 
         scopes.push_scope();
-        let id_inner = scopes.declare(
-            "x".into(),
-            SymbolKind::Variable { mutable: true, ty: TypeId(5) },
-            dummy_span(),
-        ).unwrap();
+        let id_inner = scopes
+            .declare(
+                "x".into(),
+                SymbolKind::Variable {
+                    mutable: true,
+                    ty: TypeId(5),
+                },
+                dummy_span(),
+            )
+            .unwrap();
 
         // Inner shadow wins
         assert_eq!(scopes.lookup("x"), Some(id_inner));
@@ -177,15 +199,23 @@ mod tests {
     #[test]
     fn test_redeclaration_in_same_scope_errors() {
         let mut scopes = ScopeStack::new();
-        scopes.declare(
-            "x".into(),
-            SymbolKind::Variable { mutable: false, ty: TypeId(4) },
-            dummy_span(),
-        ).unwrap();
+        scopes
+            .declare(
+                "x".into(),
+                SymbolKind::Variable {
+                    mutable: false,
+                    ty: TypeId(4),
+                },
+                dummy_span(),
+            )
+            .unwrap();
 
         let result = scopes.declare(
             "x".into(),
-            SymbolKind::Variable { mutable: false, ty: TypeId(4) },
+            SymbolKind::Variable {
+                mutable: false,
+                ty: TypeId(4),
+            },
             dummy_span(),
         );
         assert!(result.is_err());
@@ -194,25 +224,40 @@ mod tests {
     #[test]
     fn test_nested_scopes() {
         let mut scopes = ScopeStack::new();
-        scopes.declare(
-            "a".into(),
-            SymbolKind::Variable { mutable: false, ty: TypeId(4) },
-            dummy_span(),
-        ).unwrap();
+        scopes
+            .declare(
+                "a".into(),
+                SymbolKind::Variable {
+                    mutable: false,
+                    ty: TypeId(4),
+                },
+                dummy_span(),
+            )
+            .unwrap();
 
         scopes.push_scope();
-        scopes.declare(
-            "b".into(),
-            SymbolKind::Variable { mutable: false, ty: TypeId(4) },
-            dummy_span(),
-        ).unwrap();
+        scopes
+            .declare(
+                "b".into(),
+                SymbolKind::Variable {
+                    mutable: false,
+                    ty: TypeId(4),
+                },
+                dummy_span(),
+            )
+            .unwrap();
 
         scopes.push_scope();
-        scopes.declare(
-            "c".into(),
-            SymbolKind::Variable { mutable: false, ty: TypeId(4) },
-            dummy_span(),
-        ).unwrap();
+        scopes
+            .declare(
+                "c".into(),
+                SymbolKind::Variable {
+                    mutable: false,
+                    ty: TypeId(4),
+                },
+                dummy_span(),
+            )
+            .unwrap();
 
         assert!(scopes.lookup("a").is_some());
         assert!(scopes.lookup("b").is_some());
@@ -230,11 +275,16 @@ mod tests {
     #[test]
     fn test_mark_used() {
         let mut scopes = ScopeStack::new();
-        let id = scopes.declare(
-            "x".into(),
-            SymbolKind::Variable { mutable: false, ty: TypeId(4) },
-            dummy_span(),
-        ).unwrap();
+        let id = scopes
+            .declare(
+                "x".into(),
+                SymbolKind::Variable {
+                    mutable: false,
+                    ty: TypeId(4),
+                },
+                dummy_span(),
+            )
+            .unwrap();
 
         assert!(!scopes.get(id).used);
         scopes.mark_used(id);

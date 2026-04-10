@@ -20,6 +20,8 @@ pub const SDK_DISTRIBUTION_FORMAT_VERSION: u32 = 1;
 pub const WORKSPACE_MANIFEST_FORMAT_VERSION: u32 = 1;
 /// First dependency lockfile format version.
 pub const LOCKFILE_FORMAT_VERSION: u32 = 1;
+/// First daemon warm-state index format version.
+pub const DAEMON_WARM_INDEX_FORMAT_VERSION: u32 = 1;
 
 /// The version compatibility policy for `agam.toml` manifests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -432,6 +434,34 @@ pub struct WorkspaceSnapshotDiff {
     pub unchanged_files: Vec<PathBuf>,
 }
 
+/// How far the daemon has warmed a particular file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DaemonWarmLevel {
+    /// Source was parsed but not semantically checked.
+    Parsed,
+    /// Source was parsed, resolved, and type-checked.
+    Checked,
+    /// Source was parsed, checked, and lowered to optimized MIR.
+    Lowered,
+}
+
+/// Per-file entry in the daemon warm-state index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DaemonWarmFileEntry {
+    pub content_hash: String,
+    pub mir_hash: Option<String>,
+    pub artifact_path: Option<String>,
+    pub warm_level: DaemonWarmLevel,
+}
+
+/// Multi-file daemon warm-state index persisted at `.agam_cache/daemon/warm_index.json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DaemonWarmIndex {
+    #[serde(default = "default_daemon_warm_index_format_version")]
+    pub format_version: u32,
+    pub files: BTreeMap<String, DaemonWarmFileEntry>,
+}
+
 /// Create the first-party scaffold manifest for a new workspace.
 pub fn scaffold_workspace_manifest(project_name: &str) -> WorkspaceManifest {
     WorkspaceManifest {
@@ -727,6 +757,46 @@ pub fn write_lockfile_to_path(path: &Path, lockfile: &WorkspaceLockfile) -> Resu
         .map_err(|e| format!("failed to serialize lockfile: {e}"))?;
     std::fs::write(path, toml)
         .map_err(|e| format!("failed to write lockfile `{}`: {e}", path.display()))
+}
+
+/// Default daemon warm-state index path for a workspace root.
+pub fn daemon_warm_index_path(root: &Path) -> PathBuf {
+    root.join(".agam_cache")
+        .join("daemon")
+        .join("warm_index.json")
+}
+
+/// Read the daemon warm-state index for a workspace, returning `None` if it does not exist.
+pub fn read_daemon_warm_index(root: &Path) -> Result<Option<DaemonWarmIndex>, String> {
+    let path = daemon_warm_index_path(root);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let json = std::fs::read_to_string(&path)
+        .map_err(|e| format!("failed to read daemon warm index `{}`: {e}", path.display()))?;
+    let index: DaemonWarmIndex = serde_json::from_str(&json)
+        .map_err(|e| format!("failed to parse daemon warm index `{}`: {e}", path.display()))?;
+    if index.format_version != DAEMON_WARM_INDEX_FORMAT_VERSION {
+        return Ok(None);
+    }
+    Ok(Some(index))
+}
+
+/// Write the daemon warm-state index for a workspace.
+pub fn write_daemon_warm_index(root: &Path, index: &DaemonWarmIndex) -> Result<(), String> {
+    let path = daemon_warm_index_path(root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "failed to create daemon warm index directory `{}`: {e}",
+                parent.display()
+            )
+        })?;
+    }
+    let json = serde_json::to_vec_pretty(index)
+        .map_err(|e| format!("failed to serialize daemon warm index: {e}"))?;
+    std::fs::write(&path, json)
+        .map_err(|e| format!("failed to write daemon warm index `{}`: {e}", path.display()))
 }
 
 fn verified_ir_summary(mir: &MirModule) -> VerifiedIrSummary {
@@ -1266,6 +1336,622 @@ fn default_lockfile_format_version() -> u32 {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn default_daemon_warm_index_format_version() -> u32 {
+    DAEMON_WARM_INDEX_FORMAT_VERSION
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17B — Deterministic Dependency Resolver
+// ---------------------------------------------------------------------------
+
+/// The kind of source a resolved dependency was drawn from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum DependencySourceKind {
+    /// A local path dependency (`path = "libs/core"`).
+    Path,
+    /// A git repository dependency (`git = "https://..."`).
+    Git,
+    /// A registry dependency (`version = "^1.0"`, optionally with `registry`).
+    Registry,
+    /// An intra-workspace member dependency.
+    Workspace,
+}
+
+impl DependencySourceKind {
+    /// Stable string label used in `LockedPackageSource.kind`.
+    pub fn label(self) -> &'static str {
+        match self {
+            DependencySourceKind::Path => "path",
+            DependencySourceKind::Git => "git",
+            DependencySourceKind::Registry => "registry",
+            DependencySourceKind::Workspace => "workspace",
+        }
+    }
+}
+
+/// Deterministically hash all `.agam` files in a directory.
+///
+/// The hash is computed by sorting file paths lexicographically, concatenating
+/// `<relative-path>\n<file-content>` for each file, and hashing the result
+/// with the shared `agam_runtime::cache::hash_bytes` function.
+pub fn content_hash_directory(directory: &Path) -> Result<String, String> {
+    if !directory.is_dir() {
+        return Err(format!(
+            "content hash target `{}` is not a directory",
+            directory.display()
+        ));
+    }
+
+    let mut agam_files = Vec::new();
+    collect_agam_files(directory, &mut agam_files)?;
+    agam_files.sort();
+
+    let mut payload = Vec::new();
+    for file in &agam_files {
+        let relative = file
+            .strip_prefix(directory)
+            .unwrap_or(file)
+            .to_string_lossy();
+        let content = std::fs::read(file)
+            .map_err(|e| format!("failed to read `{}` for content hash: {e}", file.display()))?;
+        payload.extend_from_slice(relative.as_bytes());
+        payload.push(b'\n');
+        payload.extend_from_slice(&content);
+    }
+
+    Ok(agam_runtime::cache::hash_bytes(&payload))
+}
+
+/// Resolve a `path`-based dependency into a locked package record.
+fn resolve_path_dependency(
+    root: &Path,
+    name: &str,
+    spec: &DependencySpec,
+) -> Result<LockedPackage, String> {
+    let rel_path = spec.path.as_deref().ok_or_else(|| {
+        format!("dependency `{name}` is marked as path but has no `path` field")
+    })?;
+    let abs_path = workspace_relative_path(root, rel_path, &format!("`dependencies.{name}.path`"))?;
+
+    let content_hash = if abs_path.is_dir() {
+        content_hash_directory(&abs_path)?
+    } else if abs_path.is_file() {
+        let bytes = std::fs::read(&abs_path).map_err(|e| {
+            format!(
+                "failed to read path dependency `{}`: {e}",
+                abs_path.display()
+            )
+        })?;
+        agam_runtime::cache::hash_bytes(&bytes)
+    } else {
+        return Err(format!(
+            "path dependency `{name}` target `{}` does not exist",
+            abs_path.display()
+        ));
+    };
+
+    let version = spec.version.as_deref().unwrap_or("0.0.0").to_string();
+    Ok(LockedPackage {
+        name: spec.package.as_deref().unwrap_or(name).to_string(),
+        version,
+        source: LockedPackageSource {
+            kind: DependencySourceKind::Path.label().to_string(),
+            location: rel_path.to_string(),
+            reference: None,
+        },
+        content_hash,
+        dependencies: Vec::new(),
+    })
+}
+
+/// Resolve a `git`-based dependency into a locked package record.
+///
+/// This records the URL and ref/branch but does not clone the repository.
+/// Actual fetching is deferred to Phase 17C (registry layer).
+fn resolve_git_dependency(
+    name: &str,
+    spec: &DependencySpec,
+) -> Result<LockedPackage, String> {
+    let url = spec.git.as_deref().ok_or_else(|| {
+        format!("dependency `{name}` is marked as git but has no `git` field")
+    })?;
+
+    let reference = spec
+        .rev
+        .as_deref()
+        .or(spec.branch.as_deref())
+        .map(|s| s.to_string());
+
+    // Build a deterministic content hash from the URL + ref so lockfile records
+    // are stable across resolver runs that see the same inputs.
+    let hash_input = format!(
+        "git:{url}:{}",
+        reference.as_deref().unwrap_or("HEAD")
+    );
+    let content_hash = agam_runtime::cache::hash_bytes(hash_input.as_bytes());
+
+    let version = spec.version.as_deref().unwrap_or("0.0.0").to_string();
+    Ok(LockedPackage {
+        name: spec.package.as_deref().unwrap_or(name).to_string(),
+        version,
+        source: LockedPackageSource {
+            kind: DependencySourceKind::Git.label().to_string(),
+            location: url.to_string(),
+            reference,
+        },
+        content_hash,
+        dependencies: Vec::new(),
+    })
+}
+
+/// Resolve a registry-based dependency into a locked package record.
+///
+/// This produces a placeholder record. Actual registry fetching is Phase 17C.
+fn resolve_registry_dependency(
+    name: &str,
+    spec: &DependencySpec,
+) -> Result<LockedPackage, String> {
+    let version = spec.version.as_deref().ok_or_else(|| {
+        format!("registry dependency `{name}` must declare a `version`")
+    })?;
+
+    let registry = spec
+        .registry
+        .as_deref()
+        .unwrap_or("agam")
+        .to_string();
+
+    let hash_input = format!("registry:{registry}:{name}@{version}");
+    let content_hash = agam_runtime::cache::hash_bytes(hash_input.as_bytes());
+
+    Ok(LockedPackage {
+        name: spec.package.as_deref().unwrap_or(name).to_string(),
+        version: version.to_string(),
+        source: LockedPackageSource {
+            kind: DependencySourceKind::Registry.label().to_string(),
+            location: registry,
+            reference: Some(format!("{name}@{version}")),
+        },
+        content_hash,
+        dependencies: Vec::new(),
+    })
+}
+
+/// Resolve an intra-workspace member as a path dependency.
+fn resolve_workspace_member_dependency(
+    root: &Path,
+    member_session: &WorkspaceSession,
+    name: &str,
+) -> Result<LockedPackage, String> {
+    let member_root = &member_session.layout.root;
+    let content_hash = content_hash_directory(member_root)?;
+    let relative = member_root
+        .strip_prefix(root)
+        .unwrap_or(member_root)
+        .to_string_lossy()
+        .to_string();
+    let version = member_session
+        .manifest
+        .as_ref()
+        .map(|m| m.project.version.clone())
+        .unwrap_or_else(|| "0.0.0".to_string());
+
+    Ok(LockedPackage {
+        name: name.to_string(),
+        version,
+        source: LockedPackageSource {
+            kind: DependencySourceKind::Workspace.label().to_string(),
+            location: relative,
+            reference: None,
+        },
+        content_hash,
+        dependencies: Vec::new(),
+    })
+}
+
+/// Classify which source kind a `DependencySpec` uses.
+fn classify_dependency_source(spec: &DependencySpec) -> DependencySourceKind {
+    if spec.path.is_some() {
+        DependencySourceKind::Path
+    } else if spec.git.is_some() {
+        DependencySourceKind::Git
+    } else {
+        DependencySourceKind::Registry
+    }
+}
+
+/// Resolve a single dependency spec into a locked package record.
+fn resolve_single_dependency(
+    root: &Path,
+    name: &str,
+    spec: &DependencySpec,
+    workspace_members: &[WorkspaceSession],
+) -> Result<LockedPackage, String> {
+    // Check if this dependency name matches a workspace member first.
+    if let Some(member) = workspace_members
+        .iter()
+        .find(|m| m.layout.project_name == name)
+    {
+        return resolve_workspace_member_dependency(root, member, name);
+    }
+
+    match classify_dependency_source(spec) {
+        DependencySourceKind::Path => resolve_path_dependency(root, name, spec),
+        DependencySourceKind::Git => resolve_git_dependency(name, spec),
+        DependencySourceKind::Registry | DependencySourceKind::Workspace => {
+            resolve_registry_dependency(name, spec)
+        }
+    }
+}
+
+/// Resolve all dependencies in a manifest into locked package records.
+///
+/// Resolution order is deterministic: dependencies are processed alphabetically
+/// by name, then by table order (`dependencies` → `dev-dependencies` →
+/// `build-dependencies`). Duplicate package names across tables are unified
+/// to the first occurrence.
+///
+/// Path and workspace dependencies that carry their own `agam.toml` with
+/// dependency sections are resolved transitively (up to a depth limit).
+fn resolve_dependency_tables(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+    workspace_members: &[WorkspaceSession],
+) -> Result<Vec<LockedPackage>, String> {
+    let mut packages = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    resolve_dependency_tables_recursive(
+        root,
+        manifest,
+        workspace_members,
+        &mut packages,
+        &mut seen,
+        0,
+    )?;
+
+    Ok(packages)
+}
+
+/// Maximum transitive dependency resolution depth.
+const MAX_RESOLVE_DEPTH: usize = 16;
+
+/// Recursively resolve dependency tables, walking transitive path/workspace deps.
+fn resolve_dependency_tables_recursive(
+    root: &Path,
+    manifest: &WorkspaceManifest,
+    workspace_members: &[WorkspaceSession],
+    packages: &mut Vec<LockedPackage>,
+    seen: &mut BTreeSet<String>,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_RESOLVE_DEPTH {
+        return Err(format!(
+            "dependency resolution depth exceeded {MAX_RESOLVE_DEPTH}; possible cyclic dependency"
+        ));
+    }
+
+    let tables: [&BTreeMap<String, DependencySpec>; 3] = [
+        &manifest.dependencies,
+        &manifest.dev_dependencies,
+        &manifest.build_dependencies,
+    ];
+
+    for table in tables {
+        // BTreeMap iteration is already alphabetically sorted.
+        for (name, spec) in table {
+            if seen.contains(name) {
+                continue;
+            }
+            seen.insert(name.clone());
+            let mut locked = resolve_single_dependency(root, name, spec, workspace_members)?;
+
+            // Attempt transitive resolution for path and workspace deps.
+            let transitive_deps = resolve_transitive_deps(
+                root, name, spec, workspace_members, packages, seen, depth,
+            )?;
+            for tdep in &transitive_deps {
+                let dep_ref = format!("{}@{}", tdep, "0.0.0");
+                if !locked.dependencies.contains(&dep_ref) {
+                    locked.dependencies.push(dep_ref);
+                }
+            }
+
+            packages.push(locked);
+        }
+    }
+
+    Ok(())
+}
+
+/// Walk a single dependency's own manifest (if it exists) to discover transitive deps.
+///
+/// Returns the names of the transitive dependencies that were added.
+fn resolve_transitive_deps(
+    root: &Path,
+    name: &str,
+    spec: &DependencySpec,
+    workspace_members: &[WorkspaceSession],
+    packages: &mut Vec<LockedPackage>,
+    seen: &mut BTreeSet<String>,
+    depth: usize,
+) -> Result<Vec<String>, String> {
+    let mut added = Vec::new();
+
+    // Only path and workspace deps can have discoverable transitive manifests.
+    let dep_root = if let Some(member) = workspace_members
+        .iter()
+        .find(|m| m.layout.project_name == name)
+    {
+        member.layout.root.clone()
+    } else if let Some(rel_path) = spec.path.as_deref() {
+        match workspace_relative_path(root, rel_path, &format!("`dependencies.{name}.path`")) {
+            Ok(path) if path.is_dir() => path,
+            _ => return Ok(added),
+        }
+    } else {
+        return Ok(added);
+    };
+
+    // Try to read the transitive dependency's manifest.
+    let dep_manifest_path = default_manifest_path(&dep_root);
+    if !dep_manifest_path.is_file() {
+        return Ok(added);
+    }
+
+    let dep_manifest = match read_workspace_manifest_from_path(&dep_manifest_path) {
+        Ok(m) => m,
+        Err(_) => return Ok(added), // Malformed manifest — skip transitive resolution.
+    };
+
+    // Check if there are any dependencies to resolve.
+    let has_deps = !dep_manifest.dependencies.is_empty()
+        || !dep_manifest.dev_dependencies.is_empty()
+        || !dep_manifest.build_dependencies.is_empty();
+    if !has_deps {
+        return Ok(added);
+    }
+
+    // Capture names before recursive resolution.
+    let before_count = packages.len();
+
+    resolve_dependency_tables_recursive(
+        &dep_root,
+        &dep_manifest,
+        &[], // Transitive deps don't inherit workspace members.
+        packages,
+        seen,
+        depth + 1,
+    )?;
+
+    for pkg in packages.iter().skip(before_count) {
+        added.push(pkg.name.clone());
+    }
+
+    Ok(added)
+}
+
+/// Resolve all locked environment records from a manifest.
+fn resolve_locked_environments(
+    manifest: &WorkspaceManifest,
+    packages: &[LockedPackage],
+) -> BTreeMap<String, LockedEnvironment> {
+    let mut locked_envs = BTreeMap::new();
+
+    for (name, env) in &manifest.environments {
+        let package_refs: Vec<String> = packages
+            .iter()
+            .map(|p| format!("{}@{}", p.name, p.version))
+            .collect();
+
+        locked_envs.insert(
+            name.clone(),
+            LockedEnvironment {
+                compiler: env.compiler.clone(),
+                sdk: env.sdk.clone(),
+                target: env.target.clone(),
+                preferred_backend: env.preferred_backend,
+                packages: package_refs,
+            },
+        );
+    }
+
+    locked_envs
+}
+
+/// Deterministically resolve all dependencies declared in a workspace session
+/// into a complete `WorkspaceLockfile`.
+///
+/// This is the main resolver entry point. Every run with the same inputs will
+/// produce byte-identical output.
+pub fn resolve_dependencies(session: &WorkspaceSession) -> Result<WorkspaceLockfile, String> {
+    let manifest = match session.manifest.as_ref() {
+        Some(m) => m,
+        None => {
+            // No manifest means no dependencies — produce a minimal lockfile.
+            return Ok(WorkspaceLockfile {
+                format_version: LOCKFILE_FORMAT_VERSION,
+                workspace: LockedWorkspace {
+                    name: session.layout.project_name.clone(),
+                    version: "0.0.0".to_string(),
+                },
+                packages: Vec::new(),
+                environments: BTreeMap::new(),
+            });
+        }
+    };
+
+    let root = &session.layout.root;
+    let packages = resolve_dependency_tables(root, manifest, &session.members)?;
+    let environments = resolve_locked_environments(manifest, &packages);
+
+    Ok(WorkspaceLockfile {
+        format_version: LOCKFILE_FORMAT_VERSION,
+        workspace: LockedWorkspace {
+            name: manifest.project.name.clone(),
+            version: manifest.project.version.clone(),
+        },
+        packages,
+        environments,
+    })
+}
+
+/// Check whether an existing lockfile is still fresh relative to the current
+/// workspace manifest declarations.
+///
+/// A lockfile is fresh when every dependency in the manifest has a corresponding
+/// locked package and there are no extra locked packages.
+pub fn is_lockfile_fresh(
+    manifest: &WorkspaceManifest,
+    lockfile: &WorkspaceLockfile,
+) -> bool {
+    let mut expected_names = BTreeSet::new();
+    for name in manifest.dependencies.keys() {
+        expected_names.insert(name.clone());
+    }
+    for name in manifest.dev_dependencies.keys() {
+        expected_names.insert(name.clone());
+    }
+    for name in manifest.build_dependencies.keys() {
+        expected_names.insert(name.clone());
+    }
+
+    let locked_names: BTreeSet<String> = lockfile
+        .packages
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+
+    // Check workspace identity.
+    if lockfile.workspace.name != manifest.project.name
+        || lockfile.workspace.version != manifest.project.version
+    {
+        return false;
+    }
+
+    expected_names == locked_names
+}
+
+/// Generate a new lockfile or return the existing one if it is still fresh.
+///
+/// When the lockfile is regenerated it is written to disk at the default
+/// `agam.lock` path inside the workspace root.
+pub fn generate_or_refresh_lockfile(
+    session: &WorkspaceSession,
+) -> Result<WorkspaceLockfile, String> {
+    let lockfile_path = default_lockfile_path(&session.layout.root);
+
+    // Try to read an existing lockfile.
+    if let Ok(existing) = read_lockfile_from_path(&lockfile_path) {
+        if let Some(manifest) = session.manifest.as_ref() {
+            if is_lockfile_fresh(manifest, &existing) {
+                return Ok(existing);
+            }
+        }
+    }
+
+    // Re-resolve from scratch.
+    let lockfile = resolve_dependencies(session)?;
+    write_lockfile_to_path(&lockfile_path, &lockfile)?;
+    Ok(lockfile)
+}
+
+/// Produce human-readable diagnostics about lockfile freshness.
+///
+/// Returns an empty list when the lockfile perfectly matches the manifest.
+pub fn lockfile_diagnostics(
+    manifest: &WorkspaceManifest,
+    lockfile: &WorkspaceLockfile,
+) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+
+    let mut expected_names = BTreeSet::new();
+    for name in manifest.dependencies.keys() {
+        expected_names.insert(name.clone());
+    }
+    for name in manifest.dev_dependencies.keys() {
+        expected_names.insert(name.clone());
+    }
+    for name in manifest.build_dependencies.keys() {
+        expected_names.insert(name.clone());
+    }
+
+    let locked_names: BTreeSet<String> = lockfile
+        .packages
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+
+    for name in expected_names.difference(&locked_names) {
+        diagnostics.push(format!("missing locked package: `{name}`"));
+    }
+    for name in locked_names.difference(&expected_names) {
+        diagnostics.push(format!("extra locked package: `{name}` (not in manifest)"));
+    }
+
+    if lockfile.workspace.name != manifest.project.name {
+        diagnostics.push(format!(
+            "lockfile workspace name `{}` does not match manifest `{}`",
+            lockfile.workspace.name, manifest.project.name
+        ));
+    }
+    if lockfile.workspace.version != manifest.project.version {
+        diagnostics.push(format!(
+            "lockfile workspace version `{}` does not match manifest `{}`",
+            lockfile.workspace.version, manifest.project.version
+        ));
+    }
+
+    diagnostics.sort();
+    diagnostics
+}
+
+/// Compare the content hashes of path-based locked packages against their
+/// current live filesystem state.
+///
+/// Returns a list of `(package_name, lockfile_hash, live_hash)` triples for
+/// every path dependency whose content hash has drifted since the lockfile
+/// was generated. An empty result means all path deps are consistent.
+pub fn lockfile_content_drift(
+    root: &Path,
+    lockfile: &WorkspaceLockfile,
+) -> Vec<(String, String, String)> {
+    let mut drifted = Vec::new();
+
+    for pkg in &lockfile.packages {
+        if pkg.source.kind != DependencySourceKind::Path.label()
+            && pkg.source.kind != DependencySourceKind::Workspace.label()
+        {
+            continue;
+        }
+
+        let dep_path = root.join(&pkg.source.location);
+        let live_hash = if dep_path.is_dir() {
+            match content_hash_directory(&dep_path) {
+                Ok(h) => h,
+                Err(_) => continue,
+            }
+        } else if dep_path.is_file() {
+            match std::fs::read(&dep_path) {
+                Ok(bytes) => agam_runtime::cache::hash_bytes(&bytes),
+                Err(_) => continue,
+            }
+        } else {
+            continue;
+        };
+
+        if live_hash != pkg.content_hash {
+            drifted.push((
+                pkg.name.clone(),
+                pkg.content_hash.clone(),
+                live_hash,
+            ));
+        }
+    }
+
+    drifted
 }
 
 #[cfg(test)]
@@ -1932,5 +2618,435 @@ entry = "src/main.agam"
         assert!(expanded.contains(&member_test));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 17B — Deterministic Resolver and Lockfile Tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn resolves_empty_dependencies_to_empty_lockfile() {
+        let dir = temp_dir("resolve_empty");
+        let entry = dir.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::write(&entry, sample_source()).expect("write entry");
+        write_workspace_manifest_to_path(
+            &default_manifest_path(&dir),
+            &scaffold_workspace_manifest("empty-deps"),
+        )
+        .expect("write manifest");
+
+        let session =
+            resolve_workspace_session(Some(dir.clone())).expect("resolve workspace session");
+        let lockfile = resolve_dependencies(&session).expect("resolve dependencies");
+
+        assert_eq!(lockfile.format_version, LOCKFILE_FORMAT_VERSION);
+        assert_eq!(lockfile.workspace.name, "empty-deps");
+        assert!(lockfile.packages.is_empty());
+        assert!(lockfile.environments.is_empty());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolves_path_dependency_with_content_hash() {
+        let dir = temp_dir("resolve_path_dep");
+        let entry = dir.join("src").join("main.agam");
+        let lib_dir = dir.join("libs").join("core");
+        let lib_file = lib_dir.join("lib.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::create_dir_all(&lib_dir).expect("create lib dir");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(&lib_file, "fn helper() -> i32:\n    return 42\n").expect("write lib");
+
+        let mut manifest = scaffold_workspace_manifest("path-dep-project");
+        manifest.dependencies.insert(
+            "core".into(),
+            DependencySpec {
+                path: Some("libs/core".into()),
+                version: Some("0.1.0".into()),
+                ..DependencySpec::default()
+            },
+        );
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &manifest)
+            .expect("write manifest");
+
+        let session =
+            resolve_workspace_session(Some(dir.clone())).expect("resolve workspace session");
+        let lockfile = resolve_dependencies(&session).expect("resolve dependencies");
+
+        assert_eq!(lockfile.packages.len(), 1);
+        let locked = &lockfile.packages[0];
+        assert_eq!(locked.name, "core");
+        assert_eq!(locked.version, "0.1.0");
+        assert_eq!(locked.source.kind, "path");
+        assert_eq!(locked.source.location, "libs/core");
+        assert!(!locked.content_hash.is_empty());
+
+        // Running again should produce the same hash.
+        let lockfile2 = resolve_dependencies(&session).expect("resolve dependencies again");
+        assert_eq!(lockfile.packages[0].content_hash, lockfile2.packages[0].content_hash);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolves_git_dependency_records_url_and_ref() {
+        let dir = temp_dir("resolve_git_dep");
+        let entry = dir.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::write(&entry, sample_source()).expect("write entry");
+
+        let mut manifest = scaffold_workspace_manifest("git-dep-project");
+        manifest.dependencies.insert(
+            "tensor-ops".into(),
+            DependencySpec {
+                git: Some("https://github.com/agam-lang/tensor-ops".into()),
+                rev: Some("abc123".into()),
+                ..DependencySpec::default()
+            },
+        );
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &manifest)
+            .expect("write manifest");
+
+        let session =
+            resolve_workspace_session(Some(dir.clone())).expect("resolve workspace session");
+        let lockfile = resolve_dependencies(&session).expect("resolve dependencies");
+
+        assert_eq!(lockfile.packages.len(), 1);
+        let locked = &lockfile.packages[0];
+        assert_eq!(locked.name, "tensor-ops");
+        assert_eq!(locked.source.kind, "git");
+        assert_eq!(locked.source.location, "https://github.com/agam-lang/tensor-ops");
+        assert_eq!(locked.source.reference.as_deref(), Some("abc123"));
+        assert!(!locked.content_hash.is_empty());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolves_registry_dependency_placeholder() {
+        let dir = temp_dir("resolve_registry_dep");
+        let entry = dir.join("src").join("main.agam");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::write(&entry, sample_source()).expect("write entry");
+
+        let mut manifest = scaffold_workspace_manifest("registry-project");
+        manifest.dependencies.insert(
+            "math-lib".into(),
+            DependencySpec {
+                version: Some("^1.2".into()),
+                registry: Some("agam".into()),
+                ..DependencySpec::default()
+            },
+        );
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &manifest)
+            .expect("write manifest");
+
+        let session =
+            resolve_workspace_session(Some(dir.clone())).expect("resolve workspace session");
+        let lockfile = resolve_dependencies(&session).expect("resolve dependencies");
+
+        assert_eq!(lockfile.packages.len(), 1);
+        let locked = &lockfile.packages[0];
+        assert_eq!(locked.name, "math-lib");
+        assert_eq!(locked.version, "^1.2");
+        assert_eq!(locked.source.kind, "registry");
+        assert_eq!(locked.source.location, "agam");
+        assert_eq!(locked.source.reference.as_deref(), Some("math-lib@^1.2"));
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn lockfile_freshness_detects_added_dependency() {
+        let manifest = scaffold_workspace_manifest("fresh-test");
+        let lockfile = WorkspaceLockfile {
+            format_version: LOCKFILE_FORMAT_VERSION,
+            workspace: LockedWorkspace {
+                name: "fresh-test".into(),
+                version: "0.1.0".into(),
+            },
+            packages: Vec::new(),
+            environments: BTreeMap::new(),
+        };
+
+        // Empty deps → empty lockfile is fresh.
+        assert!(is_lockfile_fresh(&manifest, &lockfile));
+
+        // Add a dep to the manifest → lockfile becomes stale.
+        let mut manifest_with_dep = manifest.clone();
+        manifest_with_dep.dependencies.insert(
+            "new-dep".into(),
+            DependencySpec {
+                version: Some("1.0".into()),
+                ..DependencySpec::default()
+            },
+        );
+        assert!(!is_lockfile_fresh(&manifest_with_dep, &lockfile));
+    }
+
+    #[test]
+    fn lockfile_freshness_detects_removed_dependency() {
+        let mut manifest = scaffold_workspace_manifest("remove-test");
+        manifest.dependencies.insert(
+            "old-dep".into(),
+            DependencySpec {
+                version: Some("1.0".into()),
+                ..DependencySpec::default()
+            },
+        );
+
+        let lockfile = WorkspaceLockfile {
+            format_version: LOCKFILE_FORMAT_VERSION,
+            workspace: LockedWorkspace {
+                name: "remove-test".into(),
+                version: "0.1.0".into(),
+            },
+            packages: vec![
+                LockedPackage {
+                    name: "old-dep".into(),
+                    version: "1.0".into(),
+                    source: LockedPackageSource {
+                        kind: "registry".into(),
+                        location: "agam".into(),
+                        reference: None,
+                    },
+                    content_hash: "abc".into(),
+                    dependencies: Vec::new(),
+                },
+            ],
+            environments: BTreeMap::new(),
+        };
+
+        assert!(is_lockfile_fresh(&manifest, &lockfile));
+
+        // Remove the dep from the manifest → stale.
+        manifest.dependencies.clear();
+        assert!(!is_lockfile_fresh(&manifest, &lockfile));
+    }
+
+    #[test]
+    fn lockfile_freshness_accepts_matching_lockfile() {
+        let mut manifest = scaffold_workspace_manifest("match-test");
+        manifest.dependencies.insert(
+            "alpha".into(),
+            DependencySpec {
+                version: Some("1.0".into()),
+                ..DependencySpec::default()
+            },
+        );
+        manifest.dev_dependencies.insert(
+            "beta".into(),
+            DependencySpec {
+                git: Some("https://example.com/beta".into()),
+                ..DependencySpec::default()
+            },
+        );
+
+        let lockfile = WorkspaceLockfile {
+            format_version: LOCKFILE_FORMAT_VERSION,
+            workspace: LockedWorkspace {
+                name: "match-test".into(),
+                version: "0.1.0".into(),
+            },
+            packages: vec![
+                LockedPackage {
+                    name: "alpha".into(),
+                    version: "1.0".into(),
+                    source: LockedPackageSource {
+                        kind: "registry".into(),
+                        location: "agam".into(),
+                        reference: None,
+                    },
+                    content_hash: "hash_a".into(),
+                    dependencies: Vec::new(),
+                },
+                LockedPackage {
+                    name: "beta".into(),
+                    version: "0.0.0".into(),
+                    source: LockedPackageSource {
+                        kind: "git".into(),
+                        location: "https://example.com/beta".into(),
+                        reference: None,
+                    },
+                    content_hash: "hash_b".into(),
+                    dependencies: Vec::new(),
+                },
+            ],
+            environments: BTreeMap::new(),
+        };
+
+        assert!(is_lockfile_fresh(&manifest, &lockfile));
+    }
+
+    #[test]
+    fn deterministic_resolution_order() {
+        let dir = temp_dir("deterministic_order");
+        let entry = dir.join("src").join("main.agam");
+        let lib_z = dir.join("libs").join("zeta");
+        let lib_a = dir.join("libs").join("alpha");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::create_dir_all(&lib_z).expect("create zeta");
+        fs::create_dir_all(&lib_a).expect("create alpha");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(lib_z.join("lib.agam"), "fn z() -> i32:\n    return 0\n").expect("write zeta");
+        fs::write(lib_a.join("lib.agam"), "fn a() -> i32:\n    return 1\n").expect("write alpha");
+
+        let mut manifest = scaffold_workspace_manifest("order-test");
+        // Insert in reverse alphabetical order — resolver should still sort.
+        manifest.dependencies.insert(
+            "zeta".into(),
+            DependencySpec {
+                path: Some("libs/zeta".into()),
+                ..DependencySpec::default()
+            },
+        );
+        manifest.dependencies.insert(
+            "alpha".into(),
+            DependencySpec {
+                path: Some("libs/alpha".into()),
+                ..DependencySpec::default()
+            },
+        );
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &manifest)
+            .expect("write manifest");
+
+        let session =
+            resolve_workspace_session(Some(dir.clone())).expect("resolve workspace session");
+
+        let lockfile1 = resolve_dependencies(&session).expect("resolve first");
+        let lockfile2 = resolve_dependencies(&session).expect("resolve second");
+
+        // Both runs must produce byte-identical package order.
+        assert_eq!(lockfile1.packages.len(), 2);
+        assert_eq!(lockfile1.packages[0].name, "alpha");
+        assert_eq!(lockfile1.packages[1].name, "zeta");
+        assert_eq!(lockfile1, lockfile2);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn content_hash_directory_is_deterministic() {
+        let dir = temp_dir("content_hash_det");
+        let sub = dir.join("pkg");
+        fs::create_dir_all(&sub).expect("create pkg dir");
+        fs::write(sub.join("b.agam"), "fn b() -> i32:\n    return 2\n").expect("write b");
+        fs::write(sub.join("a.agam"), "fn a() -> i32:\n    return 1\n").expect("write a");
+
+        let hash1 = content_hash_directory(&sub).expect("hash first");
+        let hash2 = content_hash_directory(&sub).expect("hash second");
+
+        assert_eq!(hash1, hash2);
+        assert!(!hash1.is_empty());
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn resolves_transitive_path_dependencies() {
+        let dir = temp_dir("transitive_deps");
+        let entry = dir.join("src").join("main.agam");
+        let lib_a = dir.join("libs").join("alpha");
+        let lib_b = lib_a.join("beta"); // Beta is inside Alpha's workspace
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::create_dir_all(lib_a.join("src")).expect("create alpha src");
+        fs::create_dir_all(&lib_b).expect("create beta");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(lib_a.join("src").join("main.agam"), "fn a() -> i32:\n    return 1\n")
+            .expect("write alpha source");
+        fs::write(lib_b.join("lib.agam"), "fn b() -> i32:\n    return 2\n")
+            .expect("write beta source");
+
+        // Root depends on alpha.
+        let mut root_manifest = scaffold_workspace_manifest("transitive-root");
+        root_manifest.dependencies.insert(
+            "alpha".into(),
+            DependencySpec {
+                path: Some("libs/alpha".into()),
+                ..DependencySpec::default()
+            },
+        );
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &root_manifest)
+            .expect("write root manifest");
+
+        // Alpha's manifest declares a dependency on beta (inside its own root).
+        let mut alpha_manifest = scaffold_workspace_manifest("alpha");
+        alpha_manifest.dependencies.insert(
+            "beta".into(),
+            DependencySpec {
+                path: Some("beta".into()),
+                ..DependencySpec::default()
+            },
+        );
+        write_workspace_manifest_to_path(&default_manifest_path(&lib_a), &alpha_manifest)
+            .expect("write alpha manifest");
+
+        let session =
+            resolve_workspace_session(Some(dir.clone())).expect("resolve workspace session");
+        let lockfile = resolve_dependencies(&session).expect("resolve dependencies");
+
+        // Should include both alpha and beta (transitive).
+        assert_eq!(lockfile.packages.len(), 2);
+        let names: Vec<&str> = lockfile.packages.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains(&"alpha"), "should contain alpha: {:?}", names);
+        assert!(names.contains(&"beta"), "should contain beta: {:?}", names);
+
+        // Alpha should list beta as a dependency.
+        let alpha_pkg = lockfile.packages.iter().find(|p| p.name == "alpha").unwrap();
+        assert!(
+            alpha_pkg.dependencies.iter().any(|d| d.starts_with("beta@")),
+            "alpha should list beta as dep: {:?}",
+            alpha_pkg.dependencies
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn lockfile_content_drift_detects_modified_path_dep() {
+        let dir = temp_dir("drift_detection");
+        let entry = dir.join("src").join("main.agam");
+        let lib_dir = dir.join("libs").join("core");
+        fs::create_dir_all(entry.parent().expect("entry parent")).expect("create src");
+        fs::create_dir_all(&lib_dir).expect("create lib dir");
+        fs::write(&entry, sample_source()).expect("write entry");
+        fs::write(lib_dir.join("lib.agam"), "fn core() -> i32:\n    return 1\n")
+            .expect("write core lib");
+
+        let mut manifest = scaffold_workspace_manifest("drift-project");
+        manifest.dependencies.insert(
+            "core".into(),
+            DependencySpec {
+                path: Some("libs/core".into()),
+                ..DependencySpec::default()
+            },
+        );
+        write_workspace_manifest_to_path(&default_manifest_path(&dir), &manifest)
+            .expect("write manifest");
+
+        let session =
+            resolve_workspace_session(Some(dir.clone())).expect("resolve workspace session");
+        let lockfile = resolve_dependencies(&session).expect("resolve dependencies");
+
+        // No drift initially.
+        let drift = lockfile_content_drift(&dir, &lockfile);
+        assert!(drift.is_empty(), "no drift expected initially");
+
+        // Modify the path dep.
+        fs::write(
+            lib_dir.join("lib.agam"),
+            "fn core() -> i32:\n    return 999\n",
+        )
+        .expect("modify core lib");
+
+        // Now there should be drift.
+        let drift = lockfile_content_drift(&dir, &lockfile);
+        assert_eq!(drift.len(), 1);
+        assert_eq!(drift[0].0, "core");
+        assert_ne!(drift[0].1, drift[0].2); // lockfile hash != live hash
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

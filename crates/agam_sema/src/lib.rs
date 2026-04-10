@@ -26,15 +26,15 @@
 //! 10. **Const Evaluation** (`consteval`) — compile-time expression evaluation
 //!     for `const` declarations, array sizes, and contract assertions.
 
-pub mod symbol;
-pub mod types;
-pub mod scope;
-pub mod resolver;
-pub mod infer;
 pub mod checker;
-pub mod traits;
-pub mod ownership;
-pub mod lifetime;
-pub mod exhaustive;
 pub mod consteval;
 pub mod effects;
+pub mod exhaustive;
+pub mod infer;
+pub mod lifetime;
+pub mod ownership;
+pub mod resolver;
+pub mod scope;
+pub mod symbol;
+pub mod traits;
+pub mod types;

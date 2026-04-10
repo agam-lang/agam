@@ -49,7 +49,9 @@ impl<'src> Cursor<'src> {
 
     /// Peek at the next n characters as a string slice.
     pub fn peek_str(&self, n: usize) -> &'src str {
-        let end = self.rest.char_indices()
+        let end = self
+            .rest
+            .char_indices()
             .nth(n)
             .map(|(i, _)| i)
             .unwrap_or(self.rest.len());

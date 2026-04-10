@@ -46,8 +46,11 @@ impl Stats {
         let rank = p / 100.0 * (n - 1) as f64;
         let lo = rank.floor() as usize;
         let hi = rank.ceil() as usize;
-        if lo == hi { data[lo] }
-        else { data[lo] + (rank - lo as f64) * (data[hi] - data[lo]) }
+        if lo == hi {
+            data[lo]
+        } else {
+            data[lo] + (rank - lo as f64) * (data[hi] - data[lo])
+        }
     }
 
     pub fn min(data: &[f64]) -> f64 {
@@ -63,7 +66,11 @@ impl Stats {
         assert_eq!(x.len(), y.len());
         let mx = Self::mean(x);
         let my = Self::mean(y);
-        x.iter().zip(y).map(|(a, b)| (a - mx) * (b - my)).sum::<f64>() / x.len() as f64
+        x.iter()
+            .zip(y)
+            .map(|(a, b)| (a - mx) * (b - my))
+            .sum::<f64>()
+            / x.len() as f64
     }
 
     /// Pearson correlation coefficient.
@@ -161,12 +168,18 @@ mod tests {
 
     #[test]
     fn test_variance() {
-        assert_eq!(Stats::variance(&[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]), 4.0);
+        assert_eq!(
+            Stats::variance(&[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]),
+            4.0
+        );
     }
 
     #[test]
     fn test_std_dev() {
-        assert_eq!(Stats::std_dev(&[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]), 2.0);
+        assert_eq!(
+            Stats::std_dev(&[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]),
+            2.0
+        );
     }
 
     #[test]
@@ -181,7 +194,10 @@ mod tests {
 
     #[test]
     fn test_percentile() {
-        assert_eq!(Stats::percentile(&mut [10.0, 20.0, 30.0, 40.0, 50.0], 50.0), 30.0);
+        assert_eq!(
+            Stats::percentile(&mut [10.0, 20.0, 30.0, 40.0, 50.0], 50.0),
+            30.0
+        );
     }
 
     #[test]

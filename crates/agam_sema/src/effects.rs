@@ -87,7 +87,10 @@ impl EffectRegistry {
 
     /// Look up handlers for an effect.
     pub fn get_handlers(&self, effect_name: &str) -> &[HandlerDef] {
-        self.handlers.get(effect_name).map(|v| v.as_slice()).unwrap_or(&[])
+        self.handlers
+            .get(effect_name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     /// Check if an operation belongs to a registered effect.
@@ -165,7 +168,9 @@ pub enum CpsNodeKind {
 
 impl CpsNode {
     pub fn pure_val(name: &str) -> Self {
-        CpsNode { kind: CpsNodeKind::Pure(name.to_string()) }
+        CpsNode {
+            kind: CpsNodeKind::Pure(name.to_string()),
+        }
     }
 
     pub fn perform(effect: &str, op: &str, args: Vec<String>, cont: CpsNode) -> Self {
@@ -205,9 +210,7 @@ impl CpsNode {
             CpsNodeKind::Perform { .. } => true,
             CpsNodeKind::Handle { body, .. } => body.is_effectful(),
             CpsNodeKind::Resume { continuation, .. } => continuation.is_effectful(),
-            CpsNodeKind::Bind { value, body, .. } => {
-                value.is_effectful() || body.is_effectful()
-            }
+            CpsNodeKind::Bind { value, body, .. } => value.is_effectful() || body.is_effectful(),
         }
     }
 }
@@ -220,8 +223,16 @@ mod tests {
         EffectDef {
             name: "IO".to_string(),
             operations: vec![
-                EffectOpDef { name: "print".to_string(), param_count: 1, has_return: false },
-                EffectOpDef { name: "read".to_string(), param_count: 0, has_return: true },
+                EffectOpDef {
+                    name: "print".to_string(),
+                    param_count: 1,
+                    has_return: false,
+                },
+                EffectOpDef {
+                    name: "read".to_string(),
+                    param_count: 0,
+                    has_return: true,
+                },
             ],
         }
     }
@@ -230,8 +241,16 @@ mod tests {
         EffectDef {
             name: "State".to_string(),
             operations: vec![
-                EffectOpDef { name: "get".to_string(), param_count: 0, has_return: true },
-                EffectOpDef { name: "set".to_string(), param_count: 1, has_return: false },
+                EffectOpDef {
+                    name: "get".to_string(),
+                    param_count: 0,
+                    has_return: true,
+                },
+                EffectOpDef {
+                    name: "set".to_string(),
+                    param_count: 1,
+                    has_return: false,
+                },
             ],
         }
     }
@@ -252,8 +271,14 @@ mod tests {
             name: "stdio".to_string(),
             effect_name: "IO".to_string(),
             clauses: vec![
-                HandlerClauseDef { op_name: "print".to_string(), param_names: vec!["msg".to_string()] },
-                HandlerClauseDef { op_name: "read".to_string(), param_names: vec![] },
+                HandlerClauseDef {
+                    op_name: "print".to_string(),
+                    param_names: vec!["msg".to_string()],
+                },
+                HandlerClauseDef {
+                    op_name: "read".to_string(),
+                    param_names: vec![],
+                },
             ],
         });
         let handlers = reg.get_handlers("IO");
@@ -278,8 +303,14 @@ mod tests {
             name: "stdio".to_string(),
             effect_name: "IO".to_string(),
             clauses: vec![
-                HandlerClauseDef { op_name: "print".to_string(), param_names: vec![] },
-                HandlerClauseDef { op_name: "read".to_string(), param_names: vec![] },
+                HandlerClauseDef {
+                    op_name: "print".to_string(),
+                    param_names: vec![],
+                },
+                HandlerClauseDef {
+                    op_name: "read".to_string(),
+                    param_names: vec![],
+                },
             ],
         };
         let errors = reg.validate_handler(&handler);
@@ -294,7 +325,10 @@ mod tests {
             name: "partial".to_string(),
             effect_name: "IO".to_string(),
             clauses: vec![
-                HandlerClauseDef { op_name: "print".to_string(), param_names: vec![] },
+                HandlerClauseDef {
+                    op_name: "print".to_string(),
+                    param_names: vec![],
+                },
                 // missing "read"
             ],
         };
@@ -336,7 +370,8 @@ mod tests {
     #[test]
     fn test_cps_perform() {
         let node = CpsNode::perform(
-            "IO", "print",
+            "IO",
+            "print",
             vec!["hello".to_string()],
             CpsNode::pure_val("unit"),
         );
@@ -351,7 +386,12 @@ mod tests {
             CpsNode::perform("IO", "read", vec![], CpsNode::pure_val("x")),
             CpsNode::bind(
                 "y",
-                CpsNode::perform("IO", "print", vec!["x".to_string()], CpsNode::pure_val("unit")),
+                CpsNode::perform(
+                    "IO",
+                    "print",
+                    vec!["x".to_string()],
+                    CpsNode::pure_val("unit"),
+                ),
                 CpsNode::pure_val("y"),
             ),
         );

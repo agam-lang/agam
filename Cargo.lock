@@ -67,6 +67,7 @@ dependencies = [
  "agam_test",
  "clap",
  "miette",
+ "serde",
  "serde_json",
 ]
 

@@ -55,7 +55,8 @@ pub fn run_file(path: &Path) -> Result<TestSummary, String> {
 }
 
 pub fn run_paths(paths: &[PathBuf]) -> Result<Vec<FileTestSummary>, String> {
-    paths.iter()
+    paths
+        .iter()
         .map(|path| {
             run_file(path).map(|summary| FileTestSummary {
                 path: path.clone(),
@@ -185,7 +186,10 @@ fn fails() -> bool:
         assert_eq!(summary.failed(), 1);
         assert_eq!(summary.results[0].case.name, "passes");
         assert!(summary.results[0].passed);
-        assert_eq!(summary.results[1].message.as_deref(), Some("returned false"));
+        assert_eq!(
+            summary.results[1].message.as_deref(),
+            Some("returned false")
+        );
     }
 
     #[test]
@@ -214,11 +218,8 @@ fn helper() -> bool:
         ));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let file = dir.join("smoke.agam");
-        std::fs::write(
-            &file,
-            "@test\nfn smoke() -> bool:\n    return true\n",
-        )
-        .expect("write test file");
+        std::fs::write(&file, "@test\nfn smoke() -> bool:\n    return true\n")
+            .expect("write test file");
 
         let summaries = run_paths(std::slice::from_ref(&file)).expect("run test paths");
 
@@ -229,4 +230,3 @@ fn helper() -> bool:
         let _ = std::fs::remove_dir_all(dir);
     }
 }
-

@@ -56,10 +56,7 @@ pub enum TypeExprKind {
     Named(Path),
 
     /// Generic type: `Vec<T>`, `HashMap<K, V>`
-    Generic {
-        base: Path,
-        args: Vec<TypeExpr>,
-    },
+    Generic { base: Path, args: Vec<TypeExpr> },
 
     /// Array type: `[T; N]`
     Array {
@@ -74,16 +71,10 @@ pub enum TypeExprKind {
     Tuple(Vec<TypeExpr>),
 
     /// Reference type: `&T` or `&mut T`
-    Reference {
-        mutable: bool,
-        inner: Box<TypeExpr>,
-    },
+    Reference { mutable: bool, inner: Box<TypeExpr> },
 
     /// Pointer type: `*T` or `*mut T`
-    Pointer {
-        mutable: bool,
-        inner: Box<TypeExpr>,
-    },
+    Pointer { mutable: bool, inner: Box<TypeExpr> },
 
     /// Function type: `fn(A, B) -> C`
     Function {
@@ -131,9 +122,19 @@ pub enum TypeExprKind {
 pub fn is_primitive_type(name: &str) -> bool {
     matches!(
         name,
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
-            | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
-            | "f32" | "f64"
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "f32"
+            | "f64"
             | "bool"
             | "char"
             | "str"
@@ -143,4 +144,3 @@ pub fn is_primitive_type(name: &str) -> bool {
             | "Any"
     )
 }
-

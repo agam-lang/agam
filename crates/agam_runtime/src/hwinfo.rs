@@ -42,39 +42,63 @@ impl SimdCapabilities {
         #[cfg(target_arch = "aarch64")]
         {
             Self {
-                sse2: false, sse4_1: false, sse4_2: false,
-                avx: false, avx2: false, avx512f: false, fma: false,
+                sse2: false,
+                sse4_1: false,
+                sse4_2: false,
+                avx: false,
+                avx2: false,
+                avx512f: false,
+                fma: false,
                 neon: true, // NEON is mandatory on AArch64
             }
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
             Self {
-                sse2: false, sse4_1: false, sse4_2: false,
-                avx: false, avx2: false, avx512f: false,
-                fma: false, neon: false,
+                sse2: false,
+                sse4_1: false,
+                sse4_2: false,
+                avx: false,
+                avx2: false,
+                avx512f: false,
+                fma: false,
+                neon: false,
             }
         }
     }
 
     /// Best available SIMD width in bytes.
     pub fn best_simd_width(&self) -> usize {
-        if self.avx512f { 64 }
-        else if self.avx2 || self.avx { 32 }
-        else if self.sse2 { 16 }
-        else if self.neon { 16 }
-        else { 8 } // scalar fallback
+        if self.avx512f {
+            64
+        } else if self.avx2 || self.avx {
+            32
+        } else if self.sse2 {
+            16
+        } else if self.neon {
+            16
+        } else {
+            8
+        } // scalar fallback
     }
 
     /// Best SIMD tier name.
     pub fn best_tier(&self) -> SimdTier {
-        if self.avx512f { SimdTier::Avx512 }
-        else if self.avx2 { SimdTier::Avx2 }
-        else if self.avx { SimdTier::Avx }
-        else if self.sse4_2 { SimdTier::Sse42 }
-        else if self.sse2 { SimdTier::Sse2 }
-        else if self.neon { SimdTier::Neon }
-        else { SimdTier::Scalar }
+        if self.avx512f {
+            SimdTier::Avx512
+        } else if self.avx2 {
+            SimdTier::Avx2
+        } else if self.avx {
+            SimdTier::Avx
+        } else if self.sse4_2 {
+            SimdTier::Sse42
+        } else if self.sse2 {
+            SimdTier::Sse2
+        } else if self.neon {
+            SimdTier::Neon
+        } else {
+            SimdTier::Scalar
+        }
     }
 }
 
@@ -137,7 +161,10 @@ pub struct HardwareInfo {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Endianness { Little, Big }
+pub enum Endianness {
+    Little,
+    Big,
+}
 
 impl HardwareInfo {
     /// Detect the current machine's hardware topology.
@@ -149,9 +176,21 @@ impl HardwareInfo {
         let physical_cores = (logical_cores / 2).max(1);
 
         // Conservative defaults for cache — actual CPUID parsing can be added later
-        let l1_data = CacheInfo { size: 32 * 1024, line_size: 64, associativity: 8 };
-        let l2 = CacheInfo { size: 256 * 1024, line_size: 64, associativity: 4 };
-        let l3 = CacheInfo { size: 8 * 1024 * 1024, line_size: 64, associativity: 16 };
+        let l1_data = CacheInfo {
+            size: 32 * 1024,
+            line_size: 64,
+            associativity: 8,
+        };
+        let l2 = CacheInfo {
+            size: 256 * 1024,
+            line_size: 64,
+            associativity: 4,
+        };
+        let l3 = CacheInfo {
+            size: 8 * 1024 * 1024,
+            line_size: 64,
+            associativity: 16,
+        };
 
         let endianness = if cfg!(target_endian = "little") {
             Endianness::Little

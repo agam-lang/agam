@@ -15,10 +15,7 @@ pub struct SymbolId(pub u32);
 #[derive(Debug, Clone, PartialEq)]
 pub enum SymbolKind {
     /// A local or global variable (`let x`, `var y`, or implicit in dynamic mode).
-    Variable {
-        mutable: bool,
-        ty: TypeId,
-    },
+    Variable { mutable: bool, ty: TypeId },
     /// A function declaration.
     Function {
         params: Vec<TypeId>,
@@ -26,31 +23,19 @@ pub enum SymbolKind {
         is_async: bool,
     },
     /// A struct type declaration.
-    Struct {
-        fields: Vec<(String, TypeId)>,
-    },
+    Struct { fields: Vec<(String, TypeId)> },
     /// An enum type declaration.
-    Enum {
-        variants: Vec<String>,
-    },
+    Enum { variants: Vec<String> },
     /// A trait declaration.
-    Trait {
-        methods: Vec<String>,
-    },
+    Trait { methods: Vec<String> },
     /// A module.
     Module,
     /// A type alias.
-    TypeAlias {
-        target: TypeId,
-    },
+    TypeAlias { target: TypeId },
     /// A constant value.
-    Constant {
-        ty: TypeId,
-    },
+    Constant { ty: TypeId },
     /// A generic type parameter.
-    TypeParam {
-        bounds: Vec<TypeId>,
-    },
+    TypeParam { bounds: Vec<TypeId> },
 }
 
 /// Unique identifier for an internal resolved type.

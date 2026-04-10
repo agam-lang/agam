@@ -5,8 +5,8 @@
 
 use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 use crate::span::SourceFile;
-use std::collections::HashMap;
 use crate::span::SourceId;
+use std::collections::HashMap;
 
 /// Collects diagnostics and renders them for the user.
 pub struct DiagnosticEmitter {
@@ -64,7 +64,10 @@ impl DiagnosticEmitter {
             .map(|c| format!("[{}]", c))
             .unwrap_or_default();
 
-        eprintln!("{}{}\x1b[1;37m: {}\x1b[0m", level_str, code_str, diag.message);
+        eprintln!(
+            "{}{}\x1b[1;37m: {}\x1b[0m",
+            level_str, code_str, diag.message
+        );
 
         // Render each label
         for label in &diag.labels {
@@ -100,7 +103,11 @@ impl DiagnosticEmitter {
                 let span_len = (label.span.end - label.span.start).max(1) as usize;
                 let padding = " ".repeat(col);
                 let underline_char = if label.is_primary { '^' } else { '-' };
-                let color = if label.is_primary { "\x1b[1;31m" } else { "\x1b[1;34m" };
+                let color = if label.is_primary {
+                    "\x1b[1;31m"
+                } else {
+                    "\x1b[1;34m"
+                };
                 let underline = std::iter::repeat(underline_char)
                     .take(span_len.min(line_text.len().saturating_sub(col)))
                     .collect::<String>();
@@ -212,11 +219,10 @@ mod tests {
             "let x: i32 = \"hello\"\n".into(),
         ));
 
-        let diag = Diagnostic::error("E0001", "mismatched types")
-            .with_label(Label::primary(
-                Span::new(SourceId(0), 14, 21),
-                "expected `i32`, found `str`",
-            ));
+        let diag = Diagnostic::error("E0001", "mismatched types").with_label(Label::primary(
+            Span::new(SourceId(0), 14, 21),
+            "expected `i32`, found `str`",
+        ));
 
         emitter.emit(diag);
         assert!(emitter.has_errors());

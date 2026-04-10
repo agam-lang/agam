@@ -55,7 +55,9 @@ impl SourceFile {
             .get(line + 1)
             .copied()
             .unwrap_or(self.source.len());
-        &self.source[start..end].trim_end_matches('\n').trim_end_matches('\r')
+        &self.source[start..end]
+            .trim_end_matches('\n')
+            .trim_end_matches('\r')
     }
 
     /// Total number of lines.
@@ -82,12 +84,20 @@ impl Span {
     /// Create a new span.
     pub fn new(source_id: SourceId, start: u32, end: u32) -> Self {
         debug_assert!(start <= end, "Span start must be <= end");
-        Self { source_id, start, end }
+        Self {
+            source_id,
+            start,
+            end,
+        }
     }
 
     /// Create a zero-length span at a specific offset (for pointing at a position).
     pub fn point(source_id: SourceId, offset: u32) -> Self {
-        Self { source_id, start: offset, end: offset }
+        Self {
+            source_id,
+            start: offset,
+            end: offset,
+        }
     }
 
     /// Merge two spans into one that covers both.
@@ -130,7 +140,11 @@ impl Span {
 
 impl fmt::Debug for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Span({}..{} in {:?})", self.start, self.end, self.source_id)
+        write!(
+            f,
+            "Span({}..{} in {:?})",
+            self.start, self.end, self.source_id
+        )
     }
 }
 

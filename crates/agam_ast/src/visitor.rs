@@ -3,12 +3,12 @@
 //! Implements the Visitor pattern so that compiler passes (type checking,
 //! lowering, optimization) can traverse the tree without matching every node.
 
-use crate::expr::*;
-use crate::stmt::*;
-use crate::decl::*;
-use crate::types::*;
-use crate::pattern::*;
 use crate::Module;
+use crate::decl::*;
+use crate::expr::*;
+use crate::pattern::*;
+use crate::stmt::*;
+use crate::types::*;
 
 /// A visitor that walks the AST and can return a result for each node type.
 ///
@@ -102,7 +102,9 @@ pub trait Visitor {
                     self.visit_expr(e);
                 }
             }
-            StmtKind::While { condition, body, .. } => {
+            StmtKind::While {
+                condition, body, ..
+            } => {
                 self.visit_expr(condition);
                 self.visit_block(body);
             }
@@ -113,7 +115,11 @@ pub trait Visitor {
             StmtKind::Loop { body } => {
                 self.visit_block(body);
             }
-            StmtKind::If { condition, then_branch, .. } => {
+            StmtKind::If {
+                condition,
+                then_branch,
+                ..
+            } => {
                 self.visit_expr(condition);
                 self.visit_block(then_branch);
             }
@@ -157,7 +163,11 @@ pub trait Visitor {
             ExprKind::Block(block) => {
                 self.visit_block(block);
             }
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.visit_expr(condition);
                 self.visit_expr(then_branch);
                 if let Some(e) = else_branch {

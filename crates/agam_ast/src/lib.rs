@@ -10,13 +10,13 @@
 //! - [`TypeExpr`] — Type expressions (describe types)
 //! - [`Pattern`] — Patterns (destructure values)
 
-pub mod expr;
-pub mod stmt;
 pub mod decl;
-pub mod types;
+pub mod expr;
 pub mod pattern;
-pub mod visitor;
 pub mod pretty;
+pub mod stmt;
+pub mod types;
+pub mod visitor;
 
 use agam_errors::Span;
 
@@ -42,7 +42,10 @@ pub struct Ident {
 
 impl Ident {
     pub fn new(name: impl Into<String>, span: Span) -> Self {
-        Self { name: name.into(), span }
+        Self {
+            name: name.into(),
+            span,
+        }
     }
 }
 

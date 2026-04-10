@@ -14,7 +14,9 @@
 /// Solves dy/dt = f(t, y) from t0 to t_end with step size dt.
 /// Returns the trajectory as (time, state) pairs.
 pub fn rk4<F>(f: &F, y0: f64, t0: f64, t_end: f64, dt: f64) -> Vec<(f64, f64)>
-where F: Fn(f64, f64) -> f64 {
+where
+    F: Fn(f64, f64) -> f64,
+{
     let n = ((t_end - t0) / dt).ceil() as usize;
     let mut trajectory = Vec::with_capacity(n + 1);
     let mut t = t0;
@@ -36,7 +38,9 @@ where F: Fn(f64, f64) -> f64 {
 
 /// RK4 for systems of ODEs: dy/dt = f(t, y) where y is a vector.
 pub fn rk4_system<F>(f: &F, y0: &[f64], t0: f64, t_end: f64, dt: f64) -> Vec<(f64, Vec<f64>)>
-where F: Fn(f64, &[f64]) -> Vec<f64> {
+where
+    F: Fn(f64, &[f64]) -> Vec<f64>,
+{
     let dim = y0.len();
     let n = ((t_end - t0) / dt).ceil() as usize;
     let mut trajectory = Vec::with_capacity(n + 1);
@@ -74,12 +78,17 @@ pub fn gradient_descent<F, G>(
     max_iter: usize,
     tol: f64,
 ) -> Vec<f64>
-where F: Fn(&[f64]) -> f64, G: Fn(&[f64]) -> Vec<f64> {
+where
+    F: Fn(&[f64]) -> f64,
+    G: Fn(&[f64]) -> Vec<f64>,
+{
     let mut x = x0.to_vec();
     for _ in 0..max_iter {
         let g = grad_f(&x);
         let grad_norm: f64 = g.iter().map(|v| v * v).sum::<f64>().sqrt();
-        if grad_norm < tol { break; }
+        if grad_norm < tol {
+            break;
+        }
         for i in 0..x.len() {
             x[i] -= learning_rate * g[i];
         }
@@ -91,14 +100,10 @@ where F: Fn(&[f64]) -> f64, G: Fn(&[f64]) -> Vec<f64> {
 ///
 /// Best for training neural networks. Maintains per-parameter first and
 /// second moment estimates.
-pub fn adam<G>(
-    grad_f: &G,
-    x0: &[f64],
-    learning_rate: f64,
-    max_iter: usize,
-    tol: f64,
-) -> Vec<f64>
-where G: Fn(&[f64]) -> Vec<f64> {
+pub fn adam<G>(grad_f: &G, x0: &[f64], learning_rate: f64, max_iter: usize, tol: f64) -> Vec<f64>
+where
+    G: Fn(&[f64]) -> Vec<f64>,
+{
     let dim = x0.len();
     let mut x = x0.to_vec();
     let mut m = vec![0.0; dim]; // first moment
@@ -110,7 +115,9 @@ where G: Fn(&[f64]) -> Vec<f64> {
     for t in 1..=max_iter {
         let g = grad_f(&x);
         let grad_norm: f64 = g.iter().map(|v| v * v).sum::<f64>().sqrt();
-        if grad_norm < tol { break; }
+        if grad_norm < tol {
+            break;
+        }
 
         let t_f = t as f64;
         for i in 0..dim {
@@ -138,7 +145,11 @@ pub fn linear_regression(x: &[f64], y: &[f64]) -> (f64, f64, f64) {
     let b = (sum_y - a * sum_x) / n;
 
     // R² coefficient of determination
-    let ss_res: f64 = x.iter().zip(y).map(|(xi, yi)| (yi - (a * xi + b)).powi(2)).sum();
+    let ss_res: f64 = x
+        .iter()
+        .zip(y)
+        .map(|(xi, yi)| (yi - (a * xi + b)).powi(2))
+        .sum();
     let mean_y = sum_y / n;
     let ss_tot: f64 = y.iter().map(|yi| (yi - mean_y).powi(2)).sum();
     let r_sq = 1.0 - ss_res / ss_tot;
@@ -174,7 +185,9 @@ mod tests {
         let traj = rk4_system(
             &|_t, y| vec![y[1], -y[0]],
             &[1.0, 0.0],
-            0.0, std::f64::consts::PI, 0.001,
+            0.0,
+            std::f64::consts::PI,
+            0.001,
         );
         let y_final = &traj.last().unwrap().1;
         // cos(π) = -1
@@ -187,7 +200,9 @@ mod tests {
         let result = gradient_descent::<fn(&[f64]) -> f64, _>(
             &|x: &[f64]| vec![2.0 * (x[0] - 3.0)],
             &[0.0],
-            0.1, 1000, 1e-10,
+            0.1,
+            1000,
+            1e-10,
         );
         assert!((result[0] - 3.0).abs() < 1e-6);
     }
@@ -198,7 +213,9 @@ mod tests {
         let result = adam(
             &|x: &[f64]| vec![2.0 * (x[0] - 5.0)],
             &[0.0],
-            0.1, 5000, 1e-10,
+            0.1,
+            5000,
+            1e-10,
         );
         assert!((result[0] - 5.0).abs() < 0.01);
     }
@@ -209,7 +226,9 @@ mod tests {
         let result = adam(
             &|x: &[f64]| vec![2.0 * (x[0] - 1.0), 2.0 * (x[1] - 2.0)],
             &[0.0, 0.0],
-            0.1, 5000, 1e-10,
+            0.1,
+            5000,
+            1e-10,
         );
         assert!((result[0] - 1.0).abs() < 0.01);
         assert!((result[1] - 2.0).abs() < 0.01);

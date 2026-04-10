@@ -9,8 +9,8 @@
 //! 3. **Lifetime elision** — automatic lifetime assignment for common patterns.
 //! 4. **Dangling reference detection** — prevents returning refs to local values.
 
-use std::collections::HashMap;
 use agam_errors::Span;
+use std::collections::HashMap;
 
 /// A unique lifetime identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,12 +60,15 @@ impl LifetimeAnalyzer {
     pub fn new() -> Self {
         let static_lt = LifetimeId(0);
         let mut lifetimes = HashMap::new();
-        lifetimes.insert(static_lt, Lifetime {
-            id: static_lt,
-            name: "'static".into(),
-            start_depth: 0,
-            end_depth: u32::MAX,
-        });
+        lifetimes.insert(
+            static_lt,
+            Lifetime {
+                id: static_lt,
+                name: "'static".into(),
+                start_depth: 0,
+                end_depth: u32::MAX,
+            },
+        );
 
         Self {
             lifetimes,
@@ -80,12 +83,15 @@ impl LifetimeAnalyzer {
     pub fn fresh(&mut self, name: impl Into<String>, depth: u32) -> LifetimeId {
         let id = LifetimeId(self.next_id);
         self.next_id += 1;
-        self.lifetimes.insert(id, Lifetime {
+        self.lifetimes.insert(
             id,
-            name: name.into(),
-            start_depth: depth,
-            end_depth: depth,
-        });
+            Lifetime {
+                id,
+                name: name.into(),
+                start_depth: depth,
+                end_depth: depth,
+            },
+        );
         id
     }
 
@@ -100,7 +106,11 @@ impl LifetimeAnalyzer {
 
     /// Add a constraint: `longer` must outlive `shorter`.
     pub fn constrain(&mut self, longer: LifetimeId, shorter: LifetimeId, span: Span) {
-        self.constraints.push(LifetimeConstraint { longer, shorter, span });
+        self.constraints.push(LifetimeConstraint {
+            longer,
+            shorter,
+            span,
+        });
     }
 
     /// Check all constraints.
@@ -169,7 +179,9 @@ impl LifetimeAnalyzer {
 mod tests {
     use super::*;
 
-    fn dummy_span() -> Span { Span::dummy() }
+    fn dummy_span() -> Span {
+        Span::dummy()
+    }
 
     #[test]
     fn test_static_lifetime_outlives_everything() {
@@ -192,7 +204,11 @@ mod tests {
         analyzer.check();
 
         assert_eq!(analyzer.errors.len(), 1);
-        assert!(analyzer.errors[0].message.contains("does not live long enough"));
+        assert!(
+            analyzer.errors[0]
+                .message
+                .contains("does not live long enough")
+        );
     }
 
     #[test]

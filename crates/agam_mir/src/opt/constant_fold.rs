@@ -129,11 +129,8 @@ pub fn run(module: &mut MirModule) -> bool {
             } = &block.terminator
             {
                 if let Some(Constant::Bool(condition)) = value_consts.get(condition) {
-                    block.terminator = Terminator::Jump(if *condition {
-                        *then_block
-                    } else {
-                        *else_block
-                    });
+                    block.terminator =
+                        Terminator::Jump(if *condition { *then_block } else { *else_block });
                     changed = true;
                 }
             }
@@ -240,7 +237,10 @@ mod tests {
     use agam_hir::lower::HirLowering;
     use agam_lexer::Lexer;
 
-    use crate::{ir::{MirBinOp, Op, Terminator}, lower::MirLowering};
+    use crate::{
+        ir::{MirBinOp, Op, Terminator},
+        lower::MirLowering,
+    };
 
     use super::run;
 
@@ -274,8 +274,18 @@ mod tests {
         let mir = optimize_source("fn main(): let x = 5 * 10");
         let instructions = &mir.functions[0].blocks[0].instructions;
 
-        assert!(instructions.iter().any(|instr| matches!(instr.op, Op::ConstInt(50))));
-        assert!(!instructions.iter().any(|instr| matches!(instr.op, Op::BinOp { op: MirBinOp::Mul, .. })));
+        assert!(
+            instructions
+                .iter()
+                .any(|instr| matches!(instr.op, Op::ConstInt(50)))
+        );
+        assert!(!instructions.iter().any(|instr| matches!(
+            instr.op,
+            Op::BinOp {
+                op: MirBinOp::Mul,
+                ..
+            }
+        )));
     }
 
     #[test]
@@ -283,8 +293,16 @@ mod tests {
         let mir = optimize_source("fn main() { let x = 5 * 10; let y = x + 2; }");
         let instructions = &mir.functions[0].blocks[0].instructions;
 
-        assert!(instructions.iter().any(|instr| matches!(instr.op, Op::ConstInt(52))));
-        assert!(!instructions.iter().any(|instr| matches!(instr.op, Op::LoadLocal(_))));
+        assert!(
+            instructions
+                .iter()
+                .any(|instr| matches!(instr.op, Op::ConstInt(52)))
+        );
+        assert!(
+            !instructions
+                .iter()
+                .any(|instr| matches!(instr.op, Op::LoadLocal(_)))
+        );
     }
 
     #[test]

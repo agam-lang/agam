@@ -7,8 +7,8 @@ mod parser;
 pub use parser::Parser;
 
 use agam_ast::Module;
-use agam_lexer::Token;
 use agam_errors::span::SourceId;
+use agam_lexer::Token;
 
 /// Parse a token stream into an AST module.
 pub fn parse(tokens: Vec<Token>, source_id: SourceId) -> Result<Module, Vec<ParseError>> {

@@ -19,7 +19,6 @@ pub enum SyntaxMode {
     Advance,
 }
 
-
 /// The Agam lexer.
 pub struct Lexer<'src> {
     cursor: Cursor<'src>,
@@ -53,8 +52,9 @@ impl<'src> Lexer<'src> {
     fn detect_mode(&mut self) {
         let saved_pos = self.cursor.pos();
         // Skip BOM or initial whitespaces
-        self.cursor.eat_while(|c| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\u{FEFF}');
-        
+        self.cursor
+            .eat_while(|c| c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\u{FEFF}');
+
         if self.cursor.starts_with("@lang.base.dynamic") {
             self.mode = SyntaxMode::BaseDynamic;
         } else if self.cursor.starts_with("@lang.base") {
@@ -65,7 +65,7 @@ impl<'src> Lexer<'src> {
             // Default to BaseStatic if no annotation
             self.mode = SyntaxMode::BaseStatic;
         }
-        
+
         // Restore cursor; we'll parse the annotation as normal tokens (e.g. `@`, `lang`, `.`, `base`)
         self.cursor.reset_pos(saved_pos);
     }
@@ -82,7 +82,7 @@ impl<'src> Lexer<'src> {
 
         // Handle line starts for indentation tracking before skipping whitespace
         let is_line_start = self.cursor.pos() == 0 || self.cursor.peek_prev() == Some('\n');
-        
+
         let start_pos_before_ws = self.cursor.pos();
         self.skip_whitespace();
         let spaces = self.cursor.pos() - start_pos_before_ws;
@@ -92,39 +92,58 @@ impl<'src> Lexer<'src> {
             if self.mode == SyntaxMode::BaseStatic || self.mode == SyntaxMode::BaseDynamic {
                 while self.indent_stack.len() > 1 {
                     self.indent_stack.pop();
-                    self.pending.push_back(self.make_token(TokenKind::Dedent, self.cursor.pos(), ""));
+                    self.pending.push_back(self.make_token(
+                        TokenKind::Dedent,
+                        self.cursor.pos(),
+                        "",
+                    ));
                 }
             }
             self.eof_emitted = true;
             if let Some(tok) = self.pending.pop_front() {
-                self.pending.push_back(self.make_token(TokenKind::Eof, self.cursor.pos(), ""));
+                self.pending
+                    .push_back(self.make_token(TokenKind::Eof, self.cursor.pos(), ""));
                 return tok;
             }
             return self.make_token(TokenKind::Eof, self.cursor.pos(), "");
         }
 
         // If in base mode, handle indentation if we're at the start of a line and it's not empty
-        if (self.mode == SyntaxMode::BaseStatic || self.mode == SyntaxMode::BaseDynamic) && is_line_start {
+        if (self.mode == SyntaxMode::BaseStatic || self.mode == SyntaxMode::BaseDynamic)
+            && is_line_start
+        {
             if let Some(c) = self.cursor.peek() {
                 // Ignore indentation on empty lines or comments
-                if c != '\n' && c != '\r' && c != '#' && !(c == '/' && self.cursor.peek_second() == Some('/')) {
+                if c != '\n'
+                    && c != '\r'
+                    && c != '#'
+                    && !(c == '/' && self.cursor.peek_second() == Some('/'))
+                {
                     let current_indent = spaces;
                     let last_indent = *self.indent_stack.last().unwrap();
-                    
+
                     if current_indent > last_indent {
                         self.indent_stack.push(current_indent);
-                        self.pending.push_back(self.make_token(TokenKind::Indent, self.cursor.pos(), ""));
+                        self.pending.push_back(self.make_token(
+                            TokenKind::Indent,
+                            self.cursor.pos(),
+                            "",
+                        ));
                     } else if current_indent < last_indent {
                         while let Some(&top) = self.indent_stack.last() {
                             if top > current_indent {
                                 self.indent_stack.pop();
-                                self.pending.push_back(self.make_token(TokenKind::Dedent, self.cursor.pos(), ""));
+                                self.pending.push_back(self.make_token(
+                                    TokenKind::Dedent,
+                                    self.cursor.pos(),
+                                    "",
+                                ));
                             } else {
                                 break;
                             }
                         }
                     }
-                    
+
                     if let Some(tok) = self.pending.pop_front() {
                         return tok;
                     }
@@ -242,9 +261,7 @@ impl<'src> Lexer<'src> {
             }
 
             // ── Hash comment (base mode) ──
-            '#' => {
-                self.scan_line_comment(start, TokenKind::LineComment)
-            }
+            '#' => self.scan_line_comment(start, TokenKind::LineComment),
 
             // ── Percent / PercentEq ──
             '%' => {
@@ -464,7 +481,8 @@ impl<'src> Lexer<'src> {
                 }
                 Some('o') | Some('O') => {
                     self.cursor.advance();
-                    self.cursor.eat_while(|c| ('0'..='7').contains(&c) || c == '_');
+                    self.cursor
+                        .eat_while(|c| ('0'..='7').contains(&c) || c == '_');
                     let lexeme = self.cursor.slice_from(start);
                     return self.make_token(TokenKind::IntLiteral, start, lexeme);
                 }
@@ -476,7 +494,12 @@ impl<'src> Lexer<'src> {
         self.cursor.eat_while(|c| c.is_ascii_digit() || c == '_');
 
         // Fractional part
-        if self.cursor.peek() == Some('.') && self.cursor.peek_second().is_some_and(|c| c.is_ascii_digit()) {
+        if self.cursor.peek() == Some('.')
+            && self
+                .cursor
+                .peek_second()
+                .is_some_and(|c| c.is_ascii_digit())
+        {
             is_float = true;
             self.cursor.advance(); // consume '.'
             self.cursor.eat_while(|c| c.is_ascii_digit() || c == '_');
@@ -596,11 +619,16 @@ mod tests {
         assert_eq!(
             kinds("( ) [ ] { } , ; . @"),
             vec![
-                TokenKind::LParen, TokenKind::RParen,
-                TokenKind::LBracket, TokenKind::RBracket,
-                TokenKind::LBrace, TokenKind::RBrace,
-                TokenKind::Comma, TokenKind::Semicolon,
-                TokenKind::Dot, TokenKind::At,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::LBracket,
+                TokenKind::RBracket,
+                TokenKind::LBrace,
+                TokenKind::RBrace,
+                TokenKind::Comma,
+                TokenKind::Semicolon,
+                TokenKind::Dot,
+                TokenKind::At,
                 TokenKind::Eof,
             ]
         );
@@ -613,13 +641,20 @@ mod tests {
         assert_eq!(
             kinds("== != <= >= -> => :: .. ... ** && || << >>"),
             vec![
-                TokenKind::EqEq, TokenKind::BangEq,
-                TokenKind::LtEq, TokenKind::GtEq,
-                TokenKind::Arrow, TokenKind::FatArrow,
-                TokenKind::ColonColon, TokenKind::DotDot,
-                TokenKind::DotDotDot, TokenKind::DoubleStar,
-                TokenKind::AmpAmp, TokenKind::PipePipe,
-                TokenKind::Shl, TokenKind::Shr,
+                TokenKind::EqEq,
+                TokenKind::BangEq,
+                TokenKind::LtEq,
+                TokenKind::GtEq,
+                TokenKind::Arrow,
+                TokenKind::FatArrow,
+                TokenKind::ColonColon,
+                TokenKind::DotDot,
+                TokenKind::DotDotDot,
+                TokenKind::DoubleStar,
+                TokenKind::AmpAmp,
+                TokenKind::PipePipe,
+                TokenKind::Shl,
+                TokenKind::Shr,
                 TokenKind::Eof,
             ]
         );
@@ -630,9 +665,12 @@ mod tests {
         assert_eq!(
             kinds("+= -= *= /= %="),
             vec![
-                TokenKind::PlusEq, TokenKind::MinusEq,
-                TokenKind::StarEq, TokenKind::SlashEq,
-                TokenKind::PercentEq, TokenKind::Eof,
+                TokenKind::PlusEq,
+                TokenKind::MinusEq,
+                TokenKind::StarEq,
+                TokenKind::SlashEq,
+                TokenKind::PercentEq,
+                TokenKind::Eof,
             ]
         );
     }
@@ -644,9 +682,15 @@ mod tests {
         assert_eq!(
             kinds("fn let const if else while for in return"),
             vec![
-                TokenKind::Fn, TokenKind::Let, TokenKind::Const,
-                TokenKind::If, TokenKind::Else, TokenKind::While,
-                TokenKind::For, TokenKind::In, TokenKind::Return,
+                TokenKind::Fn,
+                TokenKind::Let,
+                TokenKind::Const,
+                TokenKind::If,
+                TokenKind::Else,
+                TokenKind::While,
+                TokenKind::For,
+                TokenKind::In,
+                TokenKind::Return,
                 TokenKind::Eof,
             ]
         );
@@ -657,9 +701,15 @@ mod tests {
         assert_eq!(
             kinds("struct enum trait impl pub match async await"),
             vec![
-                TokenKind::Struct, TokenKind::Enum, TokenKind::Trait,
-                TokenKind::Impl, TokenKind::Pub, TokenKind::Match,
-                TokenKind::Async, TokenKind::Await, TokenKind::Eof,
+                TokenKind::Struct,
+                TokenKind::Enum,
+                TokenKind::Trait,
+                TokenKind::Impl,
+                TokenKind::Pub,
+                TokenKind::Match,
+                TokenKind::Async,
+                TokenKind::Await,
+                TokenKind::Eof,
             ]
         );
     }
@@ -669,11 +719,15 @@ mod tests {
     #[test]
     fn test_identifiers() {
         let tokens = lex("hello world _private __dunder my_var x1");
-        let idents: Vec<_> = tokens.iter()
+        let idents: Vec<_> = tokens
+            .iter()
             .filter(|t| t.kind == TokenKind::Identifier)
             .map(|t| t.lexeme.as_str())
             .collect();
-        assert_eq!(idents, vec!["hello", "world", "_private", "__dunder", "my_var", "x1"]);
+        assert_eq!(
+            idents,
+            vec!["hello", "world", "_private", "__dunder", "my_var", "x1"]
+        );
     }
 
     // ── Numbers ──
@@ -681,7 +735,8 @@ mod tests {
     #[test]
     fn test_integers() {
         let tokens = lex("42 1_000 0xFF 0b1010 0o777");
-        let nums: Vec<_> = tokens.iter()
+        let nums: Vec<_> = tokens
+            .iter()
             .filter(|t| t.kind == TokenKind::IntLiteral)
             .map(|t| t.lexeme.as_str())
             .collect();
@@ -691,7 +746,8 @@ mod tests {
     #[test]
     fn test_floats() {
         let tokens = lex("3.14 1.0e10 2.5E-3 0.001");
-        let nums: Vec<_> = tokens.iter()
+        let nums: Vec<_> = tokens
+            .iter()
             .filter(|t| t.kind == TokenKind::FloatLiteral)
             .map(|t| t.lexeme.as_str())
             .collect();
@@ -767,10 +823,14 @@ mod tests {
         assert_eq!(
             kinds("fn main() -> i32:"),
             vec![
-                TokenKind::Fn, TokenKind::Identifier,
-                TokenKind::LParen, TokenKind::RParen,
-                TokenKind::Arrow, TokenKind::Identifier,
-                TokenKind::Colon, TokenKind::Eof,
+                TokenKind::Fn,
+                TokenKind::Identifier,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Arrow,
+                TokenKind::Identifier,
+                TokenKind::Colon,
+                TokenKind::Eof,
             ]
         );
     }
@@ -780,10 +840,14 @@ mod tests {
         assert_eq!(
             kinds("let x: i32 = 42;"),
             vec![
-                TokenKind::Let, TokenKind::Identifier,
-                TokenKind::Colon, TokenKind::Identifier,
-                TokenKind::Eq, TokenKind::IntLiteral,
-                TokenKind::Semicolon, TokenKind::Eof,
+                TokenKind::Let,
+                TokenKind::Identifier,
+                TokenKind::Colon,
+                TokenKind::Identifier,
+                TokenKind::Eq,
+                TokenKind::IntLiteral,
+                TokenKind::Semicolon,
+                TokenKind::Eof,
             ]
         );
     }
@@ -793,10 +857,15 @@ mod tests {
         assert_eq!(
             kinds("scores.iter().mean()"),
             vec![
-                TokenKind::Identifier, TokenKind::Dot,
-                TokenKind::Identifier, TokenKind::LParen, TokenKind::RParen,
-                TokenKind::Dot, TokenKind::Identifier,
-                TokenKind::LParen, TokenKind::RParen,
+                TokenKind::Identifier,
+                TokenKind::Dot,
+                TokenKind::Identifier,
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Dot,
+                TokenKind::Identifier,
+                TokenKind::LParen,
+                TokenKind::RParen,
                 TokenKind::Eof,
             ]
         );

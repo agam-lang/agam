@@ -65,7 +65,9 @@ impl UnionFind {
     pub fn union(&mut self, a: TypeId, b: TypeId) {
         let ra = self.find(a);
         let rb = self.find(b);
-        if ra == rb { return; }
+        if ra == rb {
+            return;
+        }
 
         let (ra_i, rb_i) = (ra.0 as usize, rb.0 as usize);
         if self.rank[ra_i] < self.rank[rb_i] {
@@ -166,17 +168,37 @@ impl InferenceEngine {
             (Type::Never, _) | (_, Type::Never) => Ok(()), // Never is a subtype of everything.
 
             // References must match mutability and inner type.
-            (Type::Ref { mutable: m1, inner: i1 }, Type::Ref { mutable: m2, inner: i2 }) => {
+            (
+                Type::Ref {
+                    mutable: m1,
+                    inner: i1,
+                },
+                Type::Ref {
+                    mutable: m2,
+                    inner: i2,
+                },
+            ) => {
                 if m1 != m2 {
-                    return Err(format!("mutability mismatch: expected {}, found {}",
+                    return Err(format!(
+                        "mutability mismatch: expected {}, found {}",
                         if *m1 { "&mut" } else { "&" },
-                        if *m2 { "&mut" } else { "&" }));
+                        if *m2 { "&mut" } else { "&" }
+                    ));
                 }
                 self.unify(*i1, *i2, store)
             }
 
             // Pointers.
-            (Type::Ptr { mutable: m1, inner: i1 }, Type::Ptr { mutable: m2, inner: i2 }) => {
+            (
+                Type::Ptr {
+                    mutable: m1,
+                    inner: i1,
+                },
+                Type::Ptr {
+                    mutable: m2,
+                    inner: i2,
+                },
+            ) => {
                 if m1 != m2 {
                     return Err("pointer mutability mismatch".into());
                 }
@@ -190,9 +212,21 @@ impl InferenceEngine {
             (Type::Slice(a), Type::Slice(b)) => self.unify(*a, *b, store),
 
             // Arrays (size must match).
-            (Type::Array { element: e1, size: s1 }, Type::Array { element: e2, size: s2 }) => {
+            (
+                Type::Array {
+                    element: e1,
+                    size: s1,
+                },
+                Type::Array {
+                    element: e2,
+                    size: s2,
+                },
+            ) => {
                 if s1 != s2 {
-                    return Err(format!("array size mismatch: expected {}, found {}", s1, s2));
+                    return Err(format!(
+                        "array size mismatch: expected {}, found {}",
+                        s1, s2
+                    ));
                 }
                 self.unify(*e1, *e2, store)
             }
@@ -200,7 +234,11 @@ impl InferenceEngine {
             // Tuples (arity and element types must match).
             (Type::Tuple(a), Type::Tuple(b)) => {
                 if a.len() != b.len() {
-                    return Err(format!("tuple arity mismatch: expected {}, found {}", a.len(), b.len()));
+                    return Err(format!(
+                        "tuple arity mismatch: expected {}, found {}",
+                        a.len(),
+                        b.len()
+                    ));
                 }
                 for (x, y) in a.iter().zip(b.iter()) {
                     self.unify(*x, *y, store)?;
@@ -209,9 +247,22 @@ impl InferenceEngine {
             }
 
             // Function types (param count, param types, and return type must match).
-            (Type::Function { params: p1, ret: r1 }, Type::Function { params: p2, ret: r2 }) => {
+            (
+                Type::Function {
+                    params: p1,
+                    ret: r1,
+                },
+                Type::Function {
+                    params: p2,
+                    ret: r2,
+                },
+            ) => {
                 if p1.len() != p2.len() {
-                    return Err(format!("function arity mismatch: expected {} params, found {}", p1.len(), p2.len()));
+                    return Err(format!(
+                        "function arity mismatch: expected {} params, found {}",
+                        p1.len(),
+                        p2.len()
+                    ));
                 }
                 for (x, y) in p1.iter().zip(p2.iter()) {
                     self.unify(*x, *y, store)?;
@@ -327,8 +378,14 @@ mod tests {
         let int = store.i32();
         let boolean = store.bool();
 
-        let fn1 = store.insert(Type::Function { params: vec![int], ret: boolean });
-        let fn2 = store.insert(Type::Function { params: vec![int], ret: boolean });
+        let fn1 = store.insert(Type::Function {
+            params: vec![int],
+            ret: boolean,
+        });
+        let fn2 = store.insert(Type::Function {
+            params: vec![int],
+            ret: boolean,
+        });
 
         let mut engine = InferenceEngine::new(20);
         engine.constrain(fn1, fn2, "fn match");
@@ -343,8 +400,14 @@ mod tests {
         let int = store.i32();
         let boolean = store.bool();
 
-        let fn1 = store.insert(Type::Function { params: vec![int], ret: boolean });
-        let fn2 = store.insert(Type::Function { params: vec![int, int], ret: boolean });
+        let fn1 = store.insert(Type::Function {
+            params: vec![int],
+            ret: boolean,
+        });
+        let fn2 = store.insert(Type::Function {
+            params: vec![int, int],
+            ret: boolean,
+        });
 
         let mut engine = InferenceEngine::new(20);
         engine.constrain(fn1, fn2, "arity mismatch");
@@ -375,8 +438,14 @@ mod tests {
         let mut store = TypeStore::new();
         let int = store.i32();
 
-        let r1 = store.insert(Type::Ref { mutable: false, inner: int });
-        let r2 = store.insert(Type::Ref { mutable: true, inner: int });
+        let r1 = store.insert(Type::Ref {
+            mutable: false,
+            inner: int,
+        });
+        let r2 = store.insert(Type::Ref {
+            mutable: true,
+            inner: int,
+        });
 
         let mut engine = InferenceEngine::new(20);
         engine.constrain(r1, r2, "ref mismatch");

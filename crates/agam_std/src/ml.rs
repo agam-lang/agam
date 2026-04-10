@@ -20,18 +20,28 @@ use crate::tensor::Tensor;
 /// Mean Squared Error: (1/n) Σ(predicted - target)²
 pub fn mse_loss(predicted: &Tensor, target: &Tensor) -> f64 {
     assert_eq!(predicted.numel(), target.numel());
-    predicted.data.iter().zip(&target.data)
+    predicted
+        .data
+        .iter()
+        .zip(&target.data)
         .map(|(p, t)| (p - t) * (p - t))
-        .sum::<f64>() / predicted.numel() as f64
+        .sum::<f64>()
+        / predicted.numel() as f64
 }
 
 /// MSE gradient: ∂L/∂predicted = 2(predicted - target) / n
 pub fn mse_grad(predicted: &Tensor, target: &Tensor) -> Tensor {
     let n = predicted.numel() as f64;
-    let data: Vec<f64> = predicted.data.iter().zip(&target.data)
+    let data: Vec<f64> = predicted
+        .data
+        .iter()
+        .zip(&target.data)
         .map(|(p, t)| 2.0 * (p - t) / n)
         .collect();
-    Tensor { shape: predicted.shape.clone(), data }
+    Tensor {
+        shape: predicted.shape.clone(),
+        data,
+    }
 }
 
 /// Binary cross-entropy: -1/n Σ [t*ln(p) + (1-t)*ln(1-p)]
@@ -39,15 +49,22 @@ pub fn binary_cross_entropy(predicted: &Tensor, target: &Tensor) -> f64 {
     assert_eq!(predicted.numel(), target.numel());
     let eps = 1e-15;
     let n = predicted.numel() as f64;
-    -predicted.data.iter().zip(&target.data)
+    -predicted
+        .data
+        .iter()
+        .zip(&target.data)
         .map(|(p, t)| t * (p + eps).ln() + (1.0 - t) * (1.0 - p + eps).ln())
-        .sum::<f64>() / n
+        .sum::<f64>()
+        / n
 }
 
 /// Categorical cross-entropy: -Σ target * ln(predicted) (for softmax outputs)
 pub fn cross_entropy(predicted: &Tensor, target: &Tensor) -> f64 {
     let eps = 1e-15;
-    -predicted.data.iter().zip(&target.data)
+    -predicted
+        .data
+        .iter()
+        .zip(&target.data)
         .map(|(p, t)| t * (p + eps).ln())
         .sum::<f64>()
 }
@@ -55,7 +72,10 @@ pub fn cross_entropy(predicted: &Tensor, target: &Tensor) -> f64 {
 /// Huber loss: smooth L1, less sensitive to outliers.
 pub fn huber_loss(predicted: &Tensor, target: &Tensor, delta: f64) -> f64 {
     let n = predicted.numel() as f64;
-    predicted.data.iter().zip(&target.data)
+    predicted
+        .data
+        .iter()
+        .zip(&target.data)
         .map(|(p, t)| {
             let diff = (p - t).abs();
             if diff <= delta {
@@ -64,7 +84,8 @@ pub fn huber_loss(predicted: &Tensor, target: &Tensor, delta: f64) -> f64 {
                 delta * (diff - 0.5 * delta)
             }
         })
-        .sum::<f64>() / n
+        .sum::<f64>()
+        / n
 }
 
 // ────────────────────────────────────────────────
@@ -149,10 +170,16 @@ pub fn batch_norm(t: &Tensor, epsilon: f64) -> Tensor {
 /// Dropout: randomly zero elements (training only). Mask is provided.
 pub fn dropout(t: &Tensor, mask: &[bool], scale: f64) -> Tensor {
     assert_eq!(mask.len(), t.numel());
-    let data: Vec<f64> = t.data.iter().zip(mask).map(|(v, keep)| {
-        if *keep { *v * scale } else { 0.0 }
-    }).collect();
-    Tensor { shape: t.shape.clone(), data }
+    let data: Vec<f64> = t
+        .data
+        .iter()
+        .zip(mask)
+        .map(|(v, keep)| if *keep { *v * scale } else { 0.0 })
+        .collect();
+    Tensor {
+        shape: t.shape.clone(),
+        data,
+    }
 }
 
 // ────────────────────────────────────────────────
@@ -168,23 +195,47 @@ pub fn accuracy(predicted: &[usize], actual: &[usize]) -> f64 {
 
 /// Precision = TP / (TP + FP) for binary classification.
 pub fn precision(predicted: &[bool], actual: &[bool]) -> f64 {
-    let tp = predicted.iter().zip(actual).filter(|(p, a)| **p && **a).count() as f64;
-    let fp = predicted.iter().zip(actual).filter(|(p, a)| **p && !**a).count() as f64;
+    let tp = predicted
+        .iter()
+        .zip(actual)
+        .filter(|(p, a)| **p && **a)
+        .count() as f64;
+    let fp = predicted
+        .iter()
+        .zip(actual)
+        .filter(|(p, a)| **p && !**a)
+        .count() as f64;
     if tp + fp == 0.0 { 0.0 } else { tp / (tp + fp) }
 }
 
 /// Recall = TP / (TP + FN) for binary classification.
 pub fn recall(predicted: &[bool], actual: &[bool]) -> f64 {
-    let tp = predicted.iter().zip(actual).filter(|(p, a)| **p && **a).count() as f64;
-    let fn_ = predicted.iter().zip(actual).filter(|(p, a)| !**p && **a).count() as f64;
-    if tp + fn_ == 0.0 { 0.0 } else { tp / (tp + fn_) }
+    let tp = predicted
+        .iter()
+        .zip(actual)
+        .filter(|(p, a)| **p && **a)
+        .count() as f64;
+    let fn_ = predicted
+        .iter()
+        .zip(actual)
+        .filter(|(p, a)| !**p && **a)
+        .count() as f64;
+    if tp + fn_ == 0.0 {
+        0.0
+    } else {
+        tp / (tp + fn_)
+    }
 }
 
 /// F1 score = 2 * precision * recall / (precision + recall)
 pub fn f1_score(predicted: &[bool], actual: &[bool]) -> f64 {
     let p = precision(predicted, actual);
     let r = recall(predicted, actual);
-    if p + r == 0.0 { 0.0 } else { 2.0 * p * r / (p + r) }
+    if p + r == 0.0 {
+        0.0
+    } else {
+        2.0 * p * r / (p + r)
+    }
 }
 
 // ────────────────────────────────────────────────
@@ -213,15 +264,20 @@ pub fn min_max_normalize(t: &Tensor) -> Tensor {
     let min = t.data.iter().cloned().fold(f64::INFINITY, f64::min);
     let max = t.data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let range = max - min;
-    if range < 1e-15 { return t.clone(); }
+    if range < 1e-15 {
+        return t.clone();
+    }
     t.map(|x| (x - min) / range)
 }
 
 /// Z-score normalization: (x - μ) / σ
 pub fn z_score_normalize(t: &Tensor) -> Tensor {
     let mean = t.mean();
-    let std = (t.data.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / t.numel() as f64).sqrt();
-    if std < 1e-15 { return t.clone(); }
+    let std =
+        (t.data.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / t.numel() as f64).sqrt();
+    if std < 1e-15 {
+        return t.clone();
+    }
     t.map(|x| (x - mean) / std)
 }
 
@@ -241,7 +297,9 @@ pub fn euclidean_distance(a: &Tensor, b: &Tensor) -> f64 {
 /// K-nearest neighbors classification (brute force).
 /// Returns predicted label for query based on k closest training points.
 pub fn knn_classify(train_x: &[Tensor], train_y: &[usize], query: &Tensor, k: usize) -> usize {
-    let mut dists: Vec<(f64, usize)> = train_x.iter().zip(train_y)
+    let mut dists: Vec<(f64, usize)> = train_x
+        .iter()
+        .zip(train_y)
         .map(|(x, y)| (euclidean_distance(x, query), *y))
         .collect();
     dists.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());

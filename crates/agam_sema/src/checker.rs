@@ -6,19 +6,19 @@
 //! 3. Delegates constraint solving to the `InferenceEngine`.
 //! 4. Reports type errors to the user.
 
-use agam_ast::*;
 use agam_ast::decl::*;
-use agam_ast::stmt::*;
 use agam_ast::expr::*;
+use agam_ast::stmt::*;
 use agam_ast::types::{TypeExpr, TypeExprKind};
+use agam_ast::*;
 use agam_errors::Span;
 
-use crate::symbol::TypeId;
-use crate::scope::ScopeStack;
-use crate::types::{builtin_type_id_for_name, Type, TypeStore};
 use crate::infer::InferenceEngine;
 use crate::resolver::Resolver;
-use agam_smt::solver::{Z3Solver, SmtSolver, Constraint, SolverResult};
+use crate::scope::ScopeStack;
+use crate::symbol::TypeId;
+use crate::types::{Type, TypeStore, builtin_type_id_for_name};
+use agam_smt::solver::{Constraint, SmtSolver, SolverResult, Z3Solver};
 use agam_smt::verify::{VerificationCache, VerificationStatus};
 
 /// A type error reported to the user.
@@ -84,9 +84,9 @@ impl TypeChecker {
                     // Assume v != 0 locally
                     solver.assert(Constraint::NotEq(
                         Box::new(Constraint::Var("v".to_string())),
-                        Box::new(Constraint::Int(0))
+                        Box::new(Constraint::Int(0)),
                     ));
-                    
+
                     let is_safe = match solver.check_sat() {
                         SolverResult::Sat | SolverResult::Unknown => VerificationStatus::Failed,
                         SolverResult::Unsat => VerificationStatus::VerifiedSafe,
@@ -133,7 +133,11 @@ impl TypeChecker {
                 };
                 if let Some(val) = value {
                     let val_ty = self.infer_expr(val);
-                    self.engine.constrain(declared_ty, val_ty, "let binding type must match initializer");
+                    self.engine.constrain(
+                        declared_ty,
+                        val_ty,
+                        "let binding type must match initializer",
+                    );
                 }
             }
             StmtKind::Const { ty, value, .. } => {
@@ -143,7 +147,8 @@ impl TypeChecker {
                     self.types.fresh_var()
                 };
                 let val_ty = self.infer_expr(value);
-                self.engine.constrain(declared_ty, val_ty, "const type must match value");
+                self.engine
+                    .constrain(declared_ty, val_ty, "const type must match value");
             }
             StmtKind::Expression(expr) => {
                 self.infer_expr(expr);
@@ -155,7 +160,8 @@ impl TypeChecker {
             }
             StmtKind::While { condition, body } => {
                 let cond_ty = self.infer_expr(condition);
-                self.engine.constrain(self.types.bool(), cond_ty, "while condition must be bool");
+                self.engine
+                    .constrain(self.types.bool(), cond_ty, "while condition must be bool");
                 self.check_block(body);
             }
             StmtKind::Loop { body } => {
@@ -165,9 +171,14 @@ impl TypeChecker {
                 self.infer_expr(iterable);
                 self.check_block(body);
             }
-            StmtKind::If { condition, then_branch, else_branch } => {
+            StmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let cond_ty = self.infer_expr(condition);
-                self.engine.constrain(self.types.bool(), cond_ty, "if condition must be bool");
+                self.engine
+                    .constrain(self.types.bool(), cond_ty, "if condition must be bool");
                 self.check_block(then_branch);
                 if let Some(eb) = else_branch {
                     match eb {
@@ -181,7 +192,8 @@ impl TypeChecker {
                 for arm in arms {
                     if let Some(guard) = &arm.guard {
                         let g_ty = self.infer_expr(guard);
-                        self.engine.constrain(self.types.bool(), g_ty, "match guard must be bool");
+                        self.engine
+                            .constrain(self.types.bool(), g_ty, "match guard must be bool");
                     }
                     self.infer_expr(&arm.body);
                 }
@@ -192,9 +204,13 @@ impl TypeChecker {
                     self.check_block(&catch.body);
                 }
             }
-            StmtKind::Throw(expr) => { self.infer_expr(expr); }
+            StmtKind::Throw(expr) => {
+                self.infer_expr(expr);
+            }
             StmtKind::Break(v) | StmtKind::Yield(v) => {
-                if let Some(e) = v { self.infer_expr(e); }
+                if let Some(e) = v {
+                    self.infer_expr(e);
+                }
             }
             StmtKind::Continue => {}
             StmtKind::Declaration(decl) => self.check_decl(decl),
@@ -225,7 +241,8 @@ impl TypeChecker {
                 let elem_ty = self.types.fresh_var();
                 for e in elems {
                     let t = self.infer_expr(e);
-                    self.engine.constrain(elem_ty, t, "array elements must have same type");
+                    self.engine
+                        .constrain(elem_ty, t, "array elements must have same type");
                 }
                 self.types.fresh_var() // Array<elem_ty> — full generic support later
             }
@@ -259,23 +276,39 @@ impl TypeChecker {
                 match op {
                     // Arithmetic: both operands same type, result = same type
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::Pow => {
-                        self.engine.constrain(lt, rt, "binary operands must have same type");
+                        self.engine
+                            .constrain(lt, rt, "binary operands must have same type");
                         lt
                     }
                     // Comparison: both operands same, result = bool
-                    BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
-                        self.engine.constrain(lt, rt, "comparison operands must have same type");
+                    BinOp::Eq
+                    | BinOp::NotEq
+                    | BinOp::Lt
+                    | BinOp::LtEq
+                    | BinOp::Gt
+                    | BinOp::GtEq => {
+                        self.engine
+                            .constrain(lt, rt, "comparison operands must have same type");
                         self.types.bool()
                     }
                     // Logical: both must be bool
                     BinOp::And | BinOp::Or => {
-                        self.engine.constrain(self.types.bool(), lt, "logical and/or requires bool");
-                        self.engine.constrain(self.types.bool(), rt, "logical and/or requires bool");
+                        self.engine.constrain(
+                            self.types.bool(),
+                            lt,
+                            "logical and/or requires bool",
+                        );
+                        self.engine.constrain(
+                            self.types.bool(),
+                            rt,
+                            "logical and/or requires bool",
+                        );
                         self.types.bool()
                     }
                     // Bitwise: both operands same type
                     BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                        self.engine.constrain(lt, rt, "bitwise operands must have same type");
+                        self.engine
+                            .constrain(lt, rt, "bitwise operands must have same type");
                         lt
                     }
                 }
@@ -287,13 +320,15 @@ impl TypeChecker {
                 match op {
                     UnaryOp::Neg => t,
                     UnaryOp::Not => {
-                        self.engine.constrain(self.types.bool(), t, "! requires bool operand");
+                        self.engine
+                            .constrain(self.types.bool(), t, "! requires bool operand");
                         self.types.bool()
                     }
                     UnaryOp::BitNot => t,
-                    UnaryOp::Ref => {
-                        self.types.insert(Type::Ref { mutable: false, inner: t })
-                    }
+                    UnaryOp::Ref => self.types.insert(Type::Ref {
+                        mutable: false,
+                        inner: t,
+                    }),
                     UnaryOp::Deref => self.types.fresh_var(),
                 }
             }
@@ -335,18 +370,25 @@ impl TypeChecker {
             ExprKind::CompoundAssign { target, value, .. } => {
                 let lt = self.infer_expr(target);
                 let rt = self.infer_expr(value);
-                self.engine.constrain(lt, rt, "compound assignment type mismatch");
+                self.engine
+                    .constrain(lt, rt, "compound assignment type mismatch");
                 self.types.unit()
             }
 
             // ── Control flow expressions ──
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let ct = self.infer_expr(condition);
-                self.engine.constrain(self.types.bool(), ct, "if condition must be bool");
+                self.engine
+                    .constrain(self.types.bool(), ct, "if condition must be bool");
                 let tt = self.infer_expr(then_branch);
                 if let Some(eb) = else_branch {
                     let et = self.infer_expr(eb);
-                    self.engine.constrain(tt, et, "if/else branches must have same type");
+                    self.engine
+                        .constrain(tt, et, "if/else branches must have same type");
                 }
                 tt
             }
@@ -356,10 +398,12 @@ impl TypeChecker {
                 for arm in arms {
                     if let Some(guard) = &arm.guard {
                         let g = self.infer_expr(guard);
-                        self.engine.constrain(self.types.bool(), g, "match guard must be bool");
+                        self.engine
+                            .constrain(self.types.bool(), g, "match guard must be bool");
                     }
                     let arm_ty = self.infer_expr(&arm.body);
-                    self.engine.constrain(result_ty, arm_ty, "match arms must have same type");
+                    self.engine
+                        .constrain(result_ty, arm_ty, "match arms must have same type");
                 }
                 result_ty
             }
@@ -375,9 +419,13 @@ impl TypeChecker {
 
             // ── Lambda ──
             ExprKind::Lambda { params, body, .. } => {
-                let param_tys: Vec<TypeId> = params.iter().map(|_| self.types.fresh_var()).collect();
+                let param_tys: Vec<TypeId> =
+                    params.iter().map(|_| self.types.fresh_var()).collect();
                 let ret_ty = self.infer_expr(body);
-                self.types.insert(Type::Function { params: param_tys, ret: ret_ty })
+                self.types.insert(Type::Function {
+                    params: param_tys,
+                    ret: ret_ty,
+                })
             }
 
             // ── Async ──
@@ -394,13 +442,20 @@ impl TypeChecker {
 
             // ── Range ──
             ExprKind::Range { start, end, .. } => {
-                if let Some(s) = start { self.infer_expr(s); }
-                if let Some(e) = end { self.infer_expr(e); }
+                if let Some(s) = start {
+                    self.infer_expr(s);
+                }
+                if let Some(e) = end {
+                    self.infer_expr(e);
+                }
                 self.types.fresh_var()
             }
 
             // ── Cast ──
-            ExprKind::Cast { expr: inner, target_type } => {
+            ExprKind::Cast {
+                expr: inner,
+                target_type,
+            } => {
                 self.infer_expr(inner);
                 self.resolve_type_expr(target_type)
             }
@@ -451,12 +506,8 @@ impl TypeChecker {
                     self.types.error()
                 }
             }
-            TypeExprKind::Inferred | TypeExprKind::Dynamic | TypeExprKind::Any => {
-                self.types.any()
-            }
-            TypeExprKind::Refined { base, .. } => {
-                self.resolve_type_expr(base)
-            }
+            TypeExprKind::Inferred | TypeExprKind::Dynamic | TypeExprKind::Any => self.types.any(),
+            TypeExprKind::Refined { base, .. } => self.resolve_type_expr(base),
             _ => self.types.fresh_var(),
         }
     }
@@ -466,8 +517,8 @@ impl TypeChecker {
 mod tests {
     use super::*;
     use crate::resolver::Resolver;
-    use agam_lexer::Lexer;
     use agam_errors::span::SourceId;
+    use agam_lexer::Lexer;
 
     fn check_source(source: &str) -> TypeChecker {
         let source_id = SourceId(0);
@@ -477,7 +528,9 @@ mod tests {
             let tok = lexer.next_token();
             let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
             tokens.push(tok);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
         let mut parser = agam_parser::Parser::new(tokens);
         let module = parser.parse_module(source_id).expect("parse failed");

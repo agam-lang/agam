@@ -1,9 +1,9 @@
 //! AST pretty-printer for debugging and display.
 
+use crate::Module;
+use crate::decl::*;
 use crate::expr::*;
 use crate::stmt::*;
-use crate::decl::*;
-use crate::Module;
 
 /// Pretty-print an AST module as indented text.
 pub fn pretty_print(module: &Module) -> String {
@@ -96,7 +96,10 @@ impl PrettyPrinter {
                 self.indent -= 1;
             }
             DeclKind::Handler(h) => {
-                self.line(&format!("handle {} for {}:", h.name.name, h.effect_name.name));
+                self.line(&format!(
+                    "handle {} for {}:",
+                    h.name.name, h.effect_name.name
+                ));
             }
         }
     }
@@ -157,7 +160,9 @@ impl PrettyPrinter {
             ExprKind::Binary { op, .. } => self.line(&format!("BinOp({:?})", op)),
             ExprKind::Call { .. } => self.line("Call(...)"),
             ExprKind::FieldAccess { field, .. } => self.line(&format!("Field(.{})", field.name)),
-            ExprKind::MethodCall { method, .. } => self.line(&format!("Method(.{}())", method.name)),
+            ExprKind::MethodCall { method, .. } => {
+                self.line(&format!("Method(.{}())", method.name))
+            }
             _ => self.line(&format!("{:?}", std::mem::discriminant(&expr.kind))),
         }
     }

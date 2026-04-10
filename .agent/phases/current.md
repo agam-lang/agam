@@ -1,31 +1,49 @@
 # Current Development
 
-## Primary Program Goal
+## Program Goal
 
-- Make native LLVM the first-class production backend for Windows, Linux, and Android.
+Native LLVM as first-class production backend for Windows, Linux, and Android.
 
 ## Active Workstreams
 
-1. **Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation**
-   - Status: partial
-   - Done: shared workspace snapshot and invalidation-diff contract in `agam_pkg`, a real foreground warm-state daemon/status loop in `agam_driver`, intra-invocation warm-state reuse for `agamc dev`, a semantic-only `agamc dev --no-run` entry path that skips unnecessary lowering, deterministic multi-input `agamc build` request planning that stops dropping every file after the first one, deterministic multi-input `agamc build` worker scheduling that runs independent single-file builds in parallel while replaying diagnostics in request order, daemon-side entry-file prewarm that fills package/build caches from warm MIR without polluting the workspace, and cross-process reuse of daemon-prewarmed entry packages in `agamc build`, `agamc run`, and `agamc package pack`
-   - Next work: connect build/run/dev flows to daemon-owned warm state and parallelize independent work deterministically
-   - Detail file: `details/15F.md`
-2. **Phase 15G: First-Party Premium Experience Layer**
-   - Status: partial
-   - Done: `agamc doctor`, `agamc new`, `agamc dev`, `agamc cache status`, workspace-aware `agamc check` input expansion, shared entry-file resolution for workspace-root build/run/package commands, and a broadened benchmark workspace with 38 Agam workloads plus dedicated call-cache locality/miss study cases, a result-root README that explains the checked-in measured snapshot versus later dry-run validation artifacts, a workload-by-workload result-status table that marks which comparison-ready and call-cache workloads are already measured vs dry-run validated vs source-only, a 130-workload coverage matrix that separates runnable, comparison-ready, planned, and future-lab benchmark slots across CPU, memory, storage, network, accelerator, interconnect, and quantum-simulator backlog, and cross-language comparison sources for edit-distance, polynomial-evaluation, ring-buffer, token-frequency, and CSV-scanning workloads
-   - Next work: unify tooling, package/runtime/cache metadata, and workspace conventions behind one stable contract
-   - Detail file: `details/15G.md`
-3. **Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles**
-   - Status: partial
-   - Done: `agamc package sdk`, bundled LLVM layout, initial CI workflow skeleton
-   - Next work: validate hosted-runner SDK builds, publish real Windows/Linux SDK artifacts, and add Android target-pack validation
-   - Detail file: `details/15H.md`
+| Phase | Status | Focus | Detail |
+|-------|--------|-------|--------|
+| **15F** | partial | Incremental daemon, background prewarm, parallel compilation | `details/15F.md` |
+| **15G** | partial | Premium experience layer (tooling unification) | `details/15G.md` |
+| **15H** | partial | Native LLVM SDK distribution and toolchain bundles | `details/15H.md` |
+| **17A** | partial | Workspace contract and dependency manifests | `details/17A.md` |
 
-## Current Decision Rules
+### 15F Progress
+- ✅ Workspace snapshot + invalidation diff contract
+- ✅ Foreground daemon loop with per-file AST/HIR/MIR warm state
+- ✅ Entry-file warm-state reuse in `agamc dev`
+- ✅ Multi-input `build` parallel worker scheduling
+- ✅ Daemon-side entry-file prewarm (package + build cache)
+- ✅ Cross-process reuse of daemon-prewarmed entry packages
+- ⬜ Multi-file warm-state reuse beyond entry file
+- ⬜ IPC-backed daemon/client coordination
+- ⬜ Background prewarm for all workspace files
 
-- Prefer native host LLVM over WSL fallback.
-- Keep `agamc doctor` and SDK packaging aligned with the real readiness contract.
-- Treat VS Community 2026 as the canonical Windows-side toolchain inventory.
-- Do not claim macOS or iOS backend support beyond planning and toolchain prep until native validation hardware exists.
-- If a phase decision needs more than this summary, open `details/`.
+### 15G Progress
+- ✅ `agamc doctor`, `new`, `dev`, `cache status`
+- ✅ Shared workspace session contract across CLI/LSP/fmt/test
+- ⬜ Keep daemon on the same contract; reduce per-tool drift
+
+### 15H Progress
+- ✅ `agamc package sdk`, bundled LLVM layout, CI skeleton
+- ⬜ Validate hosted-runner SDK builds
+- ⬜ Publish real Windows/Linux SDK artifacts
+- ⬜ Android target-pack validation
+
+### 17A Progress
+- ✅ Manifest data models, validation, compatibility policy
+- ✅ `resolve_workspace_members`, LSP/formatter integration
+- ⬜ Reuse parsed manifest in daemon surfaces
+
+## Decision Rules
+
+- Prefer native host LLVM over WSL fallback
+- Keep `agamc doctor` and SDK packaging aligned with the readiness contract
+- VS Community 2026 is the canonical Windows toolchain inventory
+- No macOS/iOS backend claims until native validation hardware exists
+- If a phase decision needs more context → open `details/`

@@ -16,16 +16,27 @@ impl Complex {
     pub const ONE: Complex = Complex { re: 1.0, im: 0.0 };
     pub const I: Complex = Complex { re: 0.0, im: 1.0 };
 
-    pub fn new(re: f64, im: f64) -> Self { Self { re, im } }
+    pub fn new(re: f64, im: f64) -> Self {
+        Self { re, im }
+    }
     pub fn from_polar(r: f64, theta: f64) -> Self {
-        Self { re: r * theta.cos(), im: r * theta.sin() }
+        Self {
+            re: r * theta.cos(),
+            im: r * theta.sin(),
+        }
     }
 
     pub fn add(self, other: Complex) -> Complex {
-        Complex { re: self.re + other.re, im: self.im + other.im }
+        Complex {
+            re: self.re + other.re,
+            im: self.im + other.im,
+        }
     }
     pub fn sub(self, other: Complex) -> Complex {
-        Complex { re: self.re - other.re, im: self.im - other.im }
+        Complex {
+            re: self.re - other.re,
+            im: self.im - other.im,
+        }
     }
     /// (a+bi)(c+di) = (ac-bd) + (ad+bc)i
     pub fn mul(self, other: Complex) -> Complex {
@@ -42,29 +53,55 @@ impl Complex {
             im: (self.im * other.re - self.re * other.im) / denom,
         }
     }
-    pub fn conjugate(self) -> Complex { Complex { re: self.re, im: -self.im } }
-    pub fn magnitude(self) -> f64 { (self.re * self.re + self.im * self.im).sqrt() }
-    pub fn magnitude_squared(self) -> f64 { self.re * self.re + self.im * self.im }
-    pub fn phase(self) -> f64 { self.im.atan2(self.re) }
-    pub fn neg(self) -> Complex { Complex { re: -self.re, im: -self.im } }
+    pub fn conjugate(self) -> Complex {
+        Complex {
+            re: self.re,
+            im: -self.im,
+        }
+    }
+    pub fn magnitude(self) -> f64 {
+        (self.re * self.re + self.im * self.im).sqrt()
+    }
+    pub fn magnitude_squared(self) -> f64 {
+        self.re * self.re + self.im * self.im
+    }
+    pub fn phase(self) -> f64 {
+        self.im.atan2(self.re)
+    }
+    pub fn neg(self) -> Complex {
+        Complex {
+            re: -self.re,
+            im: -self.im,
+        }
+    }
 
     /// e^(a+bi) = e^a * (cos(b) + i*sin(b))
     pub fn exp(self) -> Complex {
         let ea = self.re.exp();
-        Complex { re: ea * self.im.cos(), im: ea * self.im.sin() }
+        Complex {
+            re: ea * self.im.cos(),
+            im: ea * self.im.sin(),
+        }
     }
     /// ln(z) = ln|z| + i*arg(z)
     pub fn ln(self) -> Complex {
-        Complex { re: self.magnitude().ln(), im: self.phase() }
+        Complex {
+            re: self.magnitude().ln(),
+            im: self.phase(),
+        }
     }
     /// z^n (integer power, by repeated squaring)
     pub fn powi(self, n: i32) -> Complex {
-        if n == 0 { return Complex::ONE; }
+        if n == 0 {
+            return Complex::ONE;
+        }
         let mut result = Complex::ONE;
         let mut base = if n > 0 { self } else { Complex::ONE.div(self) };
         let mut exp = n.unsigned_abs();
         while exp > 0 {
-            if exp & 1 == 1 { result = result.mul(base); }
+            if exp & 1 == 1 {
+                result = result.mul(base);
+            }
             base = base.mul(base);
             exp >>= 1;
         }
@@ -90,9 +127,16 @@ pub struct Quaternion {
 }
 
 impl Quaternion {
-    pub const IDENTITY: Quaternion = Quaternion { w: 1.0, x: 0.0, y: 0.0, z: 0.0 };
+    pub const IDENTITY: Quaternion = Quaternion {
+        w: 1.0,
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    };
 
-    pub fn new(w: f64, x: f64, y: f64, z: f64) -> Self { Self { w, x, y, z } }
+    pub fn new(w: f64, x: f64, y: f64, z: f64) -> Self {
+        Self { w, x, y, z }
+    }
 
     /// Create from axis-angle rotation.
     pub fn from_axis_angle(axis: [f64; 3], angle: f64) -> Self {
@@ -108,7 +152,12 @@ impl Quaternion {
     }
 
     pub fn add(self, other: Quaternion) -> Quaternion {
-        Quaternion { w: self.w + other.w, x: self.x + other.x, y: self.y + other.y, z: self.z + other.z }
+        Quaternion {
+            w: self.w + other.w,
+            x: self.x + other.x,
+            y: self.y + other.y,
+            z: self.z + other.z,
+        }
     }
 
     /// Hamilton product.
@@ -122,7 +171,12 @@ impl Quaternion {
     }
 
     pub fn conjugate(self) -> Quaternion {
-        Quaternion { w: self.w, x: -self.x, y: -self.y, z: -self.z }
+        Quaternion {
+            w: self.w,
+            x: -self.x,
+            y: -self.y,
+            z: -self.z,
+        }
     }
 
     pub fn magnitude(self) -> f64 {
@@ -131,7 +185,12 @@ impl Quaternion {
 
     pub fn normalize(self) -> Quaternion {
         let m = self.magnitude();
-        Quaternion { w: self.w / m, x: self.x / m, y: self.y / m, z: self.z / m }
+        Quaternion {
+            w: self.w / m,
+            x: self.x / m,
+            y: self.y / m,
+            z: self.z / m,
+        }
     }
 
     /// Rotate a 3D point by this quaternion: q * p * q⁻¹

@@ -13,7 +13,7 @@ use agam_ast::expr::*;
 use agam_ast::stmt::*;
 use agam_ast::types::TypeExpr;
 use agam_ast::*;
-use agam_sema::types::{builtin_type_id_for_name, TypeStore};
+use agam_sema::types::{TypeStore, builtin_type_id_for_name};
 
 use crate::nodes::*;
 
@@ -443,18 +443,14 @@ impl HirLowering {
                 )
             }
 
-            ExprKind::ArrayLiteral(elems) => {
-                (
-                    self.types.fresh_var(),
-                    HirExprKind::Array(elems.iter().map(|e| self.lower_expr(e)).collect()),
-                )
-            }
-            ExprKind::TupleLiteral(elems) => {
-                (
-                    self.types.unit(),
-                    HirExprKind::Tuple(elems.iter().map(|e| self.lower_expr(e)).collect()),
-                )
-            }
+            ExprKind::ArrayLiteral(elems) => (
+                self.types.fresh_var(),
+                HirExprKind::Array(elems.iter().map(|e| self.lower_expr(e)).collect()),
+            ),
+            ExprKind::TupleLiteral(elems) => (
+                self.types.unit(),
+                HirExprKind::Tuple(elems.iter().map(|e| self.lower_expr(e)).collect()),
+            ),
 
             ExprKind::BlockExpr(block) => {
                 let block = self.lower_block(block);

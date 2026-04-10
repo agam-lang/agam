@@ -3,8 +3,8 @@
 //! Patterns destructure values in `let`, `match`, `for`, and function params.
 //! Examples: `x`, `(a, b)`, `Some(value)`, `Point { x, y }`.
 
-use crate::{Ident, NodeId, Path};
 use crate::types::TypeExpr;
+use crate::{Ident, NodeId, Path};
 use agam_errors::Span;
 
 /// A pattern node.
@@ -22,10 +22,7 @@ pub enum PatternKind {
     Wildcard,
 
     /// Identifier binding: `x`, `mut x`
-    Identifier {
-        name: Ident,
-        mutable: bool,
-    },
+    Identifier { name: Ident, mutable: bool },
 
     /// Literal: `42`, `"hello"`, `true`
     Literal(super::expr::Expr),
@@ -44,10 +41,7 @@ pub enum PatternKind {
     },
 
     /// Enum variant: `Some(value)`, `None`
-    Variant {
-        path: Path,
-        fields: Vec<Pattern>,
-    },
+    Variant { path: Path, fields: Vec<Pattern> },
 
     /// Or pattern: `A | B | C`
     Or(Vec<Pattern>),
@@ -60,19 +54,13 @@ pub enum PatternKind {
     },
 
     /// Binding with a sub-pattern: `name @ Pattern`
-    Binding {
-        name: Ident,
-        pattern: Box<Pattern>,
-    },
+    Binding { name: Ident, pattern: Box<Pattern> },
 
     /// Rest pattern: `..` (in arrays and structs)
     Rest,
 
     /// Type-annotated pattern: `x: i32`
-    Typed {
-        pattern: Box<Pattern>,
-        ty: TypeExpr,
-    },
+    Typed { pattern: Box<Pattern>, ty: TypeExpr },
 }
 
 /// A field in a struct pattern.

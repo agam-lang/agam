@@ -17,14 +17,17 @@ pub fn run(module: &mut MirModule) -> bool {
 fn dce_function(function: &mut MirFunction) -> bool {
     let reachable = reachable_blocks(function);
     let original_block_count = function.blocks.len();
-    function.blocks.retain(|block| reachable.contains(&block.id));
+    function
+        .blocks
+        .retain(|block| reachable.contains(&block.id));
 
     let mut changed = function.blocks.len() != original_block_count;
     let live_locals = collect_live_locals(function);
 
     for block in &mut function.blocks {
         let original_len = block.instructions.len();
-        block.instructions = sweep_instructions(&block.instructions, &block.terminator, &live_locals);
+        block.instructions =
+            sweep_instructions(&block.instructions, &block.terminator, &live_locals);
         changed |= block.instructions.len() != original_len;
     }
 
@@ -32,8 +35,11 @@ fn dce_function(function: &mut MirFunction) -> bool {
 }
 
 fn reachable_blocks(function: &MirFunction) -> HashSet<BlockId> {
-    let by_id: HashMap<BlockId, &crate::ir::BasicBlock> =
-        function.blocks.iter().map(|block| (block.id, block)).collect();
+    let by_id: HashMap<BlockId, &crate::ir::BasicBlock> = function
+        .blocks
+        .iter()
+        .map(|block| (block.id, block))
+        .collect();
 
     let mut reachable = HashSet::new();
     let mut worklist = vec![function.entry];
@@ -170,11 +176,7 @@ mod tests {
     use agam_hir::lower::HirLowering;
     use agam_lexer::Lexer;
 
-    use crate::{
-        ir::Op,
-        lower::MirLowering,
-        opt::constant_fold,
-    };
+    use crate::{ir::Op, lower::MirLowering, opt::constant_fold};
 
     use super::run;
 
@@ -209,8 +211,16 @@ mod tests {
         let mir = optimize_source("fn main() { let x = 10; let y = 20; return y; }");
         let instructions = &mir.functions[0].blocks[0].instructions;
 
-        assert!(!instructions.iter().any(|instr| matches!(&instr.op, Op::Alloca { name, .. } if name == "x")));
-        assert!(!instructions.iter().any(|instr| matches!(&instr.op, Op::StoreLocal { name, .. } if name == "x")));
+        assert!(
+            !instructions
+                .iter()
+                .any(|instr| matches!(&instr.op, Op::Alloca { name, .. } if name == "x"))
+        );
+        assert!(
+            !instructions
+                .iter()
+                .any(|instr| matches!(&instr.op, Op::StoreLocal { name, .. } if name == "x"))
+        );
     }
 
     #[test]

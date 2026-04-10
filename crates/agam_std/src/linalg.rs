@@ -19,12 +19,18 @@ impl Matrix {
     }
 
     pub fn zeros(rows: usize, cols: usize) -> Self {
-        Self { rows, cols, data: vec![0.0; rows * cols] }
+        Self {
+            rows,
+            cols,
+            data: vec![0.0; rows * cols],
+        }
     }
 
     pub fn identity(n: usize) -> Self {
         let mut m = Self::zeros(n, n);
-        for i in 0..n { m.data[i * n + i] = 1.0; }
+        for i in 0..n {
+            m.data[i * n + i] = 1.0;
+        }
         m
     }
 
@@ -63,7 +69,10 @@ impl Matrix {
             let mut max_val = lu.get(col, col).abs();
             for row in (col + 1)..n {
                 let v = lu.get(row, col).abs();
-                if v > max_val { max_val = v; max_row = row; }
+                if v > max_val {
+                    max_val = v;
+                    max_row = row;
+                }
             }
             if max_row != col {
                 // Swap rows (contiguous memory swap for cache performance)
@@ -76,7 +85,9 @@ impl Matrix {
             }
 
             let pivot = lu.get(col, col);
-            if pivot.abs() < 1e-15 { continue; } // singular
+            if pivot.abs() < 1e-15 {
+                continue;
+            } // singular
 
             for row in (col + 1)..n {
                 let factor = lu.get(row, col) / pivot;
@@ -98,7 +109,9 @@ impl Matrix {
 
         // Check singularity
         for i in 0..n {
-            if lu.get(i, i).abs() < 1e-15 { return None; }
+            if lu.get(i, i).abs() < 1e-15 {
+                return None;
+            }
         }
 
         let mut inv = Matrix::identity(n);
@@ -185,7 +198,9 @@ impl Matrix {
         let n = self.rows;
         let mut v: Vec<f64> = vec![1.0; n];
         let norm: f64 = (v.iter().map(|x| x * x).sum::<f64>()).sqrt();
-        for x in v.iter_mut() { *x /= norm; }
+        for x in v.iter_mut() {
+            *x /= norm;
+        }
 
         let mut eigenvalue = 0.0;
 
@@ -195,7 +210,9 @@ impl Matrix {
             let norm: f64 = (w.iter().map(|x| x * x).sum::<f64>()).sqrt();
             v = w.iter().map(|x| x / norm).collect();
 
-            if (new_eigenvalue - eigenvalue).abs() < tol { break; }
+            if (new_eigenvalue - eigenvalue).abs() < tol {
+                break;
+            }
             eigenvalue = new_eigenvalue;
         }
         (eigenvalue, v)
@@ -224,11 +241,7 @@ mod tests {
 
     #[test]
     fn test_det_3x3() {
-        let m = Matrix::new(3, 3, vec![
-            6.0, 1.0, 1.0,
-            4.0, -2.0, 5.0,
-            2.0, 8.0, 7.0,
-        ]);
+        let m = Matrix::new(3, 3, vec![6.0, 1.0, 1.0, 4.0, -2.0, 5.0, 2.0, 8.0, 7.0]);
         assert!((m.det() - (-306.0)).abs() < 1e-8);
     }
 
@@ -245,11 +258,7 @@ mod tests {
 
     #[test]
     fn test_trace() {
-        let m = Matrix::new(3, 3, vec![
-            1.0, 0.0, 0.0,
-            0.0, 5.0, 0.0,
-            0.0, 0.0, 9.0,
-        ]);
+        let m = Matrix::new(3, 3, vec![1.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 9.0]);
         assert_eq!(m.trace(), 15.0);
     }
 
@@ -276,11 +285,7 @@ mod tests {
     fn test_eigenvalue_diagonal() {
         // Diagonal matrix: eigenvalues are diagonal entries.
         // Dominant eigenvalue of diag(1, 5, 3) is 5.
-        let m = Matrix::new(3, 3, vec![
-            1.0, 0.0, 0.0,
-            0.0, 5.0, 0.0,
-            0.0, 0.0, 3.0,
-        ]);
+        let m = Matrix::new(3, 3, vec![1.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 3.0]);
         let (ev, _) = m.dominant_eigenvalue(100, 1e-10);
         assert!((ev - 5.0).abs() < 1e-6);
     }

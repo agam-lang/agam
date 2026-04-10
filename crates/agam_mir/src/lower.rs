@@ -59,7 +59,11 @@ impl MirLowering {
 
     /// Lower an entire HIR module into MIR.
     pub fn lower_module(&mut self, hir: &HirModule) -> MirModule {
-        let functions = hir.functions.iter().map(|f| self.lower_function(f)).collect();
+        let functions = hir
+            .functions
+            .iter()
+            .map(|f| self.lower_function(f))
+            .collect();
         MirModule { functions }
     }
 
@@ -71,10 +75,18 @@ impl MirLowering {
         self.current_block = entry;
 
         // Emit parameter allocas
-        let params: Vec<MirParam> = func.params.iter().map(|p| {
-            let v = self.fresh_value();
-            MirParam { name: p.name.clone(), value: v, ty: p.ty }
-        }).collect();
+        let params: Vec<MirParam> = func
+            .params
+            .iter()
+            .map(|p| {
+                let v = self.fresh_value();
+                MirParam {
+                    name: p.name.clone(),
+                    value: v,
+                    ty: p.ty,
+                }
+            })
+            .collect();
 
         // Lower body
         let result = self.lower_block(&func.body);
@@ -106,11 +118,25 @@ impl MirLowering {
 
     fn lower_stmt(&mut self, stmt: &HirStmt) {
         match stmt {
-            HirStmt::Let { name, ty, value, .. } => {
-                self.emit(*ty, Op::Alloca { name: name.clone(), ty: *ty });
+            HirStmt::Let {
+                name, ty, value, ..
+            } => {
+                self.emit(
+                    *ty,
+                    Op::Alloca {
+                        name: name.clone(),
+                        ty: *ty,
+                    },
+                );
                 if let Some(val_expr) = value {
                     let val = self.lower_expr(val_expr);
-                    self.emit(*ty, Op::StoreLocal { name: name.clone(), value: val });
+                    self.emit(
+                        *ty,
+                        Op::StoreLocal {
+                            name: name.clone(),
+                            value: val,
+                        },
+                    );
                 }
             }
             HirStmt::Expr(expr) => {
@@ -146,14 +172,22 @@ impl MirLowering {
 
                 self.current_block = after_block;
             }
-            HirStmt::If { condition, then_branch, else_branch } => {
+            HirStmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let then_block = self.fresh_block();
                 let else_block = self.fresh_block();
                 let after_block = self.fresh_block();
 
                 let cond_val = self.lower_expr(condition);
-                
-                let target_else = if else_branch.is_some() { else_block } else { after_block };
+
+                let target_else = if else_branch.is_some() {
+                    else_block
+                } else {
+                    after_block
+                };
                 self.finish_block(Terminator::Branch {
                     condition: cond_val,
                     then_block,
@@ -189,11 +223,24 @@ impl MirLowering {
             HirExprKind::Binary { op, left, right } => {
                 let l = self.lower_expr(left);
                 let r = self.lower_expr(right);
-                self.emit(ty, Op::BinOp { op: lower_binop(*op), left: l, right: r })
+                self.emit(
+                    ty,
+                    Op::BinOp {
+                        op: lower_binop(*op),
+                        left: l,
+                        right: r,
+                    },
+                )
             }
             HirExprKind::Unary { op, operand } => {
                 let v = self.lower_expr(operand);
-                self.emit(ty, Op::UnOp { op: lower_unop(*op), operand: v })
+                self.emit(
+                    ty,
+                    Op::UnOp {
+                        op: lower_unop(*op),
+                        operand: v,
+                    },
+                )
             }
 
             HirExprKind::Call { callee, args } => {
@@ -202,47 +249,92 @@ impl MirLowering {
                     _ => "__indirect_call".into(),
                 };
                 let arg_vals: Vec<ValueId> = args.iter().map(|a| self.lower_expr(a)).collect();
-                self.emit(ty, Op::Call { callee: callee_name, args: arg_vals })
+                self.emit(
+                    ty,
+                    Op::Call {
+                        callee: callee_name,
+                        args: arg_vals,
+                    },
+                )
             }
 
-            HirExprKind::MethodCall { object, method, args } => {
+            HirExprKind::MethodCall {
+                object,
+                method,
+                args,
+            } => {
                 let obj_val = self.lower_expr(object);
                 let mut all_args = vec![obj_val];
                 all_args.extend(args.iter().map(|a| self.lower_expr(a)));
-                self.emit(ty, Op::Call { callee: method.clone(), args: all_args })
+                self.emit(
+                    ty,
+                    Op::Call {
+                        callee: method.clone(),
+                        args: all_args,
+                    },
+                )
             }
 
             HirExprKind::FieldAccess { object, field } => {
                 let obj = self.lower_expr(object);
-                self.emit(ty, Op::GetField { object: obj, field: field.clone() })
+                self.emit(
+                    ty,
+                    Op::GetField {
+                        object: obj,
+                        field: field.clone(),
+                    },
+                )
             }
             HirExprKind::Index { object, index } => {
                 let obj = self.lower_expr(object);
                 let idx = self.lower_expr(index);
-                self.emit(ty, Op::GetIndex { object: obj, index: idx })
+                self.emit(
+                    ty,
+                    Op::GetIndex {
+                        object: obj,
+                        index: idx,
+                    },
+                )
             }
 
             HirExprKind::Assign { target, value } => {
                 let val = self.lower_expr(value);
                 if let HirExprKind::Var(name) = &target.kind {
-                    self.emit(ty, Op::StoreLocal { name: name.clone(), value: val })
+                    self.emit(
+                        ty,
+                        Op::StoreLocal {
+                            name: name.clone(),
+                            value: val,
+                        },
+                    )
                 } else {
                     val
                 }
             }
 
             HirExprKind::Array(elems) | HirExprKind::Tuple(elems) => {
-                for e in elems { self.lower_expr(e); }
+                for e in elems {
+                    self.lower_expr(e);
+                }
                 self.emit(ty, Op::Unit)
             }
 
-            HirExprKind::Block(block) => {
-                self.lower_block(block).unwrap_or_else(|| self.emit(ty, Op::Unit))
-            }
+            HirExprKind::Block(block) => self
+                .lower_block(block)
+                .unwrap_or_else(|| self.emit(ty, Op::Unit)),
 
-            HirExprKind::Cast { expr: inner, target_ty } => {
+            HirExprKind::Cast {
+                expr: inner,
+                target_ty,
+            } => {
                 let v = self.lower_expr(inner);
-                self.emit(*target_ty, Op::Cast { value: v, target_ty: *target_ty })
+                self.emit(
+                    *target_ty,
+                    Op::Cast {
+                        value: v,
+                        target_ty: *target_ty,
+                    },
+                )
             }
         }
     }
@@ -284,9 +376,9 @@ fn lower_unop(op: HirUnaryOp) -> MirUnOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agam_errors::span::SourceId;
     use agam_hir::lower::HirLowering;
     use agam_lexer::Lexer;
-    use agam_errors::span::SourceId;
 
     fn lower_to_mir(source: &str) -> MirModule {
         let source_id = SourceId(0);
@@ -296,7 +388,9 @@ mod tests {
             let tok = lexer.next_token();
             let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
             tokens.push(tok);
-            if is_eof { break; }
+            if is_eof {
+                break;
+            }
         }
         let mut parser = agam_parser::Parser::new(tokens);
         let module = parser.parse_module(source_id).expect("parse failed");
@@ -321,7 +415,9 @@ mod tests {
         let mir = lower_to_mir("fn main(): return 42");
         let f = &mir.functions[0];
         let has_int = f.blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| matches!(&i.op, Op::ConstInt(42)))
+            b.instructions
+                .iter()
+                .any(|i| matches!(&i.op, Op::ConstInt(42)))
         });
         assert!(has_int, "expected ConstInt(42) in MIR");
     }
@@ -331,7 +427,15 @@ mod tests {
         let mir = lower_to_mir("fn main(): let x = 1 + 2");
         let f = &mir.functions[0];
         let has_add = f.blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| matches!(&i.op, Op::BinOp { op: MirBinOp::Add, .. }))
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::BinOp {
+                        op: MirBinOp::Add,
+                        ..
+                    }
+                )
+            })
         });
         assert!(has_add, "expected BinOp::Add in MIR");
     }
@@ -341,7 +445,9 @@ mod tests {
         let mir = lower_to_mir("fn main(): print(42)");
         let f = &mir.functions[0];
         let has_call = f.blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| matches!(&i.op, Op::Call { callee, .. } if callee == "print"))
+            b.instructions
+                .iter()
+                .any(|i| matches!(&i.op, Op::Call { callee, .. } if callee == "print"))
         });
         assert!(has_call, "expected Call to 'print' in MIR");
     }

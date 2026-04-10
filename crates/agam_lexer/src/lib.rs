@@ -8,12 +8,12 @@
 //!
 //! Both modes produce the same `Token` stream, enabling a unified parser.
 
-mod token;
 mod cursor;
 mod lexer;
+mod token;
 
-pub use token::{Token, TokenKind};
 pub use lexer::Lexer;
+pub use token::{Token, TokenKind};
 
 use agam_errors::span::SourceId;
 

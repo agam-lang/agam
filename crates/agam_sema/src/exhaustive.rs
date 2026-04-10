@@ -5,8 +5,8 @@
 //! - **Non-exhaustive patterns** — missing cases.
 //! - **Unreachable patterns** — arms that can never match.
 
-use std::collections::HashSet;
 use agam_errors::Span;
+use std::collections::HashSet;
 
 /// A simplified pattern representation for exhaustiveness analysis.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -24,7 +24,10 @@ pub enum SimplePattern {
     /// A tuple of patterns.
     Tuple(Vec<SimplePattern>),
     /// A constructor with fields (enum variant with data).
-    Constructor { name: String, fields: Vec<SimplePattern> },
+    Constructor {
+        name: String,
+        fields: Vec<SimplePattern>,
+    },
 }
 
 /// The type shape being matched against (needed to know what's exhaustive).
@@ -60,7 +63,10 @@ pub fn check_exhaustiveness(
     let mut errors = Vec::new();
 
     // If any pattern is a wildcard, it's automatically exhaustive.
-    if patterns.iter().any(|p| matches!(p, SimplePattern::Wildcard)) {
+    if patterns
+        .iter()
+        .any(|p| matches!(p, SimplePattern::Wildcard))
+    {
         // Check for unreachable patterns after the wildcard.
         let mut found_wildcard = false;
         for (i, p) in patterns.iter().enumerate() {
@@ -79,9 +85,16 @@ pub fn check_exhaustiveness(
 
     match shape {
         TypeShape::Bool => {
-            let covered: HashSet<bool> = patterns.iter().filter_map(|p| {
-                if let SimplePattern::Bool(v) = p { Some(*v) } else { None }
-            }).collect();
+            let covered: HashSet<bool> = patterns
+                .iter()
+                .filter_map(|p| {
+                    if let SimplePattern::Bool(v) = p {
+                        Some(*v)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
 
             if !covered.contains(&true) {
                 errors.push(ExhaustivenessError {
@@ -98,20 +111,27 @@ pub fn check_exhaustiveness(
         }
 
         TypeShape::Enum { variants } => {
-            let covered: HashSet<&str> = patterns.iter().filter_map(|p| match p {
-                SimplePattern::Variant(name) => Some(name.as_str()),
-                SimplePattern::Constructor { name, .. } => Some(name.as_str()),
-                _ => None,
-            }).collect();
+            let covered: HashSet<&str> = patterns
+                .iter()
+                .filter_map(|p| match p {
+                    SimplePattern::Variant(name) => Some(name.as_str()),
+                    SimplePattern::Constructor { name, .. } => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect();
 
-            let missing: Vec<&str> = variants.iter()
+            let missing: Vec<&str> = variants
+                .iter()
                 .filter(|v| !covered.contains(v.as_str()))
                 .map(|v| v.as_str())
                 .collect();
 
             if !missing.is_empty() {
                 errors.push(ExhaustivenessError {
-                    message: format!("non-exhaustive pattern: missing variant(s): {}", missing.join(", ")),
+                    message: format!(
+                        "non-exhaustive pattern: missing variant(s): {}",
+                        missing.join(", ")
+                    ),
                     span,
                 });
             }
@@ -153,7 +173,9 @@ pub fn check_exhaustiveness(
 mod tests {
     use super::*;
 
-    fn dummy_span() -> Span { Span::dummy() }
+    fn dummy_span() -> Span {
+        Span::dummy()
+    }
 
     #[test]
     fn test_bool_exhaustive() {
@@ -211,10 +233,7 @@ mod tests {
 
     #[test]
     fn test_unreachable_after_wildcard() {
-        let patterns = vec![
-            SimplePattern::Wildcard,
-            SimplePattern::Bool(true),
-        ];
+        let patterns = vec![SimplePattern::Wildcard, SimplePattern::Bool(true)];
         let errors = check_exhaustiveness(&patterns, &TypeShape::Bool, dummy_span());
         assert!(errors.iter().any(|e| e.message.contains("unreachable")));
     }
@@ -223,7 +242,11 @@ mod tests {
     fn test_int_without_wildcard() {
         let patterns = vec![SimplePattern::Int(1), SimplePattern::Int(2)];
         let errors = check_exhaustiveness(&patterns, &TypeShape::Int, dummy_span());
-        assert!(errors.iter().any(|e| e.message.contains("missing wildcard")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.message.contains("missing wildcard"))
+        );
     }
 
     #[test]

@@ -11,7 +11,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn)]
 
-use crate::hwinfo::{hwinfo, SimdTier};
+use crate::hwinfo::{SimdTier, hwinfo};
 
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::*;
@@ -116,14 +116,13 @@ impl SimdOps {
     /// Blocked matrix multiply: C += A × B.
     /// Uses tiling to maximize L1 cache reuse.
     /// A: [m × k], B: [k × n], C: [m × n], all row-major.
-    pub fn matmul_tiled(
-        a: &[f64], b: &[f64], c: &mut [f64],
-        m: usize, k: usize, n: usize,
-    ) {
+    pub fn matmul_tiled(a: &[f64], b: &[f64], c: &mut [f64], m: usize, k: usize, n: usize) {
         let tile = hwinfo().optimal_tile_size().min(m).min(n).min(k).max(1);
 
         // Zero output
-        for v in c.iter_mut() { *v = 0.0; }
+        for v in c.iter_mut() {
+            *v = 0.0;
+        }
 
         // Blocked / tiled triple loop
         let mut ii = 0;
@@ -143,11 +142,7 @@ impl SimdOps {
                             let row_end = i * n + j_end;
                             let b_start = kp * n + jj;
                             let b_end = kp * n + j_end;
-                            axpy_inplace(
-                                &mut c[row_start..row_end],
-                                &b[b_start..b_end],
-                                a_ik,
-                            );
+                            axpy_inplace(&mut c[row_start..row_end], &b[b_start..b_end], a_ik);
                         }
                     }
                     kk += tile;
@@ -210,12 +205,7 @@ enum BinaryOp {
     Mul,
 }
 
-fn dispatch_binary(
-    a: &[f64],
-    b: &[f64],
-    out: &mut [f64],
-    op: BinaryOp,
-) {
+fn dispatch_binary(a: &[f64], b: &[f64], out: &mut [f64], op: BinaryOp) {
     let tier = SimdOps::tier();
 
     #[cfg(target_arch = "x86_64")]

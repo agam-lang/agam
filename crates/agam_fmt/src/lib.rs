@@ -190,8 +190,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         let file = dir.join("sample.agam");
-        std::fs::write(&file, "fn main() {   \n    return 0; \t\n}")
-            .expect("write sample file");
+        std::fs::write(&file, "fn main() {   \n    return 0; \t\n}").expect("write sample file");
 
         let changed = format_paths(std::slice::from_ref(&file), false).expect("format paths");
 
@@ -227,8 +226,7 @@ mod tests {
         std::fs::write(&entry, "fn main() {   \n    return 0; \t\n}").expect("write entry");
         std::fs::write(&test_file, "@test\nfn smoke() -> bool:\n    return true\n")
             .expect("write test");
-        std::fs::write(&loose_file, "fn ignored() -> i32:\n    return 0\n")
-            .expect("write loose");
+        std::fs::write(&loose_file, "fn ignored() -> i32:\n    return 0\n").expect("write loose");
 
         let changed = format_inputs(vec![dir.clone()], true).expect("format workspace inputs");
 

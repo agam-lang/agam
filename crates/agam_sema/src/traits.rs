@@ -6,9 +6,9 @@
 //! 3. **Method dispatch** — resolves `obj.method()` to the correct impl.
 //! 4. **Coherence checking** — ensures no duplicate impl for the same trait+type pair.
 
-use std::collections::HashMap;
-use agam_errors::Span;
 use crate::symbol::{SymbolId, TypeId};
+use agam_errors::Span;
+use std::collections::HashMap;
 
 /// A trait definition in the trait registry.
 #[derive(Debug, Clone)]
@@ -88,7 +88,8 @@ impl TraitRegistry {
         // Coherence check: no duplicate impl for same trait+type pair.
         if let Some(trait_id) = entry.trait_id {
             for existing in &self.impls {
-                if existing.trait_id == Some(trait_id) && existing.target_type == entry.target_type {
+                if existing.trait_id == Some(trait_id) && existing.target_type == entry.target_type
+                {
                     self.errors.push(TraitError {
                         message: format!(
                             "conflicting implementations: trait already implemented for this type"
@@ -149,9 +150,9 @@ impl TraitRegistry {
 
     /// Check if a type implements a specific trait.
     pub fn type_implements_trait(&self, target: TypeId, trait_id: SymbolId) -> bool {
-        self.impls.iter().any(|imp| {
-            imp.target_type == target && imp.trait_id == Some(trait_id)
-        })
+        self.impls
+            .iter()
+            .any(|imp| imp.target_type == target && imp.trait_id == Some(trait_id))
     }
 }
 
@@ -159,7 +160,9 @@ impl TraitRegistry {
 mod tests {
     use super::*;
 
-    fn dummy_span() -> Span { Span::dummy() }
+    fn dummy_span() -> Span {
+        Span::dummy()
+    }
 
     #[test]
     fn test_register_and_resolve_inherent_method() {
@@ -167,13 +170,16 @@ mod tests {
         let target = TypeId(10);
 
         let mut methods = HashMap::new();
-        methods.insert("len".into(), MethodSig {
-            name: "len".into(),
-            params: vec![],
-            return_ty: TypeId(4), // i32
-            has_self: true,
-            span: dummy_span(),
-        });
+        methods.insert(
+            "len".into(),
+            MethodSig {
+                name: "len".into(),
+                params: vec![],
+                return_ty: TypeId(4), // i32
+                has_self: true,
+                span: dummy_span(),
+            },
+        );
 
         reg.register_impl(ImplEntry {
             target_type: target,
@@ -194,13 +200,16 @@ mod tests {
         let target = TypeId(10);
 
         let mut trait_methods = HashMap::new();
-        trait_methods.insert("display".into(), MethodSig {
-            name: "display".into(),
-            params: vec![],
-            return_ty: TypeId(3), // str
-            has_self: true,
-            span: dummy_span(),
-        });
+        trait_methods.insert(
+            "display".into(),
+            MethodSig {
+                name: "display".into(),
+                params: vec![],
+                return_ty: TypeId(3), // str
+                has_self: true,
+                span: dummy_span(),
+            },
+        );
 
         reg.register_trait(TraitDef {
             symbol: trait_sym,
@@ -210,13 +219,16 @@ mod tests {
         });
 
         let mut impl_methods = HashMap::new();
-        impl_methods.insert("display".into(), MethodSig {
-            name: "display".into(),
-            params: vec![],
-            return_ty: TypeId(3),
-            has_self: true,
-            span: dummy_span(),
-        });
+        impl_methods.insert(
+            "display".into(),
+            MethodSig {
+                name: "display".into(),
+                params: vec![],
+                return_ty: TypeId(3),
+                has_self: true,
+                span: dummy_span(),
+            },
+        );
 
         reg.register_impl(ImplEntry {
             target_type: target,
@@ -260,13 +272,16 @@ mod tests {
         let target = TypeId(10);
 
         let mut trait_methods = HashMap::new();
-        trait_methods.insert("required_method".into(), MethodSig {
-            name: "required_method".into(),
-            params: vec![],
-            return_ty: TypeId(0),
-            has_self: true,
-            span: dummy_span(),
-        });
+        trait_methods.insert(
+            "required_method".into(),
+            MethodSig {
+                name: "required_method".into(),
+                params: vec![],
+                return_ty: TypeId(0),
+                has_self: true,
+                span: dummy_span(),
+            },
+        );
 
         reg.register_trait(TraitDef {
             symbol: trait_sym,
@@ -296,13 +311,16 @@ mod tests {
 
         // Inherent impl
         let mut inherent = HashMap::new();
-        inherent.insert("foo".into(), MethodSig {
-            name: "foo".into(),
-            params: vec![],
-            return_ty: TypeId(4),
-            has_self: true,
-            span: dummy_span(),
-        });
+        inherent.insert(
+            "foo".into(),
+            MethodSig {
+                name: "foo".into(),
+                params: vec![],
+                return_ty: TypeId(4),
+                has_self: true,
+                span: dummy_span(),
+            },
+        );
         reg.register_impl(ImplEntry {
             target_type: target,
             trait_id: None,
@@ -312,13 +330,16 @@ mod tests {
 
         // Trait impl with same method name
         let mut trait_impl = HashMap::new();
-        trait_impl.insert("foo".into(), MethodSig {
-            name: "foo".into(),
-            params: vec![],
-            return_ty: TypeId(5), // different return type
-            has_self: true,
-            span: dummy_span(),
-        });
+        trait_impl.insert(
+            "foo".into(),
+            MethodSig {
+                name: "foo".into(),
+                params: vec![],
+                return_ty: TypeId(5), // different return type
+                has_self: true,
+                span: dummy_span(),
+            },
+        );
         reg.register_impl(ImplEntry {
             target_type: target,
             trait_id: Some(trait_sym),

@@ -28,19 +28,35 @@ impl Column {
     }
 
     pub fn as_float(&self) -> Option<&[f64]> {
-        if let Column::Float(v) = self { Some(v) } else { None }
+        if let Column::Float(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 
     pub fn as_int(&self) -> Option<&[i64]> {
-        if let Column::Int(v) = self { Some(v) } else { None }
+        if let Column::Int(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 
     pub fn as_str(&self) -> Option<&[String]> {
-        if let Column::Str(v) = self { Some(v) } else { None }
+        if let Column::Str(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 
     pub fn as_bool(&self) -> Option<&[bool]> {
-        if let Column::Bool(v) = self { Some(v) } else { None }
+        if let Column::Bool(v) = self {
+            Some(v)
+        } else {
+            None
+        }
     }
 
     /// Sum (for numeric columns).
@@ -54,16 +70,19 @@ impl Column {
 
     /// Mean (for float columns).
     pub fn mean(&self) -> Option<f64> {
-        self.as_float().map(|v| v.iter().sum::<f64>() / v.len() as f64)
+        self.as_float()
+            .map(|v| v.iter().sum::<f64>() / v.len() as f64)
     }
 
     /// Min/max for float columns.
     pub fn min_float(&self) -> Option<f64> {
-        self.as_float().and_then(|v| v.iter().cloned().reduce(f64::min))
+        self.as_float()
+            .and_then(|v| v.iter().cloned().reduce(f64::min))
     }
 
     pub fn max_float(&self) -> Option<f64> {
-        self.as_float().and_then(|v| v.iter().cloned().reduce(f64::max))
+        self.as_float()
+            .and_then(|v| v.iter().cloned().reduce(f64::max))
     }
 }
 
@@ -75,7 +94,9 @@ pub struct DataFrame {
 
 impl DataFrame {
     pub fn new() -> Self {
-        Self { columns: Vec::new() }
+        Self {
+            columns: Vec::new(),
+        }
     }
 
     /// Create from named columns.
@@ -116,33 +137,57 @@ impl DataFrame {
     /// Filter rows by a boolean mask.
     pub fn filter(&self, mask: &[bool]) -> DataFrame {
         assert_eq!(mask.len(), self.nrows());
-        let columns = self.columns.iter().map(|(name, col)| {
-            let filtered = match col {
-                Column::Float(v) => Column::Float(
-                    v.iter().zip(mask).filter(|(_, m)| **m).map(|(x, _)| *x).collect()
-                ),
-                Column::Int(v) => Column::Int(
-                    v.iter().zip(mask).filter(|(_, m)| **m).map(|(x, _)| *x).collect()
-                ),
-                Column::Str(v) => Column::Str(
-                    v.iter().zip(mask).filter(|(_, m)| **m).map(|(x, _)| x.clone()).collect()
-                ),
-                Column::Bool(v) => Column::Bool(
-                    v.iter().zip(mask).filter(|(_, m)| **m).map(|(x, _)| *x).collect()
-                ),
-            };
-            (name.clone(), filtered)
-        }).collect();
+        let columns = self
+            .columns
+            .iter()
+            .map(|(name, col)| {
+                let filtered = match col {
+                    Column::Float(v) => Column::Float(
+                        v.iter()
+                            .zip(mask)
+                            .filter(|(_, m)| **m)
+                            .map(|(x, _)| *x)
+                            .collect(),
+                    ),
+                    Column::Int(v) => Column::Int(
+                        v.iter()
+                            .zip(mask)
+                            .filter(|(_, m)| **m)
+                            .map(|(x, _)| *x)
+                            .collect(),
+                    ),
+                    Column::Str(v) => Column::Str(
+                        v.iter()
+                            .zip(mask)
+                            .filter(|(_, m)| **m)
+                            .map(|(x, _)| x.clone())
+                            .collect(),
+                    ),
+                    Column::Bool(v) => Column::Bool(
+                        v.iter()
+                            .zip(mask)
+                            .filter(|(_, m)| **m)
+                            .map(|(x, _)| *x)
+                            .collect(),
+                    ),
+                };
+                (name.clone(), filtered)
+            })
+            .collect();
         DataFrame { columns }
     }
 
     /// Select specific columns by name.
     pub fn select(&self, names: &[&str]) -> DataFrame {
-        let columns = names.iter().filter_map(|name| {
-            self.columns.iter()
-                .find(|(n, _)| n == name)
-                .map(|(n, c)| (n.clone(), c.clone()))
-        }).collect();
+        let columns = names
+            .iter()
+            .filter_map(|name| {
+                self.columns
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map(|(n, c)| (n.clone(), c.clone()))
+            })
+            .collect();
         DataFrame { columns }
     }
 
@@ -167,30 +212,38 @@ impl DataFrame {
 
     /// Reindex the DataFrame by a permutation.
     fn reindex(&self, indices: &[usize]) -> DataFrame {
-        let columns = self.columns.iter().map(|(name, col)| {
-            let reindexed = match col {
-                Column::Float(v) => Column::Float(indices.iter().map(|i| v[*i]).collect()),
-                Column::Int(v) => Column::Int(indices.iter().map(|i| v[*i]).collect()),
-                Column::Str(v) => Column::Str(indices.iter().map(|i| v[*i].clone()).collect()),
-                Column::Bool(v) => Column::Bool(indices.iter().map(|i| v[*i]).collect()),
-            };
-            (name.clone(), reindexed)
-        }).collect();
+        let columns = self
+            .columns
+            .iter()
+            .map(|(name, col)| {
+                let reindexed = match col {
+                    Column::Float(v) => Column::Float(indices.iter().map(|i| v[*i]).collect()),
+                    Column::Int(v) => Column::Int(indices.iter().map(|i| v[*i]).collect()),
+                    Column::Str(v) => Column::Str(indices.iter().map(|i| v[*i].clone()).collect()),
+                    Column::Bool(v) => Column::Bool(indices.iter().map(|i| v[*i]).collect()),
+                };
+                (name.clone(), reindexed)
+            })
+            .collect();
         DataFrame { columns }
     }
 
     /// Head: first n rows.
     pub fn head(&self, n: usize) -> DataFrame {
         let n = n.min(self.nrows());
-        let columns = self.columns.iter().map(|(name, col)| {
-            let sliced = match col {
-                Column::Float(v) => Column::Float(v[..n].to_vec()),
-                Column::Int(v) => Column::Int(v[..n].to_vec()),
-                Column::Str(v) => Column::Str(v[..n].to_vec()),
-                Column::Bool(v) => Column::Bool(v[..n].to_vec()),
-            };
-            (name.clone(), sliced)
-        }).collect();
+        let columns = self
+            .columns
+            .iter()
+            .map(|(name, col)| {
+                let sliced = match col {
+                    Column::Float(v) => Column::Float(v[..n].to_vec()),
+                    Column::Int(v) => Column::Int(v[..n].to_vec()),
+                    Column::Str(v) => Column::Str(v[..n].to_vec()),
+                    Column::Bool(v) => Column::Bool(v[..n].to_vec()),
+                };
+                (name.clone(), sliced)
+            })
+            .collect();
         DataFrame { columns }
     }
 
@@ -198,15 +251,19 @@ impl DataFrame {
     pub fn tail(&self, n: usize) -> DataFrame {
         let total = self.nrows();
         let start = total.saturating_sub(n);
-        let columns = self.columns.iter().map(|(name, col)| {
-            let sliced = match col {
-                Column::Float(v) => Column::Float(v[start..].to_vec()),
-                Column::Int(v) => Column::Int(v[start..].to_vec()),
-                Column::Str(v) => Column::Str(v[start..].to_vec()),
-                Column::Bool(v) => Column::Bool(v[start..].to_vec()),
-            };
-            (name.clone(), sliced)
-        }).collect();
+        let columns = self
+            .columns
+            .iter()
+            .map(|(name, col)| {
+                let sliced = match col {
+                    Column::Float(v) => Column::Float(v[start..].to_vec()),
+                    Column::Int(v) => Column::Int(v[start..].to_vec()),
+                    Column::Str(v) => Column::Str(v[start..].to_vec()),
+                    Column::Bool(v) => Column::Bool(v[start..].to_vec()),
+                };
+                (name.clone(), sliced)
+            })
+            .collect();
         DataFrame { columns }
     }
 
@@ -218,7 +275,8 @@ impl DataFrame {
                 let mean = data.iter().sum::<f64>() / data.len() as f64;
                 let min = data.iter().cloned().fold(f64::INFINITY, f64::min);
                 let max = data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-                let var = data.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / data.len() as f64;
+                let var =
+                    data.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / data.len() as f64;
                 results.push((name.clone(), mean, var.sqrt(), min, max));
             }
         }
@@ -253,7 +311,15 @@ mod tests {
 
     fn sample_df() -> DataFrame {
         DataFrame::from_columns(vec![
-            ("name".into(), Column::Str(vec!["Alice".into(), "Bob".into(), "Charlie".into(), "Diana".into()])),
+            (
+                "name".into(),
+                Column::Str(vec![
+                    "Alice".into(),
+                    "Bob".into(),
+                    "Charlie".into(),
+                    "Diana".into(),
+                ]),
+            ),
             ("age".into(), Column::Float(vec![30.0, 25.0, 35.0, 28.0])),
             ("score".into(), Column::Float(vec![90.0, 85.0, 92.0, 88.0])),
             ("group".into(), Column::Int(vec![1, 2, 1, 2])),

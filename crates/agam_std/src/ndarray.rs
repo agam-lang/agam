@@ -22,7 +22,9 @@ pub fn arange(start: f64, stop: f64, step: f64) -> Tensor {
 
 /// Create a 1D tensor with n evenly spaced values in [start, stop].
 pub fn linspace(start: f64, stop: f64, n: usize) -> Tensor {
-    if n <= 1 { return Tensor::vector(vec![start]); }
+    if n <= 1 {
+        return Tensor::vector(vec![start]);
+    }
     let step = (stop - start) / (n - 1) as f64;
     let data: Vec<f64> = (0..n).map(|i| start + i as f64 * step).collect();
     Tensor::vector(data)
@@ -52,7 +54,9 @@ pub fn squeeze(t: &Tensor) -> Tensor {
 
 /// Argmax: index of the maximum element.
 pub fn argmax(t: &Tensor) -> usize {
-    t.data.iter().enumerate()
+    t.data
+        .iter()
+        .enumerate()
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(i, _)| i)
         .unwrap()
@@ -60,7 +64,9 @@ pub fn argmax(t: &Tensor) -> usize {
 
 /// Argmin: index of the minimum element.
 pub fn argmin(t: &Tensor) -> usize {
-    t.data.iter().enumerate()
+    t.data
+        .iter()
+        .enumerate()
         .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(i, _)| i)
         .unwrap()
@@ -74,7 +80,10 @@ pub fn cumsum(t: &Tensor) -> Tensor {
         acc += v;
         data.push(acc);
     }
-    Tensor { shape: t.shape.clone(), data }
+    Tensor {
+        shape: t.shape.clone(),
+        data,
+    }
 }
 
 /// Element-wise absolute value.
@@ -91,10 +100,15 @@ pub fn clip(t: &Tensor, lo: f64, hi: f64) -> Tensor {
 pub fn where_cond(cond: &[bool], a: &Tensor, b: &Tensor) -> Tensor {
     assert_eq!(cond.len(), a.numel());
     assert_eq!(a.numel(), b.numel());
-    let data: Vec<f64> = cond.iter().zip(a.data.iter().zip(&b.data))
+    let data: Vec<f64> = cond
+        .iter()
+        .zip(a.data.iter().zip(&b.data))
         .map(|(&c, (&av, &bv))| if c { av } else { bv })
         .collect();
-    Tensor { shape: a.shape.clone(), data }
+    Tensor {
+        shape: a.shape.clone(),
+        data,
+    }
 }
 
 /// Stack: combine multiple 1D tensors into a 2D tensor (row-wise).
@@ -104,13 +118,19 @@ pub fn stack(tensors: &[Tensor]) -> Tensor {
         assert_eq!(t.numel(), cols, "all tensors must have same size");
     }
     let rows = tensors.len();
-    let data: Vec<f64> = tensors.iter().flat_map(|t| t.data.iter().cloned()).collect();
+    let data: Vec<f64> = tensors
+        .iter()
+        .flat_map(|t| t.data.iter().cloned())
+        .collect();
     Tensor::from_data(&[rows, cols], data)
 }
 
 /// Concatenate: join multiple 1D tensors end-to-end.
 pub fn concatenate(tensors: &[Tensor]) -> Tensor {
-    let data: Vec<f64> = tensors.iter().flat_map(|t| t.data.iter().cloned()).collect();
+    let data: Vec<f64> = tensors
+        .iter()
+        .flat_map(|t| t.data.iter().cloned())
+        .collect();
     Tensor::vector(data)
 }
 
@@ -137,7 +157,9 @@ pub fn norm(t: &Tensor) -> f64 {
 /// Normalize to unit norm.
 pub fn normalize(t: &Tensor) -> Tensor {
     let n = norm(t);
-    if n < 1e-15 { return t.clone(); }
+    if n < 1e-15 {
+        return t.clone();
+    }
     t.scale(1.0 / n)
 }
 
@@ -150,7 +172,9 @@ pub fn full(shape: &[usize], value: f64) -> Tensor {
 /// Eye: identity matrix.
 pub fn eye(n: usize) -> Tensor {
     let mut data = vec![0.0; n * n];
-    for i in 0..n { data[i * n + i] = 1.0; }
+    for i in 0..n {
+        data[i * n + i] = 1.0;
+    }
     Tensor::from_data(&[n, n], data)
 }
 
@@ -158,7 +182,9 @@ pub fn eye(n: usize) -> Tensor {
 pub fn diag(values: &[f64]) -> Tensor {
     let n = values.len();
     let mut data = vec![0.0; n * n];
-    for i in 0..n { data[i * n + i] = values[i]; }
+    for i in 0..n {
+        data[i * n + i] = values[i];
+    }
     Tensor::from_data(&[n, n], data)
 }
 

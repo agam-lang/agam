@@ -47,13 +47,19 @@ impl Tensor {
 
     /// Create a scalar tensor.
     pub fn scalar(val: f64) -> Self {
-        Self { shape: vec![], data: vec![val] }
+        Self {
+            shape: vec![],
+            data: vec![val],
+        }
     }
 
     /// Create a 1D tensor (vector).
     pub fn vector(data: Vec<f64>) -> Self {
         let len = data.len();
-        Self { shape: vec![len], data }
+        Self {
+            shape: vec![len],
+            data,
+        }
     }
 
     /// Total number of elements.
@@ -81,7 +87,10 @@ impl Tensor {
         assert_eq!(self.shape, other.shape, "shapes must match for add");
         let mut data = vec![0.0; self.numel()];
         SimdOps::add(&self.data, &other.data, &mut data);
-        Tensor { shape: self.shape.clone(), data }
+        Tensor {
+            shape: self.shape.clone(),
+            data,
+        }
     }
 
     /// Element-wise subtraction. Shapes must match.
@@ -89,7 +98,10 @@ impl Tensor {
         assert_eq!(self.shape, other.shape, "shapes must match for sub");
         let mut data = vec![0.0; self.numel()];
         SimdOps::sub(&self.data, &other.data, &mut data);
-        Tensor { shape: self.shape.clone(), data }
+        Tensor {
+            shape: self.shape.clone(),
+            data,
+        }
     }
 
     /// Element-wise multiplication (Hadamard). Shapes must match.
@@ -97,14 +109,20 @@ impl Tensor {
         assert_eq!(self.shape, other.shape, "shapes must match for mul");
         let mut data = vec![0.0; self.numel()];
         SimdOps::mul(&self.data, &other.data, &mut data);
-        Tensor { shape: self.shape.clone(), data }
+        Tensor {
+            shape: self.shape.clone(),
+            data,
+        }
     }
 
     /// Scalar multiplication.
     pub fn scale(&self, s: f64) -> Tensor {
         let mut data = vec![0.0; self.numel()];
         SimdOps::scale(&self.data, s, &mut data);
-        Tensor { shape: self.shape.clone(), data }
+        Tensor {
+            shape: self.shape.clone(),
+            data,
+        }
     }
 
     /// Sum all elements.
@@ -150,13 +168,19 @@ impl Tensor {
                 data[j * m + i] = self.data[i * n + j];
             }
         }
-        Tensor { shape: vec![n, m], data }
+        Tensor {
+            shape: vec![n, m],
+            data,
+        }
     }
 
     /// Apply a function element-wise.
     pub fn map<F: Fn(f64) -> f64>(&self, f: F) -> Tensor {
         let data: Vec<f64> = self.data.iter().map(|x| f(*x)).collect();
-        Tensor { shape: self.shape.clone(), data }
+        Tensor {
+            shape: self.shape.clone(),
+            data,
+        }
     }
 
     /// ReLU activation: max(0, x)
@@ -175,7 +199,10 @@ impl Tensor {
         let exps: Vec<f64> = self.data.iter().map(|x| (x - max_val).exp()).collect();
         let sum: f64 = exps.iter().sum();
         let data: Vec<f64> = exps.iter().map(|x| x / sum).collect();
-        Tensor { shape: self.shape.clone(), data }
+        Tensor {
+            shape: self.shape.clone(),
+            data,
+        }
     }
 }
 

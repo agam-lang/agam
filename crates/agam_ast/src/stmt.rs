@@ -3,10 +3,10 @@
 //! Statements perform actions but don't produce values directly.
 //! Examples: `let x = 5;`, `return 42;`, `while cond { ... }`.
 
-use crate::{Ident, NodeId};
-use crate::expr::{Expr, Block};
-use crate::types::TypeExpr;
+use crate::expr::{Block, Expr};
 use crate::pattern::Pattern;
+use crate::types::TypeExpr;
+use crate::{Ident, NodeId};
 use agam_errors::Span;
 
 /// A statement node.
@@ -51,15 +51,10 @@ pub enum StmtKind {
     Yield(Option<Expr>),
 
     /// `while condition { body }`
-    While {
-        condition: Expr,
-        body: Block,
-    },
+    While { condition: Expr, body: Block },
 
     /// `loop { body }`
-    Loop {
-        body: Block,
-    },
+    Loop { body: Block },
 
     /// `for pattern in iterable { body }`
     For {

@@ -3,10 +3,10 @@
 //! Declarations introduce new names into scope: functions, structs,
 //! enums, traits, impls, modules, imports.
 
-use crate::{Ident, NodeId, Path};
-use crate::expr::{Expr, Block};
-use crate::types::TypeExpr;
+use crate::expr::{Block, Expr};
 use crate::pattern::Pattern;
+use crate::types::TypeExpr;
+use crate::{Ident, NodeId, Path};
 use agam_errors::Span;
 
 /// A compiler attribute, e.g. `#[align(64)]`, `#[dispatch(SIMD)]`.

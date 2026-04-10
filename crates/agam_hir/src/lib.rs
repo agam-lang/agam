@@ -8,6 +8,6 @@
 //! - Normalizes control flow (all branches become explicit).
 //! - Is the input to MIR lowering.
 
-pub mod nodes;
-pub mod lower;
 pub mod autodiff;
+pub mod lower;
+pub mod nodes;

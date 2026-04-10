@@ -17,14 +17,23 @@ pub struct BigUint {
 }
 
 impl BigUint {
-    pub fn zero() -> Self { Self { limbs: vec![0] } }
+    pub fn zero() -> Self {
+        Self { limbs: vec![0] }
+    }
 
     pub fn from_u64(v: u64) -> Self {
-        if v == 0 { return Self::zero(); }
+        if v == 0 {
+            return Self::zero();
+        }
         let lo = v as u32;
         let hi = (v >> 32) as u32;
-        if hi == 0 { Self { limbs: vec![lo] } }
-        else { Self { limbs: vec![lo, hi] } }
+        if hi == 0 {
+            Self { limbs: vec![lo] }
+        } else {
+            Self {
+                limbs: vec![lo, hi],
+            }
+        }
     }
 
     pub fn to_u64(&self) -> Option<u64> {
@@ -53,13 +62,23 @@ impl BigUint {
         let mut carry = 0u64;
 
         for i in 0..n {
-            let a = if i < self.limbs.len() { self.limbs[i] as u64 } else { 0 };
-            let b = if i < other.limbs.len() { other.limbs[i] as u64 } else { 0 };
+            let a = if i < self.limbs.len() {
+                self.limbs[i] as u64
+            } else {
+                0
+            };
+            let b = if i < other.limbs.len() {
+                other.limbs[i] as u64
+            } else {
+                0
+            };
             let sum = a + b + carry;
             result.push(sum as u32);
             carry = sum >> 32;
         }
-        if carry > 0 { result.push(carry as u32); }
+        if carry > 0 {
+            result.push(carry as u32);
+        }
         let mut r = BigUint { limbs: result };
         r.trim();
         r
@@ -74,7 +93,8 @@ impl BigUint {
         for i in 0..n {
             let mut carry = 0u64;
             for j in 0..m {
-                let prod = self.limbs[i] as u64 * other.limbs[j] as u64 + result[i + j] as u64 + carry;
+                let prod =
+                    self.limbs[i] as u64 * other.limbs[j] as u64 + result[i + j] as u64 + carry;
                 result[i + j] = prod as u32;
                 carry = prod >> 32;
             }
@@ -109,29 +129,48 @@ impl Interval {
         Self { lo, hi }
     }
 
-    pub fn exact(v: f64) -> Self { Self { lo: v, hi: v } }
+    pub fn exact(v: f64) -> Self {
+        Self { lo: v, hi: v }
+    }
 
     /// Value ± uncertainty.
     pub fn with_error(value: f64, error: f64) -> Self {
-        Self { lo: value - error.abs(), hi: value + error.abs() }
+        Self {
+            lo: value - error.abs(),
+            hi: value + error.abs(),
+        }
     }
 
-    pub fn width(self) -> f64 { self.hi - self.lo }
-    pub fn midpoint(self) -> f64 { 0.5 * (self.lo + self.hi) }
-    pub fn contains(self, x: f64) -> bool { x >= self.lo && x <= self.hi }
+    pub fn width(self) -> f64 {
+        self.hi - self.lo
+    }
+    pub fn midpoint(self) -> f64 {
+        0.5 * (self.lo + self.hi)
+    }
+    pub fn contains(self, x: f64) -> bool {
+        x >= self.lo && x <= self.hi
+    }
 
     pub fn add(self, other: Interval) -> Interval {
-        Interval { lo: self.lo + other.lo, hi: self.hi + other.hi }
+        Interval {
+            lo: self.lo + other.lo,
+            hi: self.hi + other.hi,
+        }
     }
 
     pub fn sub(self, other: Interval) -> Interval {
-        Interval { lo: self.lo - other.hi, hi: self.hi - other.lo }
+        Interval {
+            lo: self.lo - other.hi,
+            hi: self.hi - other.lo,
+        }
     }
 
     pub fn mul(self, other: Interval) -> Interval {
         let products = [
-            self.lo * other.lo, self.lo * other.hi,
-            self.hi * other.lo, self.hi * other.hi,
+            self.lo * other.lo,
+            self.lo * other.hi,
+            self.hi * other.lo,
+            self.hi * other.hi,
         ];
         let lo = products.iter().cloned().fold(f64::INFINITY, f64::min);
         let hi = products.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -139,13 +178,21 @@ impl Interval {
     }
 
     pub fn div(self, other: Interval) -> Option<Interval> {
-        if other.lo <= 0.0 && other.hi >= 0.0 { return None; } // division by zero interval
-        let inv = Interval { lo: 1.0 / other.hi, hi: 1.0 / other.lo };
+        if other.lo <= 0.0 && other.hi >= 0.0 {
+            return None;
+        } // division by zero interval
+        let inv = Interval {
+            lo: 1.0 / other.hi,
+            hi: 1.0 / other.lo,
+        };
         Some(self.mul(inv))
     }
 
     pub fn sqrt(self) -> Interval {
-        Interval { lo: self.lo.max(0.0).sqrt(), hi: self.hi.sqrt() }
+        Interval {
+            lo: self.lo.max(0.0).sqrt(),
+            hi: self.hi.sqrt(),
+        }
     }
 }
 

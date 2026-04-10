@@ -58,14 +58,9 @@ pub enum HirStmt {
     /// Return from function.
     Return(Option<HirExpr>),
     /// While loop (for-in desugars to this).
-    While {
-        condition: HirExpr,
-        body: HirBlock,
-    },
+    While { condition: HirExpr, body: HirBlock },
     /// Loop (infinite).
-    Loop {
-        body: HirBlock,
-    },
+    Loop { body: HirBlock },
     /// If / else-if / else chain.
     If {
         condition: HirExpr,
@@ -153,14 +148,33 @@ pub enum HirExprKind {
 /// HIR binary operators (same as AST, kept separate for IR independence).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirBinOp {
-    Add, Sub, Mul, Div, Mod, Pow,
-    Eq, NotEq, Lt, LtEq, Gt, GtEq,
-    And, Or,
-    BitAnd, BitOr, BitXor, Shl, Shr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Eq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 /// HIR unary operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirUnaryOp {
-    Neg, Not, BitNot, Ref, Deref,
+    Neg,
+    Not,
+    BitNot,
+    Ref,
+    Deref,
 }

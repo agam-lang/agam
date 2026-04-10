@@ -3,8 +3,8 @@
 //! Provides an interface to interact with external SMT solvers (like Z3 or CVC5)
 //! to prove mathematical properties of programs at compile time.
 
-use std::process::{Command, Stdio};
 use std::io::Write;
+use std::process::{Command, Stdio};
 
 /// A mathematical constraint constructed for the SMT solver.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -52,7 +52,13 @@ impl Constraint {
             Constraint::Mul(a, b) => format!("(* {} {})", a.to_smtlib(), b.to_smtlib()),
             Constraint::Div(a, b) => format!("(div {} {})", a.to_smtlib(), b.to_smtlib()),
             Constraint::Int(n) => n.to_string(),
-            Constraint::Bool(b) => if *b { "true".to_string() } else { "false".to_string() },
+            Constraint::Bool(b) => {
+                if *b {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
+            }
             Constraint::Var(v) => v.clone(),
         }
     }
@@ -70,16 +76,16 @@ pub enum SolverResult {
 pub trait SmtSolver {
     /// Declare an integer variable.
     fn declare_int(&mut self, name: &str);
-    
+
     /// Add an assertion to the solver.
     fn assert(&mut self, constraint: Constraint);
-    
+
     /// Check satisfiability of the current assertions.
     fn check_sat(&mut self) -> SolverResult;
-    
+
     /// Push a new solver scope.
     fn push(&mut self);
-    
+
     /// Pop the current solver scope.
     fn pop(&mut self);
 }
@@ -93,11 +99,8 @@ pub struct Z3Solver {
 impl Z3Solver {
     pub fn new() -> Self {
         // Try to find Z3 in path
-        let has_z3 = Command::new("z3")
-            .arg("--version")
-            .output()
-            .is_ok();
-            
+        let has_z3 = Command::new("z3").arg("--version").output().is_ok();
+
         Self {
             script: String::new(),
             mock_mode: !has_z3,
@@ -107,32 +110,35 @@ impl Z3Solver {
 
 impl SmtSolver for Z3Solver {
     fn declare_int(&mut self, name: &str) {
-        self.script.push_str(&format!("(declare-const {} Int)\n", name));
+        self.script
+            .push_str(&format!("(declare-const {} Int)\n", name));
     }
 
     fn assert(&mut self, constraint: Constraint) {
-        self.script.push_str(&format!("(assert {})\n", constraint.to_smtlib()));
+        self.script
+            .push_str(&format!("(assert {})\n", constraint.to_smtlib()));
     }
 
     fn check_sat(&mut self) -> SolverResult {
         let current_script = format!("{}\n(check-sat)\n", self.script);
-        
+
         if self.mock_mode {
             // Very basic mock evaluator for simple division-by-zero proofs in tests
             if current_script.contains("(not (= v 0))") && current_script.contains("(= v 0)") {
                 return SolverResult::Unsat; // proved safe!
-            } else if current_script.contains("(< i len)") && current_script.contains("(>= i len)") {
+            } else if current_script.contains("(< i len)") && current_script.contains("(>= i len)")
+            {
                 return SolverResult::Unsat;
             }
             return SolverResult::Sat;
         }
-        
+
         // Actually invoke Z3
         if let Ok(mut child) = Command::new("z3")
             .arg("-in")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .spawn() 
+            .spawn()
         {
             if let Some(mut stdin) = child.stdin.take() {
                 let _ = stdin.write_all(current_script.as_bytes());
@@ -175,21 +181,21 @@ mod tests {
     fn test_mock_solver_div_zero_proof() {
         let mut solver = Z3Solver::new();
         solver.mock_mode = true;
-        
+
         solver.declare_int("v");
         // Refinement type requires v != 0
         solver.assert(Constraint::NotEq(
-            Box::new(Constraint::Var("v".to_string())), 
-            Box::new(Constraint::Int(0))
+            Box::new(Constraint::Var("v".to_string())),
+            Box::new(Constraint::Int(0)),
         ));
-        
+
         // We want to probe if v == 0 is possible
         solver.push();
         solver.assert(Constraint::Eq(
-            Box::new(Constraint::Var("v".to_string())), 
-            Box::new(Constraint::Int(0))
+            Box::new(Constraint::Var("v".to_string())),
+            Box::new(Constraint::Int(0)),
         ));
-        
+
         // Should be unsat (proved safe)
         match solver.check_sat() {
             SolverResult::Unsat => assert!(true),

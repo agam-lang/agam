@@ -141,7 +141,10 @@ impl GradTape {
     /// Record a constant on the tape.
     pub fn constant(&mut self, val: f64) -> usize {
         let idx = self.nodes.len();
-        self.nodes.push(TapeNode { value: val, parents: vec![] });
+        self.nodes.push(TapeNode {
+            value: val,
+            parents: vec![],
+        });
         idx
     }
 

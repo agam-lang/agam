@@ -30,7 +30,12 @@ pub fn run(module: &mut MirModule) -> bool {
                 if let Op::Call { callee, args } = &instr.op {
                     if callee != &function_name {
                         if let Some(callee_fn) = candidates.get(callee) {
-                            rewritten.extend(state.inline_call(instr.result, instr.ty, callee_fn, args));
+                            rewritten.extend(state.inline_call(
+                                instr.result,
+                                instr.ty,
+                                callee_fn,
+                                args,
+                            ));
                             changed = true;
                             continue;
                         }
@@ -57,11 +62,18 @@ fn is_inline_candidate(function: &MirFunction) -> bool {
         return false;
     }
 
-    let Some(block) = function.blocks.iter().find(|block| block.id == function.entry) else {
+    let Some(block) = function
+        .blocks
+        .iter()
+        .find(|block| block.id == function.entry)
+    else {
         return false;
     };
 
-    if !matches!(block.terminator, Terminator::Return(_) | Terminator::ReturnVoid) {
+    if !matches!(
+        block.terminator,
+        Terminator::Return(_) | Terminator::ReturnVoid
+    ) {
         return false;
     }
 
@@ -69,7 +81,10 @@ fn is_inline_candidate(function: &MirFunction) -> bool {
         return false;
     }
 
-    !block.instructions.iter().any(|instr| matches!(instr.op, Op::Call { .. }))
+    !block
+        .instructions
+        .iter()
+        .any(|instr| matches!(instr.op, Op::Call { .. }))
 }
 
 struct InlineState {
@@ -122,7 +137,11 @@ impl InlineState {
         let mut result = Vec::new();
         let mut value_map: HashMap<ValueId, ValueId> = HashMap::new();
         let mut local_map: HashMap<String, String> = HashMap::new();
-        let mut names_to_rename: HashSet<String> = callee.params.iter().map(|param| param.name.clone()).collect();
+        let mut names_to_rename: HashSet<String> = callee
+            .params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
 
         for instr in &block.instructions {
             if let Op::Alloca { name, .. } | Op::LoadLocal(name) = &instr.op {
@@ -134,7 +153,10 @@ impl InlineState {
         }
 
         for name in names_to_rename {
-            local_map.insert(name.clone(), format!("__inl{}_{}_{}", inline_id, callee.name, name));
+            local_map.insert(
+                name.clone(),
+                format!("__inl{}_{}_{}", inline_id, callee.name, name),
+            );
         }
 
         for (index, param) in callee.params.iter().enumerate() {
@@ -192,8 +214,11 @@ impl InlineState {
 }
 
 fn reachable_blocks(function: &MirFunction) -> HashSet<crate::ir::BlockId> {
-    let by_id: HashMap<crate::ir::BlockId, _> =
-        function.blocks.iter().map(|block| (block.id, block)).collect();
+    let by_id: HashMap<crate::ir::BlockId, _> = function
+        .blocks
+        .iter()
+        .map(|block| (block.id, block))
+        .collect();
     let mut reachable = HashSet::new();
     let mut worklist = vec![function.entry];
 
@@ -256,7 +281,10 @@ fn remap_op(
         },
         Op::Call { callee, args } => Op::Call {
             callee: callee.clone(),
-            args: args.iter().map(|arg| remap_value(*arg, value_map)).collect(),
+            args: args
+                .iter()
+                .map(|arg| remap_value(*arg, value_map))
+                .collect(),
         },
         Op::Copy(value) => Op::Copy(remap_value(*value, value_map)),
         Op::LoadLocal(name) => Op::LoadLocal(remap_local(name, local_map)),
@@ -295,10 +323,7 @@ mod tests {
     use agam_hir::lower::HirLowering;
     use agam_lexer::Lexer;
 
-    use crate::{
-        ir::Op,
-        lower::MirLowering,
-    };
+    use crate::{ir::Op, lower::MirLowering};
 
     use super::run;
 
@@ -329,13 +354,21 @@ mod tests {
 
     #[test]
     fn inlines_small_leaf_calls() {
-        let mir = optimize_source("fn add1(a: i32) -> i32 { return a + 1; } fn main() { let x = add1(41); return x; }");
-        let main_fn = mir.functions.iter().find(|function| function.name == "main").unwrap();
+        let mir = optimize_source(
+            "fn add1(a: i32) -> i32 { return a + 1; } fn main() { let x = add1(41); return x; }",
+        );
+        let main_fn = mir
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .unwrap();
 
         assert!(
-            !main_fn.blocks.iter().flat_map(|block| &block.instructions).any(|instr| {
-                matches!(&instr.op, Op::Call { callee, .. } if callee == "add1")
-            })
+            !main_fn
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instr| { matches!(&instr.op, Op::Call { callee, .. } if callee == "add1") })
         );
     }
 }

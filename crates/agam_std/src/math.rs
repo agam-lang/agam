@@ -37,9 +37,9 @@ pub fn integrate_gauss5<F: Fn(f64) -> f64>(f: &F, a: f64, b: f64) -> f64 {
     const NODES: [f64; 5] = [
         -0.906179845938664,
         -0.538469310105683,
-         0.0,
-         0.538469310105683,
-         0.906179845938664,
+        0.0,
+        0.538469310105683,
+        0.906179845938664,
     ];
     const WEIGHTS: [f64; 5] = [
         0.236926885056189,
@@ -117,12 +117,18 @@ pub fn fft(real: &mut [f64], imag: &mut [f64]) {
 pub fn ifft(real: &mut [f64], imag: &mut [f64]) {
     let n = real.len();
     // Conjugate
-    for v in imag.iter_mut() { *v = -*v; }
+    for v in imag.iter_mut() {
+        *v = -*v;
+    }
     fft(real, imag);
     // Conjugate and scale
     let scale = 1.0 / n as f64;
-    for v in real.iter_mut() { *v *= scale; }
-    for v in imag.iter_mut() { *v = -*v * scale; }
+    for v in real.iter_mut() {
+        *v *= scale;
+    }
+    for v in imag.iter_mut() {
+        *v = -*v * scale;
+    }
 }
 
 /// Bisection root-finding: finds x where f(x) ≈ 0 in [a, b].
@@ -131,8 +137,14 @@ pub fn bisect<F: Fn(f64) -> f64>(f: &F, mut a: f64, mut b: f64, tol: f64, max_it
     assert!(f(a) * f(b) < 0.0, "f(a) and f(b) must have opposite signs");
     for _ in 0..max_iter {
         let mid = 0.5 * (a + b);
-        if (b - a) < tol { return mid; }
-        if f(mid) * f(a) < 0.0 { b = mid; } else { a = mid; }
+        if (b - a) < tol {
+            return mid;
+        }
+        if f(mid) * f(a) < 0.0 {
+            b = mid;
+        } else {
+            a = mid;
+        }
     }
     0.5 * (a + b)
 }
@@ -140,12 +152,19 @@ pub fn bisect<F: Fn(f64) -> f64>(f: &F, mut a: f64, mut b: f64, tol: f64, max_it
 /// Newton-Raphson root-finding: finds x where f(x) ≈ 0.
 /// Requires f and f' (derivative). Quadratic convergence.
 pub fn newton<F, FP>(f: &F, fp: &FP, mut x: f64, tol: f64, max_iter: usize) -> f64
-where F: Fn(f64) -> f64, FP: Fn(f64) -> f64 {
+where
+    F: Fn(f64) -> f64,
+    FP: Fn(f64) -> f64,
+{
     for _ in 0..max_iter {
         let fx = f(x);
-        if fx.abs() < tol { return x; }
+        if fx.abs() < tol {
+            return x;
+        }
         let fpx = fp(x);
-        if fpx.abs() < 1e-15 { break; } // avoid division by zero
+        if fpx.abs() < 1e-15 {
+            break;
+        } // avoid division by zero
         x -= fx / fpx;
     }
     x
@@ -185,8 +204,12 @@ pub fn factorial(n: u64) -> u64 {
 
 /// Binomial coefficient C(n, k).
 pub fn binomial(n: u64, k: u64) -> u64 {
-    if k > n { return 0; }
-    if k == 0 || k == n { return 1; }
+    if k > n {
+        return 0;
+    }
+    if k == 0 || k == n {
+        return 1;
+    }
     let k = k.min(n - k);
     let mut result = 1u64;
     for i in 0..k {
@@ -226,7 +249,9 @@ mod tests {
         let mut real = vec![1.0, 0.0, 0.0, 0.0];
         let mut imag = vec![0.0, 0.0, 0.0, 0.0];
         fft(&mut real, &mut imag);
-        for &v in &real { assert!((v - 1.0).abs() < 1e-10); }
+        for &v in &real {
+            assert!((v - 1.0).abs() < 1e-10);
+        }
     }
 
     #[test]
@@ -258,7 +283,7 @@ mod tests {
     #[test]
     fn test_gamma_factorial() {
         // Γ(n) = (n-1)! for integers
-        assert!((gamma(5.0) - 24.0).abs() < 1e-8);  // 4! = 24
+        assert!((gamma(5.0) - 24.0).abs() < 1e-8); // 4! = 24
         assert!((gamma(6.0) - 120.0).abs() < 1e-6); // 5! = 120
     }
 

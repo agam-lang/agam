@@ -14,9 +14,9 @@
 //! 3. **Mutability checking** — ensures only `mut` bindings are assigned to.
 //! 4. **Drop analysis** — values are dropped at scope exit.
 
-use std::collections::HashMap;
-use agam_errors::Span;
 use crate::symbol::SymbolId;
+use agam_errors::Span;
+use std::collections::HashMap;
 
 /// The memory management mode for a scope or module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,9 @@ pub enum MemoryMode {
 }
 
 impl Default for MemoryMode {
-    fn default() -> Self { MemoryMode::ARC }
+    fn default() -> Self {
+        MemoryMode::ARC
+    }
 }
 
 /// The ownership state of a binding.
@@ -132,25 +134,23 @@ impl OwnershipTracker {
                 *self.arc_retains.entry(sym).or_insert(1) += 1;
                 // Value stays Owned — no use-after-move.
             }
-            MemoryMode::Strict => {
-                match self.states.get(&sym) {
-                    Some(OwnershipState::Moved) => {
-                        self.errors.push(OwnershipError {
-                            message: format!("use of moved value"),
-                            span,
-                        });
-                    }
-                    Some(OwnershipState::Dropped) => {
-                        self.errors.push(OwnershipError {
-                            message: format!("use of dropped value"),
-                            span,
-                        });
-                    }
-                    _ => {
-                        self.states.insert(sym, OwnershipState::Moved);
-                    }
+            MemoryMode::Strict => match self.states.get(&sym) {
+                Some(OwnershipState::Moved) => {
+                    self.errors.push(OwnershipError {
+                        message: format!("use of moved value"),
+                        span,
+                    });
                 }
-            }
+                Some(OwnershipState::Dropped) => {
+                    self.errors.push(OwnershipError {
+                        message: format!("use of dropped value"),
+                        span,
+                    });
+                }
+                _ => {
+                    self.states.insert(sym, OwnershipState::Moved);
+                }
+            },
         }
     }
 
@@ -210,7 +210,11 @@ impl OwnershipTracker {
             });
             return;
         }
-        self.borrows.push(ActiveBorrow { target, kind: BorrowKind::Shared, span });
+        self.borrows.push(ActiveBorrow {
+            target,
+            kind: BorrowKind::Shared,
+            span,
+        });
     }
 
     /// Create an exclusive borrow on a symbol.
@@ -234,7 +238,11 @@ impl OwnershipTracker {
             });
             return;
         }
-        self.borrows.push(ActiveBorrow { target, kind: BorrowKind::Exclusive, span });
+        self.borrows.push(ActiveBorrow {
+            target,
+            kind: BorrowKind::Exclusive,
+            span,
+        });
     }
 
     /// Release all borrows on a symbol (e.g. when the borrow goes out of scope).
@@ -263,7 +271,9 @@ impl OwnershipTracker {
 
     /// Check if a symbol has an active exclusive borrow.
     fn has_exclusive_borrow(&self, target: SymbolId) -> bool {
-        self.borrows.iter().any(|b| b.target == target && b.kind == BorrowKind::Exclusive)
+        self.borrows
+            .iter()
+            .any(|b| b.target == target && b.kind == BorrowKind::Exclusive)
     }
 
     /// Check if a symbol has any active borrow.
@@ -281,7 +291,9 @@ impl OwnershipTracker {
 mod tests {
     use super::*;
 
-    fn dummy_span() -> Span { Span::dummy() }
+    fn dummy_span() -> Span {
+        Span::dummy()
+    }
 
     // ── Strict mode tests (original) ──
 

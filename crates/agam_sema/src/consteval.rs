@@ -7,7 +7,7 @@
 //! 3. Generic parameters — `Vec<N>` where N is a const generic.
 //! 4. `@requires` / `@ensures` contract expressions.
 
-use agam_ast::expr::{Expr, ExprKind, BinOp, UnaryOp};
+use agam_ast::expr::{BinOp, Expr, ExprKind, UnaryOp};
 use agam_errors::Span;
 
 /// A compile-time evaluated value.
@@ -63,7 +63,11 @@ impl ConstEvaluator {
                 self.eval_binary(*op, lv, rv)
             }
 
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let cond = self.eval(condition);
                 match cond {
                     ConstValue::Bool(true) => self.eval(then_branch),
@@ -92,11 +96,15 @@ impl ConstEvaluator {
                 BinOp::Sub => ConstValue::Int(a.wrapping_sub(b)),
                 BinOp::Mul => ConstValue::Int(a.wrapping_mul(b)),
                 BinOp::Div => {
-                    if b == 0 { return ConstValue::Unknown; }
+                    if b == 0 {
+                        return ConstValue::Unknown;
+                    }
                     ConstValue::Int(a / b)
                 }
                 BinOp::Mod => {
-                    if b == 0 { return ConstValue::Unknown; }
+                    if b == 0 {
+                        return ConstValue::Unknown;
+                    }
                     ConstValue::Int(a % b)
                 }
                 BinOp::Pow => ConstValue::Int(a.wrapping_pow(b as u32)),
@@ -186,32 +194,57 @@ mod tests {
     use agam_ast::NodeId;
 
     fn int_expr(v: i64) -> Expr {
-        Expr { id: NodeId(0), span: Span::dummy(), kind: ExprKind::IntLiteral(v) }
+        Expr {
+            id: NodeId(0),
+            span: Span::dummy(),
+            kind: ExprKind::IntLiteral(v),
+        }
     }
 
     fn float_expr(v: f64) -> Expr {
-        Expr { id: NodeId(0), span: Span::dummy(), kind: ExprKind::FloatLiteral(v) }
+        Expr {
+            id: NodeId(0),
+            span: Span::dummy(),
+            kind: ExprKind::FloatLiteral(v),
+        }
     }
 
     fn bool_expr(v: bool) -> Expr {
-        Expr { id: NodeId(0), span: Span::dummy(), kind: ExprKind::BoolLiteral(v) }
+        Expr {
+            id: NodeId(0),
+            span: Span::dummy(),
+            kind: ExprKind::BoolLiteral(v),
+        }
     }
 
     fn str_expr(v: &str) -> Expr {
-        Expr { id: NodeId(0), span: Span::dummy(), kind: ExprKind::StringLiteral(v.into()) }
+        Expr {
+            id: NodeId(0),
+            span: Span::dummy(),
+            kind: ExprKind::StringLiteral(v.into()),
+        }
     }
 
     fn binop(op: BinOp, left: Expr, right: Expr) -> Expr {
         Expr {
-            id: NodeId(0), span: Span::dummy(),
-            kind: ExprKind::Binary { op, left: Box::new(left), right: Box::new(right) },
+            id: NodeId(0),
+            span: Span::dummy(),
+            kind: ExprKind::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
         }
     }
 
     fn unary(op: UnaryOp, operand: Expr) -> Expr {
         Expr {
-            id: NodeId(0), span: Span::dummy(),
-            kind: ExprKind::Unary { op, operand: Box::new(operand) },
+            id: NodeId(0),
+            span: Span::dummy(),
+            kind: ExprKind::Unary {
+                op,
+                operand: Box::new(operand),
+            },
         }
     }
 
@@ -236,7 +269,10 @@ mod tests {
     #[test]
     fn test_string_literal() {
         let mut eval = ConstEvaluator::new();
-        assert_eq!(eval.eval(&str_expr("hello")), ConstValue::Str("hello".into()));
+        assert_eq!(
+            eval.eval(&str_expr("hello")),
+            ConstValue::Str("hello".into())
+        );
     }
 
     #[test]
@@ -308,7 +344,8 @@ mod tests {
     fn test_const_if_true() {
         let mut eval = ConstEvaluator::new();
         let expr = Expr {
-            id: NodeId(0), span: Span::dummy(),
+            id: NodeId(0),
+            span: Span::dummy(),
             kind: ExprKind::If {
                 condition: Box::new(bool_expr(true)),
                 then_branch: Box::new(int_expr(1)),
@@ -322,7 +359,8 @@ mod tests {
     fn test_const_if_false() {
         let mut eval = ConstEvaluator::new();
         let expr = Expr {
-            id: NodeId(0), span: Span::dummy(),
+            id: NodeId(0),
+            span: Span::dummy(),
             kind: ExprKind::If {
                 condition: Box::new(bool_expr(false)),
                 then_branch: Box::new(int_expr(1)),

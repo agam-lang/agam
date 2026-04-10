@@ -4,9 +4,9 @@
 //! results (e.g. "function `foo` is completely safe") so we don't re-prove
 //! properties unless the function's AST or type signature changes.
 
+use agam_ast::NodeId;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use agam_ast::NodeId;
 
 /// A cache of verification results to speed up incremental compiles.
 #[derive(Clone)]
@@ -44,7 +44,7 @@ impl VerificationCache {
         let mut lock = self.results.lock().unwrap();
         lock.insert(id, status);
     }
-    
+
     /// Clear the cache.
     pub fn clear(&self) {
         let mut lock = self.results.lock().unwrap();
@@ -61,15 +61,18 @@ mod tests {
         let cache = VerificationCache::new();
         let id1 = NodeId(1);
         let id2 = NodeId(2);
-        
+
         assert_eq!(cache.get_status(id1), None);
-        
+
         cache.set_status(id1, VerificationStatus::VerifiedSafe);
         cache.set_status(id2, VerificationStatus::Failed);
-        
-        assert_eq!(cache.get_status(id1), Some(VerificationStatus::VerifiedSafe));
+
+        assert_eq!(
+            cache.get_status(id1),
+            Some(VerificationStatus::VerifiedSafe)
+        );
         assert_eq!(cache.get_status(id2), Some(VerificationStatus::Failed));
-        
+
         cache.clear();
         assert_eq!(cache.get_status(id1), None);
     }

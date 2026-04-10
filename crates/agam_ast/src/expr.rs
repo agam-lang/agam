@@ -3,9 +3,9 @@
 //! Expressions are nodes that produce values. Examples:
 //! `42`, `x + y`, `foo()`, `if cond { a } else { b }`.
 
-use crate::{Ident, NodeId, Path};
-use crate::types::TypeExpr;
 use crate::pattern::Pattern;
+use crate::types::TypeExpr;
+use crate::{Ident, NodeId, Path};
 use agam_errors::Span;
 
 /// An expression node.
@@ -20,7 +20,6 @@ pub struct Expr {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     // ── Literals ──
-
     /// Integer literal: `42`, `0xFF`, `0b1010`
     IntLiteral(i64),
     /// Float literal: `3.14`, `1.0e-5`
@@ -28,9 +27,7 @@ pub enum ExprKind {
     /// String literal: `"hello"`
     StringLiteral(String),
     /// Format string: `f"hello {name}"`
-    FStringLiteral {
-        parts: Vec<FStringPart>,
-    },
+    FStringLiteral { parts: Vec<FStringPart> },
     /// Boolean: `true` / `false`
     BoolLiteral(bool),
     /// Array literal: `[1, 2, 3]`
@@ -41,14 +38,12 @@ pub enum ExprKind {
     TupleLiteral(Vec<Expr>),
 
     // ── Names ──
-
     /// Variable / name reference: `x`, `my_var`
     Identifier(Ident),
     /// Path expression: `std::io::read`
     PathExpr(Path),
 
     // ── Operators ──
-
     /// Binary operation: `a + b`, `x == y`
     Binary {
         op: BinOp,
@@ -56,23 +51,13 @@ pub enum ExprKind {
         right: Box<Expr>,
     },
     /// Unary operation: `-x`, `!flag`, `&value`
-    Unary {
-        op: UnaryOp,
-        operand: Box<Expr>,
-    },
+    Unary { op: UnaryOp, operand: Box<Expr> },
 
     // ── Access ──
-
     /// Field access: `obj.field`
-    FieldAccess {
-        object: Box<Expr>,
-        field: Ident,
-    },
+    FieldAccess { object: Box<Expr>, field: Ident },
     /// Index access: `arr[i]`
-    Index {
-        object: Box<Expr>,
-        index: Box<Expr>,
-    },
+    Index { object: Box<Expr>, index: Box<Expr> },
     /// Method call: `obj.method(args)`
     MethodCall {
         object: Box<Expr>,
@@ -81,15 +66,10 @@ pub enum ExprKind {
     },
 
     // ── Calls ──
-
     /// Function call: `foo(a, b)`
-    Call {
-        callee: Box<Expr>,
-        args: Vec<Expr>,
-    },
+    Call { callee: Box<Expr>, args: Vec<Expr> },
 
     // ── Control Flow (expression-position) ──
-
     /// If expression: `if cond { a } else { b }`
     If {
         condition: Box<Expr>,
@@ -105,7 +85,6 @@ pub enum ExprKind {
     Block(Block),
 
     // ── Closures / Lambdas ──
-
     /// Lambda: `|x, y| x + y` or `|| { body }`
     Lambda {
         params: Vec<LambdaParam>,
@@ -114,24 +93,18 @@ pub enum ExprKind {
     },
 
     // ── Async / Await ──
-
     /// `await expr`
     Await(Box<Expr>),
     /// `spawn expr`
     Spawn(Box<Expr>),
 
     // ── Error propagation ──
-
     /// `expr?` — try/propagate error
     Try(Box<Expr>),
 
     // ── Assignment (expression in Agam) ──
-
     /// `x = value`
-    Assign {
-        target: Box<Expr>,
-        value: Box<Expr>,
-    },
+    Assign { target: Box<Expr>, value: Box<Expr> },
     /// `x += value`, `x -= value`, etc.
     CompoundAssign {
         op: BinOp,
@@ -140,7 +113,6 @@ pub enum ExprKind {
     },
 
     // ── Range ──
-
     /// `start..end` or `start..=end`
     Range {
         start: Option<Box<Expr>>,
@@ -149,7 +121,6 @@ pub enum ExprKind {
     },
 
     // ── Type ──
-
     /// Type cast: `expr as Type`
     Cast {
         expr: Box<Expr>,
@@ -157,20 +128,12 @@ pub enum ExprKind {
     },
 
     // ── Struct ──
-
     /// Struct literal: `Point { x: 1, y: 2 }`
-    StructLiteral {
-        path: Path,
-        fields: Vec<FieldInit>,
-    },
+    StructLiteral { path: Path, fields: Vec<FieldInit> },
 
     // ── Differentiable Programming ──
-
     /// Gradient: `grad(f, x)` — computes ∂f/∂x
-    Grad {
-        func: Box<Expr>,
-        wrt: Ident,
-    },
+    Grad { func: Box<Expr>, wrt: Ident },
     /// Backward pass: `backward(expr)` — reverse-mode autodiff
     Backward(Box<Expr>),
 
@@ -191,24 +154,24 @@ pub enum FStringPart {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     // Arithmetic
-    Add,    // +
-    Sub,    // -
-    Mul,    // *
-    Div,    // /
-    Mod,    // %
-    Pow,    // **
+    Add, // +
+    Sub, // -
+    Mul, // *
+    Div, // /
+    Mod, // %
+    Pow, // **
 
     // Comparison
-    Eq,     // ==
-    NotEq,  // !=
-    Lt,     // <
-    LtEq,   // <=
-    Gt,     // >
-    GtEq,   // >=
+    Eq,    // ==
+    NotEq, // !=
+    Lt,    // <
+    LtEq,  // <=
+    Gt,    // >
+    GtEq,  // >=
 
     // Logical
-    And,    // &&
-    Or,     // ||
+    And, // &&
+    Or,  // ||
 
     // Bitwise
     BitAnd, // &

@@ -1,24 +1,24 @@
 # Workflow
 
-## Core Operating Rules
+> Full rules are now in `CLAUDE.md` § 6 (Rules). This file exists for backward compatibility.
 
-- Work in the smallest responsible crate first. Avoid unnecessary workspace-wide edits.
-- Keep Git staging and commits on Windows. Use WSL Ubuntu 24.04 LTS for Linux and LLVM-adjacent validation.
-- Before finalizing backend or codegen work, run scoped `cargo fmt --check` and `cargo check` from WSL when possible.
-- Route production failures through `agam_errors`; avoid `.unwrap()` and `.expect()` in compiler passes.
-- Preserve `SourceId`, `Span`, and debug metadata through lowering and optimization.
-- Run unsafe, FFI, executable-memory, and JIT validation in isolated subprocesses when practical.
-- Prefer the asymptotically best practical time and space complexity for every new implementation; if a tradeoff is unavoidable, state it explicitly and validate that the simpler path is still worth the cost.
-- Optimization work is not complete until `agam_profile` or an equivalent localized benchmark records the delta.
-- If compile time regresses materially or runtime gets slower, reject the change and rewrite it.
+## Core Rules
 
-## Documentation Contract
+- Smallest responsible crate first
+- Route failures through `agam_errors`; preserve spans and lowering traceability
+- No `.unwrap()` / `.expect()` in compiler passes
+- Prefer optimal time/space complexity; justify tradeoffs
+- Optimization requires measured benchmarks
 
-- If you change CLI workflow, packaging, platform support, or agent workflow, update the relevant docs in `README.md`, `info.md`, and `.agent/`.
-- Keep agent-facing guidance synchronized through `.agent/` instead of adding divergent tool-specific copies.
-- Before closing a local implementation slice, record the shipped change in the relevant `.agent/phases/` files and create a scoped local commit that includes only the files for that slice.
+## Process
 
-## Delivery Style
+- After completing a slice → update `.agent/phases/` records
+- If CLI/packaging/platform changes → update `README.md`, `info.md`, `.agent/`
+- Scoped commits: only include the files for the completed slice
 
-- Agam is not a Python wrapper and not a Rust clone. Treat it as its own language with its own semantics.
-- Prefer concise, structured writeups with concrete file ownership, verification notes, and remaining risks.
+## Build Verification
+
+```powershell
+cargo check --manifest-path agam/Cargo.toml
+cargo test --manifest-path agam/Cargo.toml
+```

@@ -1,50 +1,50 @@
-# Agam Agent Instructions
+# Agam Compiler — Agent Instructions
 
-This file is the Codex entrypoint and the universal repo entrypoint for shared agent guidance.
-The canonical shared source of truth lives under `.agent/`.
+> Read `CLAUDE.md` for the complete self-contained project briefing.
+> This file mirrors the same content for Codex and other agent surfaces.
 
-## Read First
+---
 
-- `.agent/README.md`
-- `.agent/include/project-context.md`
-- `.agent/include/workflow.md`
-- `.agent/include/toolchain-inventory.md` when platform or SDK work is involved
-- `.agent/phases/current.md`
-- `.agent/phases/next.md`
-- `.agent/phases/catalog.md` when you need full phase coverage
-- `.agent/phases/details/` when you need merged roadmap detail for active phases
-- `.agent/rules/language-guardrails.md`
-- `.agent/rules/toolchain-and-platform.md`
+## Quick Orientation
+
+- **What:** Agam is a next-generation compiled language (Rust workspace, 26 crates)
+- **Goal:** Native LLVM as first-class production backend for Windows, Linux, Android
+- **Active work:** Phase 15F (incremental daemon), 15G (premium tooling), 15H (SDK distribution), 17A (manifest contract)
+- **Build next:** See `.agent/phases/next.md`
+- **CLI:** `agamc {build,run,check,new,dev,daemon,fmt,test,lsp,doctor,cache,package,repl}`
+
+## Architecture
+
+```
+Source → agam_lexer → agam_parser → agam_ast → agam_sema → agam_hir → agam_mir → agam_codegen/agam_jit
+```
+
+Key crates: `agam_driver` (CLI, ~8900 lines), `agam_pkg` (manifest/workspace/packaging), `agam_runtime` (ABI/cache), `agam_errors` (diagnostics)
 
 ## Non-Negotiables
 
-- Agam is its own language. Do not treat `.agam` as Python or Rust shorthand.
-- Native LLVM on Windows, Linux, and Android is the top active product direction.
-- WSL is a development and verification fallback, not the shipped backend story.
-- Work in the smallest responsible crate and avoid needless cross-crate churn.
-- Route compiler failures through `agam_errors`; preserve spans and lowering traceability.
-- Optimization work requires measured validation, not intuition.
-- Before closing a local slice, update the relevant `.agent/phases/` record and create a scoped local commit containing only that slice's files.
+- Agam is its own language — not Python, not Rust. Check real `.agam` files for syntax.
+- Work in the smallest responsible crate. Preserve spans and diagnostics.
+- Route failures through `agam_errors`; no `.unwrap()` in compiler passes.
+- Optimization requires measured benchmarks, not intuition.
+- After each slice, update `.agent/phases/` and commit only that slice's files.
 
 ## Repo Map
 
-- `crates/`: compiler, runtime, tooling, and packaging crates
-- `examples/`: runnable source examples
-- `benchmarks/`: organized benchmark suites, harnesses, CI helpers, and generated result roots
-- `.agent/test/`: localized phase-work benchmark sources and generated inspection artifacts
-- `.agent/tests/`: lightweight policy and documentation validation notes
-- `.agent/skills/`: Antigravity-facing project skills and the canonical skill shelf
-- `.claude/`, `.gemini/`, `.codex/`: tool-specific commands, agents, skill mirrors, and local config helpers
+| Path | Purpose |
+|------|---------|
+| `crates/` | All 26 compiler, runtime, and tooling crates |
+| `examples/` | Runnable `.agam` examples |
+| `benchmarks/` | Benchmark suites and harnesses |
+| `.agent/phases/` | Active phase status, build order, per-phase checklists |
+| `.agent/policy/` | Package ecosystem architecture, project overview |
+| `.agent/rules/` | Language guardrails, structure rules |
+| `.agent/skills/` | `benchmark-guard`, `language-guard` |
+| `CLAUDE.md` | **Full self-contained briefing** (read this) |
 
-## Multi-Agent Guidance
+## Deep Dives
 
-- Shared routing rules: `.agent/include/multi-agent.md`
-- Shared role briefs: `.agent/agents/`
-- Shared task briefs: `.agent/commands/`
-
-## Long-Form Sources
-
-- `.agent/policy/`
-- `.agent/phases/`
-- `README.md`
-- `info.md`
+- Phase checklists: `.agent/phases/details/{15F,15G,15H,17A,...}.md`
+- Package/registry architecture: `.agent/policy/package-ecosystem.md`
+- Build priority order: `.agent/phases/next.md`
+- Full phase catalog: `.agent/phases/catalog.md`

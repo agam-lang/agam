@@ -112,8 +112,12 @@ impl CacheStore {
     pub fn for_path(path: &Path) -> Result<Self, String> {
         let root = cache_root_for_path(path)?;
         let entries_dir = root.join("entries");
-        fs::create_dir_all(&entries_dir)
-            .map_err(|e| format!("failed to create cache root `{}`: {e}", entries_dir.display()))?;
+        fs::create_dir_all(&entries_dir).map_err(|e| {
+            format!(
+                "failed to create cache root `{}`: {e}",
+                entries_dir.display()
+            )
+        })?;
         Ok(Self { root, entries_dir })
     }
 
@@ -152,8 +156,12 @@ impl CacheStore {
             )
         })?;
         let artifact_path = entry_dir.join(artifact_name);
-        fs::write(&artifact_path, bytes)
-            .map_err(|e| format!("failed to write cache artifact `{}`: {e}", artifact_path.display()))?;
+        fs::write(&artifact_path, bytes).map_err(|e| {
+            format!(
+                "failed to write cache artifact `{}`: {e}",
+                artifact_path.display()
+            )
+        })?;
 
         let now = now_unix_ms();
         let entry = StoredCacheEntry {
@@ -184,8 +192,12 @@ impl CacheStore {
         source_path: &Path,
         artifact_path: &Path,
     ) -> Result<CacheHit, String> {
-        let bytes = fs::read(artifact_path)
-            .map_err(|e| format!("failed to read cache source artifact `{}`: {e}", artifact_path.display()))?;
+        let bytes = fs::read(artifact_path).map_err(|e| {
+            format!(
+                "failed to read cache source artifact `{}`: {e}",
+                artifact_path.display()
+            )
+        })?;
         let artifact_name = artifact_path
             .file_name()
             .and_then(|name| name.to_str())
@@ -351,10 +363,7 @@ impl CacheStore {
             let entry_dir = self.entry_dir(&entry.id);
             if entry_dir.exists() {
                 fs::remove_dir_all(&entry_dir).map_err(|e| {
-                    format!(
-                        "failed to evict cache entry `{}`: {e}",
-                        entry_dir.display()
-                    )
+                    format!("failed to evict cache entry `{}`: {e}", entry_dir.display())
                 })?;
             }
             total_bytes = total_bytes.saturating_sub(entry.bytes);
@@ -408,7 +417,10 @@ fn cache_root_for_path(path: &Path) -> Result<PathBuf, String> {
     } else if let Some(parent) = path.parent() {
         parent.to_path_buf()
     } else {
-        return Err(format!("cannot determine cache root for `{}`", path.display()));
+        return Err(format!(
+            "cannot determine cache root for `{}`",
+            path.display()
+        ));
     };
     Ok(base.join(".agam_cache"))
 }
@@ -471,7 +483,10 @@ mod tests {
         cache
             .restore_to_path(&hit, &restored)
             .expect("restore cache entry");
-        assert_eq!(fs::read(&restored).expect("read restored"), b"{\"ok\":true}");
+        assert_eq!(
+            fs::read(&restored).expect("read restored"),
+            b"{\"ok\":true}"
+        );
         let _ = fs::remove_dir_all(dir);
     }
 

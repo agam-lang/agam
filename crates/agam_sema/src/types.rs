@@ -9,7 +9,6 @@ use crate::symbol::{SymbolId, TypeId};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     // ── Primitives ──
-
     /// Signed integers: i8, i16, i32, i64, i128, isize
     Int(IntSize),
     /// Unsigned integers: u8, u16, u32, u64, u128, usize
@@ -28,7 +27,6 @@ pub enum Type {
     Never,
 
     // ── Compound ──
-
     /// Array with known size: [T; N]
     Array { element: TypeId, size: usize },
     /// Slice: [T]
@@ -43,31 +41,26 @@ pub enum Type {
     Optional(TypeId),
 
     // ── Named / User-defined ──
-
     /// A named type referencing its symbol: struct, enum, type alias
     Named(SymbolId),
     /// A generic instantiation: Vec<i32>, HashMap<String, i32>
     Generic { base: TypeId, args: Vec<TypeId> },
 
     // ── Functions ──
-
     /// Function type: fn(A, B) -> C
     Function { params: Vec<TypeId>, ret: TypeId },
 
     // ── Trait Objects ──
-
     /// Dynamic trait object: dyn Trait
     DynTrait(SymbolId),
 
     // ── Inference ──
-
     /// A type variable (placeholder for inference): ?T0, ?T1, ...
     Var(u32),
     /// The universal dynamic type (runtime-checked, Python-like)
     Any,
 
     // ── Error ──
-
     /// Placeholder for types that failed to resolve (enables error recovery).
     Error,
 }
@@ -75,13 +68,19 @@ pub enum Type {
 /// Integer size variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntSize {
-    I8, I16, I32, I64, I128, ISize,
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    ISize,
 }
 
 /// Floating-point size variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatSize {
-    F32, F64,
+    F32,
+    F64,
 }
 
 /// The type store — an arena that owns all resolved types.
@@ -96,24 +95,24 @@ impl TypeStore {
     pub fn new() -> Self {
         let mut store = Self { types: Vec::new() };
         // Pre-populate with well-known primitives so they have stable IDs.
-        store.insert(Type::Unit);      // TypeId(0)
-        store.insert(Type::Bool);      // TypeId(1)
-        store.insert(Type::Char);      // TypeId(2)
-        store.insert(Type::Str);       // TypeId(3)
-        store.insert(Type::Int(IntSize::I32));   // TypeId(4) — default int
+        store.insert(Type::Unit); // TypeId(0)
+        store.insert(Type::Bool); // TypeId(1)
+        store.insert(Type::Char); // TypeId(2)
+        store.insert(Type::Str); // TypeId(3)
+        store.insert(Type::Int(IntSize::I32)); // TypeId(4) — default int
         store.insert(Type::Float(FloatSize::F64)); // TypeId(5) — default float
-        store.insert(Type::Never);     // TypeId(6)
-        store.insert(Type::Any);       // TypeId(7)
-        store.insert(Type::Error);     // TypeId(8)
-        store.insert(Type::Int(IntSize::I8));    // TypeId(9)
-        store.insert(Type::Int(IntSize::I16));   // TypeId(10)
-        store.insert(Type::Int(IntSize::I64));   // TypeId(11)
-        store.insert(Type::Int(IntSize::I128));  // TypeId(12)
+        store.insert(Type::Never); // TypeId(6)
+        store.insert(Type::Any); // TypeId(7)
+        store.insert(Type::Error); // TypeId(8)
+        store.insert(Type::Int(IntSize::I8)); // TypeId(9)
+        store.insert(Type::Int(IntSize::I16)); // TypeId(10)
+        store.insert(Type::Int(IntSize::I64)); // TypeId(11)
+        store.insert(Type::Int(IntSize::I128)); // TypeId(12)
         store.insert(Type::Int(IntSize::ISize)); // TypeId(13)
-        store.insert(Type::UInt(IntSize::I8));   // TypeId(14)
-        store.insert(Type::UInt(IntSize::I16));  // TypeId(15)
-        store.insert(Type::UInt(IntSize::I32));  // TypeId(16)
-        store.insert(Type::UInt(IntSize::I64));  // TypeId(17)
+        store.insert(Type::UInt(IntSize::I8)); // TypeId(14)
+        store.insert(Type::UInt(IntSize::I16)); // TypeId(15)
+        store.insert(Type::UInt(IntSize::I32)); // TypeId(16)
+        store.insert(Type::UInt(IntSize::I64)); // TypeId(17)
         store.insert(Type::UInt(IntSize::I128)); // TypeId(18)
         store.insert(Type::UInt(IntSize::ISize)); // TypeId(19)
         store.insert(Type::Float(FloatSize::F32)); // TypeId(20)
@@ -140,27 +139,69 @@ impl TypeStore {
 
     // ── Well-known type IDs ──
 
-    pub fn unit(&self)  -> TypeId { TypeId(0) }
-    pub fn bool(&self)  -> TypeId { TypeId(1) }
-    pub fn char(&self)  -> TypeId { TypeId(2) }
-    pub fn str(&self)   -> TypeId { TypeId(3) }
-    pub fn i32(&self)   -> TypeId { TypeId(4) }
-    pub fn f64(&self)   -> TypeId { TypeId(5) }
-    pub fn never(&self) -> TypeId { TypeId(6) }
-    pub fn any(&self)   -> TypeId { TypeId(7) }
-    pub fn error(&self) -> TypeId { TypeId(8) }
-    pub fn i8(&self)    -> TypeId { TypeId(9) }
-    pub fn i16(&self)   -> TypeId { TypeId(10) }
-    pub fn i64(&self)   -> TypeId { TypeId(11) }
-    pub fn i128(&self)  -> TypeId { TypeId(12) }
-    pub fn isize(&self) -> TypeId { TypeId(13) }
-    pub fn u8(&self)    -> TypeId { TypeId(14) }
-    pub fn u16(&self)   -> TypeId { TypeId(15) }
-    pub fn u32(&self)   -> TypeId { TypeId(16) }
-    pub fn u64(&self)   -> TypeId { TypeId(17) }
-    pub fn u128(&self)  -> TypeId { TypeId(18) }
-    pub fn usize(&self) -> TypeId { TypeId(19) }
-    pub fn f32(&self)   -> TypeId { TypeId(20) }
+    pub fn unit(&self) -> TypeId {
+        TypeId(0)
+    }
+    pub fn bool(&self) -> TypeId {
+        TypeId(1)
+    }
+    pub fn char(&self) -> TypeId {
+        TypeId(2)
+    }
+    pub fn str(&self) -> TypeId {
+        TypeId(3)
+    }
+    pub fn i32(&self) -> TypeId {
+        TypeId(4)
+    }
+    pub fn f64(&self) -> TypeId {
+        TypeId(5)
+    }
+    pub fn never(&self) -> TypeId {
+        TypeId(6)
+    }
+    pub fn any(&self) -> TypeId {
+        TypeId(7)
+    }
+    pub fn error(&self) -> TypeId {
+        TypeId(8)
+    }
+    pub fn i8(&self) -> TypeId {
+        TypeId(9)
+    }
+    pub fn i16(&self) -> TypeId {
+        TypeId(10)
+    }
+    pub fn i64(&self) -> TypeId {
+        TypeId(11)
+    }
+    pub fn i128(&self) -> TypeId {
+        TypeId(12)
+    }
+    pub fn isize(&self) -> TypeId {
+        TypeId(13)
+    }
+    pub fn u8(&self) -> TypeId {
+        TypeId(14)
+    }
+    pub fn u16(&self) -> TypeId {
+        TypeId(15)
+    }
+    pub fn u32(&self) -> TypeId {
+        TypeId(16)
+    }
+    pub fn u64(&self) -> TypeId {
+        TypeId(17)
+    }
+    pub fn u128(&self) -> TypeId {
+        TypeId(18)
+    }
+    pub fn usize(&self) -> TypeId {
+        TypeId(19)
+    }
+    pub fn f32(&self) -> TypeId {
+        TypeId(20)
+    }
 
     /// Create a fresh type variable for inference.
     pub fn fresh_var(&mut self) -> TypeId {

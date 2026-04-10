@@ -64,7 +64,11 @@ pub enum Op {
     Unit,
 
     /// Binary arithmetic / logic.
-    BinOp { op: MirBinOp, left: ValueId, right: ValueId },
+    BinOp {
+        op: MirBinOp,
+        left: ValueId,
+        right: ValueId,
+    },
     /// Unary operation.
     UnOp { op: MirUnOp, operand: ValueId },
 
@@ -96,16 +100,32 @@ pub enum Op {
 /// MIR binary operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MirBinOp {
-    Add, Sub, Mul, Div, Mod,
-    Eq, NotEq, Lt, LtEq, Gt, GtEq,
-    And, Or,
-    BitAnd, BitOr, BitXor, Shl, Shr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 /// MIR unary operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MirUnOp {
-    Neg, Not, BitNot,
+    Neg,
+    Not,
+    BitNot,
 }
 
 /// A block terminator — how control leaves a basic block.

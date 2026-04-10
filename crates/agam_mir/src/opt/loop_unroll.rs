@@ -197,10 +197,7 @@ fn resolve_loaded_local(
     }
 }
 
-fn resolve_const_int(
-    value: ValueId,
-    instructions: &HashMap<ValueId, &Instruction>,
-) -> Option<i64> {
+fn resolve_const_int(value: ValueId, instructions: &HashMap<ValueId, &Instruction>) -> Option<i64> {
     match instructions.get(&value)?.op {
         Op::ConstInt(value) => Some(value),
         _ => None,
@@ -208,21 +205,23 @@ fn resolve_const_int(
 }
 
 fn find_initial_value(instructions: &[Instruction], loop_var: &str) -> Option<i64> {
-    let by_result: HashMap<ValueId, &Instruction> =
-        instructions.iter().map(|instr| (instr.result, instr)).collect();
-
-    instructions
+    let by_result: HashMap<ValueId, &Instruction> = instructions
         .iter()
-        .rev()
-        .find_map(|instr| match &instr.op {
-            Op::StoreLocal { name, value } if name == loop_var => resolve_const_int(*value, &by_result),
-            _ => None,
-        })
+        .map(|instr| (instr.result, instr))
+        .collect();
+
+    instructions.iter().rev().find_map(|instr| match &instr.op {
+        Op::StoreLocal { name, value } if name == loop_var => resolve_const_int(*value, &by_result),
+        _ => None,
+    })
 }
 
 fn find_step(block: &crate::ir::BasicBlock, loop_var: &str) -> Option<i64> {
-    let by_result: HashMap<ValueId, &Instruction> =
-        block.instructions.iter().map(|instr| (instr.result, instr)).collect();
+    let by_result: HashMap<ValueId, &Instruction> = block
+        .instructions
+        .iter()
+        .map(|instr| (instr.result, instr))
+        .collect();
     let stores = block
         .instructions
         .iter()
@@ -245,7 +244,8 @@ fn find_step(block: &crate::ir::BasicBlock, loop_var: &str) -> Option<i64> {
         MirBinOp::Add => {
             if matches!(&by_result.get(&left)?.op, Op::LoadLocal(name) if name == loop_var) {
                 resolve_const_int(right, &by_result)
-            } else if matches!(&by_result.get(&right)?.op, Op::LoadLocal(name) if name == loop_var) {
+            } else if matches!(&by_result.get(&right)?.op, Op::LoadLocal(name) if name == loop_var)
+            {
                 resolve_const_int(left, &by_result)
             } else {
                 None
@@ -357,7 +357,10 @@ fn clone_op(op: &Op, value_map: &HashMap<ValueId, ValueId>) -> Op {
         },
         Op::Call { callee, args } => Op::Call {
             callee: callee.clone(),
-            args: args.iter().map(|arg| remap_value(*arg, value_map)).collect(),
+            args: args
+                .iter()
+                .map(|arg| remap_value(*arg, value_map))
+                .collect(),
         },
         Op::Copy(value) => Op::Copy(remap_value(*value, value_map)),
         Op::LoadLocal(name) => Op::LoadLocal(name.clone()),
@@ -400,7 +403,11 @@ mod tests {
     use agam_hir::lower::HirLowering;
     use agam_lexer::Lexer;
 
-    use crate::{ir::{MirBinOp, Op, Terminator}, lower::MirLowering, opt};
+    use crate::{
+        ir::{MirBinOp, Op, Terminator},
+        lower::MirLowering,
+        opt,
+    };
 
     use super::run;
 
@@ -443,14 +450,22 @@ mod tests {
             }",
         );
 
-        assert!(mir.functions[0].blocks.iter().all(|block| {
-            !matches!(block.terminator, Terminator::Branch { .. })
-        }));
+        assert!(
+            mir.functions[0]
+                .blocks
+                .iter()
+                .all(|block| { !matches!(block.terminator, Terminator::Branch { .. }) })
+        );
         let has_loop_compare = mir.functions[0].blocks.iter().any(|block| {
-            block.instructions.iter().any(|instr| matches!(
-                instr.op,
-                Op::BinOp { op: MirBinOp::Lt | MirBinOp::LtEq | MirBinOp::Gt | MirBinOp::GtEq, .. }
-            ))
+            block.instructions.iter().any(|instr| {
+                matches!(
+                    instr.op,
+                    Op::BinOp {
+                        op: MirBinOp::Lt | MirBinOp::LtEq | MirBinOp::Gt | MirBinOp::GtEq,
+                        ..
+                    }
+                )
+            })
         });
         assert!(!has_loop_compare);
     }

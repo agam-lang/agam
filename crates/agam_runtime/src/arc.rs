@@ -9,7 +9,7 @@
 //! - Cycle detection via weak references (`AgamWeak`).
 //! - Zero overhead in `strict` blocks (ARC is bypassed).
 
-use std::alloc::{alloc, handle_alloc_error, Layout};
+use std::alloc::{Layout, alloc, handle_alloc_error};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -94,7 +94,10 @@ impl<T> AgamArc<T> {
     /// Create a new ARC-managed value with a specific alignment policy.
     pub fn new_aligned(value: T, hint: AlignmentHint) -> Self {
         let alignment = hint.bytes().max(std::mem::align_of::<ArcInner<T>>());
-        assert!(alignment.is_power_of_two(), "alignment must be a power of two");
+        assert!(
+            alignment.is_power_of_two(),
+            "alignment must be a power of two"
+        );
 
         let layout = Layout::from_size_align(std::mem::size_of::<ArcInner<T>>().max(1), alignment)
             .expect("valid ARC layout");
@@ -161,7 +164,9 @@ impl AgamWeak {
     /// Try to upgrade to a strong reference. Returns false if the value was dropped.
     pub fn is_alive(&self) -> bool {
         unsafe {
-            if self.header.is_null() { return false; }
+            if self.header.is_null() {
+                return false;
+            }
             (*self.header).strong_count() > 0
         }
     }

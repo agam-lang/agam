@@ -211,6 +211,7 @@ struct TestRequest {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct TestRequestResult {
     request: TestRequest,
     summary: Option<agam_test::FileTestSummary>,
@@ -225,6 +226,12 @@ struct DaemonPrewarmedEntry {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// explicitly generate or refresh the workspace lockfile (`agam.lock`)
+    Lock {
+        /// Workspace root or manifest path (defaults to current directory)
+        path: Option<PathBuf>,
+    },
+
     /// Compile source files to a native binary
     Build {
         /// Source file(s) to compile
@@ -403,6 +410,10 @@ enum Command {
         #[arg(long, default_value_t = DAEMON_DEFAULT_POLL_MS)]
         poll_ms: u64,
 
+        /// Internal flag: run as a background child process (not for direct user use)
+        #[arg(long, hide = true)]
+        background_child: bool,
+
         #[command(subcommand)]
         command: Option<DaemonCommand>,
     },
@@ -481,6 +492,12 @@ enum DaemonCommand {
 
     /// Remove persisted daemon status metadata for a workspace
     Clear,
+
+    /// Spawn a background daemon process for the workspace
+    Start,
+
+    /// Signal a running background daemon to shut down gracefully
+    Stop,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -496,6 +513,7 @@ struct DaemonDiffSummary {
 enum DaemonRunMode {
     OneShot,
     ForegroundLoop,
+    BackgroundService,
 }
 
 impl Default for DaemonRunMode {
@@ -526,6 +544,21 @@ struct DaemonStatusRecord {
     pub prewarm: DaemonPrewarmSummary,
     pub last_diff: DaemonDiffSummary,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum DaemonIpcRequest {
+    Status,
+    GetWarmMir { file_path: String, content_hash: String },
+    Stop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum DaemonIpcResponse {
+    Status(DaemonStatusRecord),
+    WarmMir { found: bool, mir_json: Option<String> },
+    Error(String),
+}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DaemonLiveness {
@@ -571,6 +604,10 @@ struct DaemonPrewarmSummary {
     pub build_backend: Option<String>,
     #[serde(default)]
     pub build_artifact_kind: Option<String>,
+    #[serde(default)]
+    pub prewarmed_file_count: usize,
+    #[serde(default)]
+    pub prewarmed_total_files: usize,
     #[serde(default)]
     pub last_error: Option<String>,
 }
@@ -650,6 +687,40 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Lock { path } => {
+            let session = match resolve_workspace_session_for_driver(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error: could not resolve workspace: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if session.manifest.is_none() {
+                eprintln!("error: no `agam.toml` manifest found in this directory");
+                std::process::exit(1);
+            }
+
+            match agam_pkg::generate_or_refresh_lockfile(&session) {
+                Ok(lockfile) => {
+                    let manifest = session.manifest.as_ref().unwrap();
+                    let diagnostics = agam_pkg::lockfile_diagnostics(manifest, &lockfile);
+                    for d in diagnostics {
+                        eprintln!("warning: {d}");
+                    }
+                    let drift = agam_pkg::lockfile_content_drift(&session.layout.root, &lockfile);
+                    for (name, _, _) in drift {
+                        eprintln!(
+                            "warning: path dependency `{name}` has changed since lockfile was generated"
+                        );
+                    }
+                    println!("locked {} package(s)", lockfile.packages.len());
+                }
+                Err(e) => {
+                    eprintln!("error: failed to resolve dependencies: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
         Command::Build {
             files,
             output,
@@ -697,6 +768,25 @@ fn main() {
                 }
                 if features.call_cache {
                     eprintln!("[agamc] Call cache enabled");
+                }
+            }
+
+            // Lockfile refresh: attempt to resolve and refresh agam.lock for
+            // the workspace containing the build input(s).
+            if !is_nested_build_request() {
+                if let Some(first_file) = files.first() {
+                    match resolve_workspace_session_for_driver(Some(first_file.clone())) {
+                        Ok(session) => {
+                            if let Err(e) = try_lockfile_refresh(&session, cli.verbose) {
+                                if cli.verbose {
+                                    eprintln!("[agamc] lockfile warning: {e}");
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            // No resolvable workspace — skip lockfile.
+                        }
+                    }
                 }
             }
 
@@ -985,6 +1075,22 @@ fn main() {
                 eprintln!("[agamc] Checking {} file(s)...", files.len());
             }
 
+            // Lockfile refresh for the workspace containing the check input(s).
+            if !nested_check {
+                if let Some(first_file) = files.first() {
+                    match resolve_workspace_session_for_driver(Some(first_file.clone())) {
+                        Ok(session) => {
+                            if let Err(e) = try_lockfile_refresh(&session, cli.verbose) {
+                                if cli.verbose {
+                                    eprintln!("[agamc] lockfile warning: {e}");
+                                }
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+            }
+
             let mut had_errors = false;
             if !nested_check && files.len() > 1 {
                 let requests = files
@@ -1125,6 +1231,7 @@ fn main() {
             path,
             once,
             poll_ms,
+            background_child,
             command,
         } => match command {
             Some(DaemonCommand::Status) => {
@@ -1139,8 +1246,23 @@ fn main() {
                     process::exit(1);
                 }
             }
+            Some(DaemonCommand::Start) => {
+                if let Err(e) = start_daemon_background(path.clone(), poll_ms, cli.verbose) {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
+            Some(DaemonCommand::Stop) => {
+                if let Err(e) = stop_daemon_background(path, cli.verbose) {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
             None => {
-                if let Err(e) = run_daemon_foreground(path, once, poll_ms, cli.verbose) {
+                let is_background = background_child;
+                if let Err(e) =
+                    run_daemon_foreground(path, once, poll_ms, is_background, cli.verbose)
+                {
                     eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
                     process::exit(1);
                 }
@@ -2404,6 +2526,61 @@ fn resolve_workspace_layout(path: Option<PathBuf>) -> Result<WorkspaceLayout, St
     agam_pkg::resolve_workspace_layout(path)
 }
 
+fn resolve_workspace_session_for_driver(
+    path: Option<PathBuf>,
+) -> Result<agam_pkg::WorkspaceSession, String> {
+    agam_pkg::resolve_workspace_session(path)
+}
+
+/// Attempt lockfile generation/refresh for a workspace session.
+///
+/// Returns `Ok(Some(lockfile))` when a lockfile was generated or is fresh,
+/// `Ok(None)` when the workspace has no manifest (no lockfile needed),
+/// and `Err` on resolution failures.
+fn try_lockfile_refresh(
+    session: &agam_pkg::WorkspaceSession,
+    verbose: bool,
+) -> Result<Option<agam_pkg::WorkspaceLockfile>, String> {
+    if session.manifest.is_none() {
+        return Ok(None);
+    }
+
+    let lockfile_path = agam_pkg::default_lockfile_path(&session.layout.root);
+    let had_lockfile = lockfile_path.is_file();
+
+    let lockfile = agam_pkg::generate_or_refresh_lockfile(session)?;
+
+    if verbose {
+        let manifest = session.manifest.as_ref().expect("manifest checked above");
+        let diagnostics = agam_pkg::lockfile_diagnostics(manifest, &lockfile);
+        if diagnostics.is_empty() {
+            if had_lockfile {
+                eprintln!("[agamc] lockfile: fresh ({} package(s))", lockfile.packages.len());
+            } else {
+                eprintln!(
+                    "[agamc] lockfile: generated agam.lock ({} package(s))",
+                    lockfile.packages.len()
+                );
+            }
+        } else {
+            for diagnostic in &diagnostics {
+                eprintln!("[agamc] lockfile warning: {diagnostic}");
+            }
+        }
+
+        // Drift detection: warn about path deps that changed since lockfile generation.
+        let drift = agam_pkg::lockfile_content_drift(&session.layout.root, &lockfile);
+        for (name, _old, _new) in &drift {
+            eprintln!(
+                "[agamc] lockfile drift: path dependency `{name}` has changed since lockfile was generated"
+            );
+        }
+    }
+
+    Ok(Some(lockfile))
+}
+
+
 struct DaemonWorkspaceTarget {
     root: PathBuf,
     project_name: String,
@@ -2586,6 +2763,22 @@ fn run_source_file(
             features,
             Some(&warm_state),
         );
+    }
+
+    // Fallback: try the multi-file warm index
+    if let Some(warm_state) = load_daemon_warm_state_for_file(file, verbose) {
+        if warm_state.mir.is_some() {
+            return run_source_file_with_optional_warm_state(
+                file,
+                args,
+                backend,
+                opt_level,
+                tuning,
+                verbose,
+                features,
+                Some(&warm_state),
+            );
+        }
     }
 
     run_source_file_with_optional_warm_state(
@@ -2892,11 +3085,15 @@ fn run_dev_workflow(
     no_tests: bool,
     verbose: bool,
 ) -> Result<(), String> {
-    let workspace = resolve_workspace_layout(path)?;
+    let session = resolve_workspace_session_for_driver(path)?;
+    let workspace = session.layout.clone();
     let cache = agam_runtime::cache::CacheStore::for_path(&workspace.root)?;
     let cache_status = cache.status(3)?;
     let native_llvm = resolve_native_llvm_command();
     let resolved_backend = resolve_backend(backend, !no_run);
+
+    // Resolve or refresh the lockfile for manifested workspaces.
+    let lockfile = try_lockfile_refresh(&session, verbose)?;
 
     println!("Agam Dev");
     println!("workspace: {}", workspace.root.display());
@@ -2909,6 +3106,9 @@ fn run_dev_workflow(
     println!("entry: {}", workspace.entry_file.display());
     println!("sources: {}", workspace.source_files.len());
     println!("tests: {}", workspace.test_files.len());
+    if let Some(ref lf) = lockfile {
+        println!("dependencies: {} (locked)", lf.packages.len());
+    }
     println!(
         "cache: {} / {}",
         cache_status.entry_count,
@@ -3095,7 +3295,27 @@ fn now_unix_ms() -> u128 {
 }
 
 fn daemon_status_path(root: &Path) -> PathBuf {
-    root.join(".agam_cache").join("daemon").join("status.json")
+    root.join(".agam_cache")
+        .join("daemon")
+        .join("status.json")
+}
+
+fn daemon_pid_path(root: &Path) -> PathBuf {
+    root.join(".agam_cache")
+        .join("daemon")
+        .join("daemon.pid")
+}
+
+fn daemon_shutdown_path(root: &Path) -> PathBuf {
+    root.join(".agam_cache")
+        .join("daemon")
+        .join("shutdown_requested")
+}
+
+fn daemon_port_path(root: &Path) -> PathBuf {
+    root.join(".agam_cache")
+        .join("daemon")
+        .join("daemon.port")
 }
 
 fn ensure_daemon_status_dir(root: &Path) -> Result<PathBuf, String> {
@@ -3136,6 +3356,12 @@ fn write_daemon_status(root: &Path, status: &DaemonStatusRecord) -> Result<(), S
 fn clear_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), String> {
     let workspace = resolve_daemon_workspace_target(path)?;
     let status_path = daemon_status_path(&workspace.root);
+    let warm_index_path = agam_pkg::daemon_warm_index_path(&workspace.root);
+    let prewarm_dir = daemon_prewarm_stage_dir(&workspace.root);
+    let pid_path = daemon_pid_path(&workspace.root);
+    let shutdown_path = daemon_shutdown_path(&workspace.root);
+    let port_path = daemon_port_path(&workspace.root);
+
     if status_path.is_file() {
         std::fs::remove_file(&status_path).map_err(|e| {
             format!(
@@ -3151,6 +3377,43 @@ fn clear_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), Strin
         println!("workspace: {}", workspace.root.display());
         println!("status: already clear");
     }
+
+    // Clean warm index
+    if warm_index_path.is_file() {
+        let _ = std::fs::remove_file(&warm_index_path);
+        if verbose {
+            println!("warm-index: cleared");
+        }
+    }
+
+    // Clean prewarm directory (MIR artifacts)
+    if prewarm_dir.is_dir() {
+        let _ = std::fs::remove_dir_all(&prewarm_dir);
+        if verbose {
+            println!("prewarm-dir: cleared");
+        }
+    }
+
+    // Clean PID lock and shutdown sentinel
+    if pid_path.is_file() {
+        let _ = std::fs::remove_file(&pid_path);
+        if verbose {
+            println!("pid-lock: cleared");
+        }
+    }
+    if shutdown_path.is_file() {
+        let _ = std::fs::remove_file(&shutdown_path);
+        if verbose {
+            println!("shutdown-sentinel: cleared");
+        }
+    }
+    if port_path.is_file() {
+        let _ = std::fs::remove_file(&port_path);
+        if verbose {
+            println!("ipc-port: cleared");
+        }
+    }
+
     if verbose {
         println!("status-file: {}", status_path.display());
     }
@@ -3364,6 +3627,7 @@ fn daemon_prewarm_status_message(prewarm: &DaemonPrewarmSummary) -> Option<Strin
         && !prewarm.build_ready
         && prewarm.build_backend.is_none()
         && prewarm.last_error.is_none()
+        && prewarm.prewarmed_file_count == 0
     {
         return None;
     }
@@ -3384,8 +3648,16 @@ fn daemon_prewarm_status_message(prewarm: &DaemonPrewarmSummary) -> Option<Strin
         Some(backend) => format!("cold via {backend}"),
         None => "none".to_string(),
     };
+    let files = if prewarm.prewarmed_total_files > 0 {
+        format!(
+            ", warm files {}/{}",
+            prewarm.prewarmed_file_count, prewarm.prewarmed_total_files
+        )
+    } else {
+        String::new()
+    };
 
-    Some(format!("prewarm: package {package}, build {build}"))
+    Some(format!("prewarm: package {package}, build {build}{files}"))
 }
 
 fn prewarm_daemon_entry_artifacts(
@@ -3394,6 +3666,124 @@ fn prewarm_daemon_entry_artifacts(
     verbose: bool,
 ) -> DaemonPrewarmSummary {
     let mut summary = DaemonPrewarmSummary::default();
+
+    // --- Multi-file warm index prewarm ---
+    let root = &snapshot.session.layout.root;
+    let all_files: Vec<_> = snapshot
+        .source_files
+        .iter()
+        .chain(&snapshot.test_files)
+        .collect();
+    summary.prewarmed_total_files = all_files.len();
+
+    let mut warm_index = agam_pkg::DaemonWarmIndex {
+        format_version: agam_pkg::DAEMON_WARM_INDEX_FORMAT_VERSION,
+        files: BTreeMap::new(),
+    };
+
+    for file_snapshot in &all_files {
+        let Some(warm_state) = warm_state_for_snapshot_file(session, file_snapshot) else {
+            continue;
+        };
+        let Some(mir) = warm_state.mir.as_ref() else {
+            // File was parsed/checked but not lowered — record at a lower warm level
+            let warm_level = if warm_state.hir.is_some() {
+                agam_pkg::DaemonWarmLevel::Checked
+            } else {
+                agam_pkg::DaemonWarmLevel::Parsed
+            };
+            warm_index.files.insert(
+                file_snapshot.path.display().to_string(),
+                agam_pkg::DaemonWarmFileEntry {
+                    content_hash: file_snapshot.content_hash.clone(),
+                    mir_hash: None,
+                    artifact_path: None,
+                    warm_level,
+                },
+            );
+            summary.prewarmed_file_count += 1;
+            continue;
+        };
+
+        // Serialize per-file MIR artifact to the prewarm staging directory
+        let mir_hash = agam_runtime::cache::hash_serializable(mir).unwrap_or_default();
+        let artifact_path = match daemon_prewarm_mir_artifact_path(root, &file_snapshot.path) {
+            Ok(path) => path,
+            Err(error) => {
+                if verbose {
+                    eprintln!(
+                        "[agamc] daemon warm index: skipped `{}`: {error}",
+                        file_snapshot.path.display()
+                    );
+                }
+                continue;
+            }
+        };
+
+        match write_mir_artifact(&artifact_path, mir) {
+            Ok(()) => {
+                warm_index.files.insert(
+                    file_snapshot.path.display().to_string(),
+                    agam_pkg::DaemonWarmFileEntry {
+                        content_hash: file_snapshot.content_hash.clone(),
+                        mir_hash: Some(mir_hash),
+                        artifact_path: Some(artifact_path.display().to_string()),
+                        warm_level: agam_pkg::DaemonWarmLevel::Lowered,
+                    },
+                );
+                summary.prewarmed_file_count += 1;
+            }
+            Err(error) => {
+                if verbose {
+                    eprintln!(
+                        "[agamc] daemon warm index: failed to write MIR for `{}`: {error}",
+                        file_snapshot.path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    // Write the warm index
+    if let Err(error) = agam_pkg::write_daemon_warm_index(root, &warm_index) {
+        record_prewarm_error(&mut summary, format!("failed to write daemon warm index: {error}"));
+    } else if verbose {
+        eprintln!(
+            "[agamc] daemon warm index: {}/{} file(s) indexed",
+            summary.prewarmed_file_count, summary.prewarmed_total_files
+        );
+    }
+
+    // Clean stale MIR artifacts that are no longer in the warm index
+    let valid_mir_paths: HashSet<PathBuf> = warm_index
+        .files
+        .values()
+        .filter_map(|entry| entry.artifact_path.as_deref().map(PathBuf::from))
+        .collect();
+    let prewarm_dir = daemon_prewarm_stage_dir(root);
+    if prewarm_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&prewarm_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let is_mir_artifact = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.contains("_mir_") && name.ends_with(".json"))
+                    .unwrap_or(false);
+                if is_mir_artifact && !valid_mir_paths.contains(&path) {
+                    if verbose {
+                        eprintln!(
+                            "[agamc] daemon warm index: cleaning stale MIR artifact `{}`",
+                            path.display()
+                        );
+                    }
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+        }
+    }
+
+    // --- Entry-file portable package prewarm (existing behavior, preserved) ---
     let Some(entry_snapshot) = daemon_entry_snapshot(snapshot) else {
         record_prewarm_error(
             &mut summary,
@@ -3415,7 +3805,6 @@ fn prewarm_daemon_entry_artifacts(
         return summary;
     };
 
-    let root = &snapshot.session.layout.root;
     let entry_file = &entry_snapshot.path;
     summary.entry_path = Some(entry_file.display().to_string());
     summary.entry_content_hash = Some(entry_snapshot.content_hash.clone());
@@ -3538,6 +3927,124 @@ fn prewarm_daemon_entry_artifacts(
     summary
 }
 
+fn daemon_prewarm_mir_artifact_path(root: &Path, file: &Path) -> Result<PathBuf, String> {
+    let dir = ensure_daemon_prewarm_stage_dir(root)?;
+    let hash = agam_runtime::cache::hash_bytes(file.to_string_lossy().as_bytes());
+    let stem = file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("file")
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    Ok(dir.join(format!("{stem}_mir_{hash}.json")))
+}
+
+fn write_mir_artifact(path: &Path, mir: &agam_mir::ir::MirModule) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "failed to create MIR artifact directory `{}`: {e}",
+                parent.display()
+            )
+        })?;
+    }
+    let json = serde_json::to_vec(mir)
+        .map_err(|e| format!("failed to serialize MIR artifact: {e}"))?;
+    std::fs::write(path, json)
+        .map_err(|e| format!("failed to write MIR artifact `{}`: {e}", path.display()))
+}
+
+fn read_mir_artifact(path: &Path) -> Result<agam_mir::ir::MirModule, String> {
+    let json = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read MIR artifact `{}`: {e}", path.display()))?;
+    serde_json::from_str(&json)
+        .map_err(|e| format!("failed to parse MIR artifact `{}`: {e}", path.display()))
+}
+
+/// Attempt to load daemon-prewarmed warm state for any file via the IPC or warm index.
+fn load_daemon_warm_state_for_file(path: &Path, verbose: bool) -> Option<WarmState> {
+    let workspace = match resolve_daemon_workspace_target(Some(path.to_path_buf())) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            if verbose { eprintln!("[agamc] warm state lookup skipped: {}", error); }
+            return None;
+        }
+    };
+    
+    let source_bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            if verbose { eprintln!("[agamc] warm state hash check failed for `{}`: {}", path.display(), error); }
+            return None;
+        }
+    };
+    let current_hash = agam_runtime::cache::hash_bytes(&source_bytes);
+    
+    // 1. Try IPC query first
+    let req = DaemonIpcRequest::GetWarmMir {
+        file_path: path.display().to_string(),
+        content_hash: current_hash.clone(),
+    };
+    
+    if let Ok(DaemonIpcResponse::WarmMir { found, mir_json }) = send_daemon_ipc_request(&workspace.root, req) {
+        if found {
+            if verbose { eprintln!("[agamc] IPC warm cache hit for `{}`", path.display()); }
+            let mut warm = WarmState {
+                source_features: None,
+                module: None,
+                hir: None,
+                mir: None,
+            };
+            if let Some(json) = mir_json {
+                if let Ok(mir) = serde_json::from_str(&json) {
+                    warm.mir = Some(mir);
+                } else if verbose {
+                    eprintln!("[agamc] IPC warm cache parse err for `{}`", path.display());
+                }
+            }
+            return Some(warm);
+        } else {
+            if verbose { eprintln!("[agamc] IPC warm cache miss for `{}`", path.display()); }
+            return None; // Daemon definitively doesn't have it matching the hash
+        }
+    }
+    
+    // 2. Fallback to Disk Index
+    let index = match agam_pkg::read_daemon_warm_index(&workspace.root) {
+        Ok(Some(index)) => index,
+        _ => return None,
+    };
+    
+    let key = path.display().to_string();
+    let entry = match index.files.get(&key) {
+        Some(e) => e,
+        None => return None,
+    };
+    
+    if current_hash != entry.content_hash {
+        if verbose { eprintln!("[agamc] disk warm index stale for `{}`", path.display()); }
+        return None;
+    }
+    
+    if entry.warm_level == agam_pkg::DaemonWarmLevel::Checked || entry.warm_level == agam_pkg::DaemonWarmLevel::Lowered {
+        let mir = entry.artifact_path.as_deref().and_then(|artifact_path| {
+            let artifact = Path::new(artifact_path);
+            if !artifact.is_file() { return None; }
+            read_mir_artifact(artifact).ok()
+        });
+        if verbose { eprintln!("[agamc] Reused disk warm state for `{}`", path.display()); }
+        return Some(WarmState { source_features: None, module: None, hir: None, mir });
+    }
+    None
+}
+
 fn build_daemon_status(
     snapshot: &agam_pkg::WorkspaceSnapshot,
     warm: WarmSummary,
@@ -3624,6 +4131,11 @@ fn print_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), Strin
         }
     }
     println!("pid: {}", status.pid);
+    match status.run_mode {
+        DaemonRunMode::BackgroundService => println!("mode: background service"),
+        DaemonRunMode::ForegroundLoop => println!("mode: foreground loop"),
+        DaemonRunMode::OneShot => println!("mode: one-shot snapshot"),
+    }
     println!("heartbeat: {}", relative_age(heartbeat_age));
     println!("tracked files: {}", status.snapshot_file_count);
     println!("warm files: {}", status.warmed_file_count);
@@ -3646,6 +4158,12 @@ fn print_daemon_status(path: Option<PathBuf>, verbose: bool) -> Result<(), Strin
     }
     if let Some(error) = status.last_error.as_ref() {
         println!("last error: {error}");
+    }
+    if status.prewarm.prewarmed_total_files > 0 {
+        println!(
+            "warm index: {}/{} file(s) prewarmed",
+            status.prewarm.prewarmed_file_count, status.prewarm.prewarmed_total_files
+        );
     }
     if let Some(message) = daemon_prewarm_status_message(&status.prewarm) {
         println!("{message}");
@@ -3758,11 +4276,76 @@ fn run_daemon_cycle(
         prewarm_ran: should_prewarm,
     })
 }
+fn spawn_ipc_server(
+    workspace_root: &Path,
+) -> Result<std::sync::mpsc::Receiver<(DaemonIpcRequest, std::sync::mpsc::Sender<DaemonIpcResponse>)>, String> {
+    use std::io::Read;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("failed to bind IPC listener: {e}"))?;
+    
+    let port_path = daemon_port_path(workspace_root);
+    if let Some(parent) = port_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let port = listener.local_addr()
+        .map_err(|e| format!("failed to get IPC port: {e}"))?.port();
+    
+    std::fs::write(&port_path, format!("{port}"))
+        .map_err(|e| format!("failed to write port file: {e}"))?;
+
+    let (req_tx, req_rx) = std::sync::mpsc::channel::<(DaemonIpcRequest, std::sync::mpsc::Sender<DaemonIpcResponse>)>();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            if let Ok(mut stream) = stream {
+                let mut payload = String::new();
+                if stream.read_to_string(&mut payload).is_ok() {
+                    if let Ok(req) = serde_json::from_str::<DaemonIpcRequest>(&payload) {
+                        let (resp_tx, resp_rx) = std::sync::mpsc::channel();
+                        if req_tx.send((req, resp_tx)).is_ok() {
+                            if let Ok(resp) = resp_rx.recv() {
+                                let _ = serde_json::to_writer(&stream, &resp);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    Ok(req_rx)
+}
+
+fn send_daemon_ipc_request(
+    root: &Path,
+    req: DaemonIpcRequest,
+) -> Result<DaemonIpcResponse, String> {
+    let port_path = daemon_port_path(root);
+    let port_str = std::fs::read_to_string(&port_path)
+        .map_err(|e| format!("no port file: {e}"))?;
+    let port: u16 = port_str.trim().parse().map_err(|e| format!("invalid port: {e}"))?;
+    
+    let mut stream = std::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+        .map_err(|e| format!("failed to connect to IPC socket: {e}"))?;
+    
+    serde_json::to_writer(&stream, &req)
+        .map_err(|e| format!("failed to write JSON: {e}"))?;
+    stream.shutdown(std::net::Shutdown::Write).ok();
+    
+    use std::io::Read;
+    let mut resp_payload = String::new();
+    stream.read_to_string(&mut resp_payload)
+        .map_err(|e| format!("failed to read IPC response: {e}"))?;
+    
+    serde_json::from_str(&resp_payload)
+        .map_err(|e| format!("failed to parse IPC response: {e}"))
+}
 
 fn run_daemon_foreground(
     path: Option<PathBuf>,
     once: bool,
     poll_ms: u64,
+    is_background: bool,
     verbose: bool,
 ) -> Result<(), String> {
     let initial_snapshot = agam_pkg::snapshot_workspace(path)?;
@@ -3774,29 +4357,61 @@ fn run_daemon_foreground(
     let refresh_hint = daemon_refresh_snapshot_hint(&workspace);
     let run_mode = if once {
         DaemonRunMode::OneShot
+    } else if is_background {
+        DaemonRunMode::BackgroundService
     } else {
         DaemonRunMode::ForegroundLoop
     };
 
-    println!("Agam Daemon");
-    println!("workspace: {}", workspace.root.display());
-    println!("project: {}", workspace.project_name);
-    if let Some(manifest) = workspace.manifest_path.as_ref() {
-        println!("manifest: {}", manifest.display());
-    } else {
-        println!("manifest: none");
-    }
-    if once {
-        println!("mode: one-shot warm refresh");
-    } else {
-        println!("mode: foreground warm loop ({poll_ms} ms poll)");
-        println!(
-            "status-file: {}",
-            daemon_status_path(&workspace.root).display()
-        );
+    // Write PID lock for background daemon
+    if is_background {
+        let pid_path = daemon_pid_path(&workspace.root);
+        if let Some(parent) = pid_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&pid_path, format!("{}", std::process::id()));
+        // Remove any stale shutdown sentinel
+        let _ = std::fs::remove_file(daemon_shutdown_path(&workspace.root));
     }
 
+    if !is_background {
+        println!("Agam Daemon");
+        println!("workspace: {}", workspace.root.display());
+        println!("project: {}", workspace.project_name);
+        if let Some(manifest) = workspace.manifest_path.as_ref() {
+            println!("manifest: {}", manifest.display());
+        } else {
+            println!("manifest: none");
+        }
+        if once {
+            println!("mode: one-shot warm refresh");
+        } else {
+            println!("mode: foreground warm loop ({poll_ms} ms poll)");
+            println!(
+                "status-file: {}",
+                daemon_status_path(&workspace.root).display()
+            );
+        }
+    }
+
+    let ipc_rx = if !once {
+        spawn_ipc_server(&workspace.root).ok()
+    } else {
+        None
+    };
+
     loop {
+        // Check for shutdown request (background daemon)
+        if is_background {
+            let shutdown_path = daemon_shutdown_path(&workspace.root);
+            if shutdown_path.is_file() {
+                // Clean up and exit gracefully
+                let _ = std::fs::remove_file(&shutdown_path);
+                let _ = std::fs::remove_file(daemon_pid_path(&workspace.root));
+                return Ok(());
+            }
+        }
+
         match run_daemon_cycle(
             &mut session,
             &refresh_hint,
@@ -3811,9 +4426,10 @@ fn run_daemon_foreground(
                 diff_summary,
                 prewarm_ran,
             } => {
-                let should_log = first_cycle
-                    || daemon_diff_has_changes(&diff_summary)
-                    || last_error.take().is_some();
+                let should_log = !is_background
+                    && (first_cycle
+                        || daemon_diff_has_changes(&diff_summary)
+                        || last_error.take().is_some());
                 if should_log {
                     println!(
                         "warm: {} file(s), {} version(s), AST {}, HIR {}, MIR {}",
@@ -3841,7 +4457,7 @@ fn run_daemon_foreground(
                         println!("{message}");
                     }
                 }
-                if prewarm_ran {
+                if prewarm_ran && !is_background {
                     if let Some(error) = status.prewarm.last_error.as_ref() {
                         eprintln!("[agamc] daemon prewarm failed: {error}");
                     } else if verbose {
@@ -3856,19 +4472,192 @@ fn run_daemon_foreground(
             }
             DaemonCycleOutcome::Error { status, error } => {
                 write_daemon_status(&workspace.root, &status)?;
-                if last_error.as_ref() != Some(&error) {
+                if !is_background && last_error.as_ref() != Some(&error) {
                     eprintln!("[agamc] daemon refresh failed: {error}");
                 }
                 last_error = Some(error.clone());
                 if once {
+                    // Clean up PID lock on error exit
+                    if is_background {
+                        let _ = std::fs::remove_file(daemon_pid_path(&workspace.root));
+                    }
                     return Err(error);
                 }
             }
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(poll_ms.max(100)));
+        let timeout = std::time::Duration::from_millis(poll_ms.max(100));
+        let sleep_start = std::time::Instant::now();
+        
+        while sleep_start.elapsed() < timeout {
+            let remain = timeout.saturating_sub(sleep_start.elapsed());
+            if remain.is_zero() {
+                break;
+            }
+            if let Some(rx) = &ipc_rx {
+                match rx.recv_timeout(remain) {
+                    Ok((req, resp_tx)) => {
+                        let resp = match req {
+                            DaemonIpcRequest::Status => {
+                                // For status, just write standard status and return it
+                                // Or read it from file, but we can reconstruct a basic one or return dummy
+                                // Let's just return what's on disk for simplicity
+                                if let Ok(Some(st)) = read_daemon_status(&workspace.root) {
+                                    DaemonIpcResponse::Status(st)
+                                } else {
+                                    DaemonIpcResponse::Error("status unknown".into())
+                                }
+                            }
+                            DaemonIpcRequest::GetWarmMir { file_path, content_hash } => {
+                                let pb = PathBuf::from(&file_path);
+                                let mut found = false;
+                                let mut mir_json = None;
+                                if let Some(versions) = session.cache.get(&pb) {
+                                    if let Some(state) = versions.get(&content_hash) {
+                                        found = true;
+                                        if let Some(mir) = &state.mir {
+                                            mir_json = serde_json::to_string(mir).ok();
+                                        }
+                                    }
+                                }
+                                DaemonIpcResponse::WarmMir { found, mir_json }
+                            }
+                            DaemonIpcRequest::Stop => {
+                                let _ = resp_tx.send(DaemonIpcResponse::Error("stopping".into()));
+                                let _ = std::fs::remove_file(daemon_pid_path(&workspace.root));
+                                let _ = std::fs::remove_file(daemon_port_path(&workspace.root));
+                                return Ok(());
+                            }
+                        };
+                        let _ = resp_tx.send(resp);
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                    Err(_) => break, // Channel disconnected
+                }
+            } else {
+                std::thread::sleep(remain);
+                break;
+            }
+        }
+        
         first_cycle = false;
     }
+}
+
+/// Spawn a background daemon process for the workspace.
+fn start_daemon_background(
+    path: Option<PathBuf>,
+    poll_ms: u64,
+    verbose: bool,
+) -> Result<(), String> {
+    let workspace = resolve_daemon_workspace_target(path.clone())?;
+    let pid_path = daemon_pid_path(&workspace.root);
+
+    // Check if a daemon is already running
+    if pid_path.is_file() {
+        if let Ok(pid_str) = std::fs::read_to_string(&pid_path) {
+            if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                // Check if process is still alive by reading status
+                if let Ok(Some(status)) = read_daemon_status(&workspace.root) {
+                    let now = now_unix_ms();
+                    if daemon_liveness(&status, now) == DaemonLiveness::Running {
+                        println!("Agam Daemon");
+                        println!("workspace: {}", workspace.root.display());
+                        println!("status: already running (pid {pid})");
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        // Stale PID file — remove it
+        let _ = std::fs::remove_file(&pid_path);
+    }
+
+    // Find our own executable
+    let exe = std::env::current_exe().map_err(|e| format!("failed to find agamc executable: {e}"))?;
+
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("daemon");
+    if let Some(ref p) = path {
+        cmd.arg(p);
+    }
+    cmd.arg("--background-child");
+    cmd.arg("--poll-ms");
+    cmd.arg(poll_ms.to_string());
+
+    // Platform-specific detach
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS);
+    }
+
+    // Redirect stdio to prevent blocking
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+
+    let child = cmd.spawn().map_err(|e| format!("failed to spawn background daemon: {e}"))?;
+    let child_pid = child.id();
+
+    // Ensure daemon directory exists and write PID
+    if let Some(parent) = pid_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&pid_path, format!("{child_pid}"));
+
+    println!("Agam Daemon");
+    println!("workspace: {}", workspace.root.display());
+    println!("started background daemon (pid {child_pid})");
+    if verbose {
+        println!("pid-file: {}", pid_path.display());
+    }
+
+    Ok(())
+}
+
+/// Signal a running background daemon to shut down gracefully.
+fn stop_daemon_background(path: Option<PathBuf>, verbose: bool) -> Result<(), String> {
+    let workspace = resolve_daemon_workspace_target(path)?;
+    let pid_path = daemon_pid_path(&workspace.root);
+    let shutdown_path = daemon_shutdown_path(&workspace.root);
+
+    let pid_str = std::fs::read_to_string(&pid_path)
+        .map_err(|_| "no running background daemon found (no PID file)".to_string())?;
+    let pid: u32 = pid_str
+        .trim()
+        .parse()
+        .map_err(|_| format!("invalid PID in daemon lock file: {}", pid_str.trim()))?;
+
+    // First try IPC stop for immediate clean shutdown
+    let mut ipc_success = false;
+    if let Ok(DaemonIpcResponse::Error(_)) = send_daemon_ipc_request(&workspace.root, DaemonIpcRequest::Stop) {
+        ipc_success = true;
+    }
+
+    // Fallback to sentinel file if IPC failed
+    if !ipc_success {
+        if let Some(parent) = shutdown_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&shutdown_path, format!("{}", now_unix_ms()))
+            .map_err(|e| format!("failed to create shutdown sentinel: {e}"))?;
+    }
+
+    println!("Agam Daemon");
+    println!("workspace: {}", workspace.root.display());
+    println!("signalled shutdown for daemon pid {pid}");
+    if verbose {
+        if ipc_success {
+            println!("transport: IPC synchronous shutdown");
+        } else {
+            println!("transport: fallback sentinel {}", shutdown_path.display());
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_source_file(path: &PathBuf, verbose: bool) -> Result<ParsedSource, String> {
@@ -4206,6 +4995,10 @@ fn compile_file(path: &PathBuf, verbose: bool) -> Result<(), String> {
     if load_daemon_prewarmed_warm_state(path, verbose).is_some() {
         return Ok(());
     }
+    // Fallback: try the multi-file warm index (Checked or Lowered level skips all work)
+    if load_daemon_warm_state_for_file(path, verbose).is_some() {
+        return Ok(());
+    }
     let parsed = parse_source_file(path, verbose)?;
     semantic_check_parsed_source(path, &parsed, verbose)?;
     Ok(())
@@ -4220,6 +5013,12 @@ fn compile_dev_source_file(
     if keep_warm_state {
         if let Some(warm_state) = load_daemon_prewarmed_warm_state(path, verbose) {
             return Ok(Some(warm_state));
+        }
+        // Fallback: try the warm index (only if it includes MIR)
+        if let Some(warm_state) = load_daemon_warm_state_for_file(path, verbose) {
+            if warm_state.mir.is_some() {
+                return Ok(Some(warm_state));
+            }
         }
         Ok(Some(compile_file_with_warm_state(path, verbose)?))
     } else {
@@ -4334,15 +5133,70 @@ fn warm_workspace_session(
 ) -> Result<WarmSummary, String> {
     let mut summary = WarmSummary::default();
 
+    // Partition files into cache hits (reused) and cache misses (need warming)
+    let mut files_to_warm = Vec::new();
     for file in snapshot.source_files.iter().chain(&snapshot.test_files) {
         let versions = session.cache.entry(file.path.clone()).or_default();
         if versions.contains_key(&file.content_hash) {
             summary.reused_files += 1;
-            continue;
+        } else {
+            files_to_warm.push(file.clone());
         }
+    }
 
-        let parsed = parse_source_file(&file.path, verbose)?;
-        let warm_state = build_warm_state(&file.path, parsed, verbose)?;
+    // Warm cache-miss files in parallel
+    let parallelism = request_parallelism(files_to_warm.len());
+    let warmed_results: Vec<(agam_pkg::WorkspaceFileSnapshot, Result<WarmState, String>)> =
+        if files_to_warm.len() <= 1 || parallelism <= 1 {
+            // Sequential fast path for single file or no parallelism
+            files_to_warm
+                .into_iter()
+                .map(|file| {
+                    let result = parse_source_file(&file.path, verbose)
+                        .and_then(|parsed| build_warm_state(&file.path, parsed, verbose));
+                    (file, result)
+                })
+                .collect()
+        } else {
+            // Parallel warm using scoped threads with work-stealing
+            let next_index = AtomicUsize::new(0);
+            let results: Mutex<Vec<Option<(agam_pkg::WorkspaceFileSnapshot, Result<WarmState, String>)>>> =
+                Mutex::new(std::iter::repeat_with(|| None).take(files_to_warm.len()).collect());
+            let worker_count = parallelism.max(1).min(files_to_warm.len());
+
+            std::thread::scope(|scope| {
+                let files_ref = &files_to_warm;
+                let next_ref = &next_index;
+                let results_ref = &results;
+                for _ in 0..worker_count {
+                    scope.spawn(move || {
+                        loop {
+                            let index = next_ref.fetch_add(1, Ordering::Relaxed);
+                            if index >= files_ref.len() {
+                                break;
+                            }
+                            let file = &files_ref[index];
+                            let result = parse_source_file(&file.path, verbose)
+                                .and_then(|parsed| build_warm_state(&file.path, parsed, verbose));
+                            results_ref.lock().expect("warm results mutex poisoned")[index] =
+                                Some((file.clone(), result));
+                        }
+                    });
+                }
+            });
+
+            results
+                .into_inner()
+                .expect("warm results mutex poisoned")
+                .into_iter()
+                .map(|r| r.expect("warm result missing"))
+                .collect()
+        };
+
+    // Merge results into session cache
+    for (file, result) in warmed_results {
+        let warm_state = result?;
+        let versions = session.cache.entry(file.path.clone()).or_default();
         versions.clear();
         versions.insert(file.content_hash.clone(), warm_state);
         summary.warmed_files += 1;
@@ -5736,6 +6590,7 @@ fn build_file(
     features: FeatureFlags,
     verbose: bool,
 ) -> Result<BuildOutcome, String> {
+    // 1. Try entry-file portable-package prewarm (highest priority)
     if let Some(prewarmed) = load_daemon_prewarmed_entry(path, verbose) {
         let source_features = SourceFeatureFlags {
             call_cache: prewarmed.call_cache,
@@ -5756,6 +6611,29 @@ fn build_file(
         );
     }
 
+    // 2. Fallback: try the multi-file warm index for MIR
+    if let Some(warm_state) = load_daemon_warm_state_for_file(path, verbose) {
+        if let Some(ref mir) = warm_state.mir {
+            let call_cache = match warm_state.source_features.as_ref() {
+                Some(sf) => effective_call_cache_selection(features, sf),
+                None => CallCacheSelection::default(),
+            };
+            return build_prelowered_file(
+                path,
+                output,
+                opt_level,
+                backend,
+                tuning,
+                mir,
+                &call_cache,
+                &[],
+                false,
+                verbose,
+            );
+        }
+    }
+
+    // 3. Full pipeline from source
     let (mir, source_features) = lower_to_optimized_mir(path, verbose)?;
     let call_cache = effective_call_cache_selection(features, &source_features);
     build_prelowered_file(
@@ -7670,7 +8548,7 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
             .expect("one-shot daemon run should succeed");
 
         let status = read_daemon_status(&root)
@@ -7726,15 +8604,34 @@ mod tests {
             }));
         }
 
+        // Multi-file warm index should have been written
+        assert!(summary.prewarmed_file_count > 0);
+        assert_eq!(summary.prewarmed_total_files, 1); // single-file workspace
+
+        let warm_index =
+            agam_pkg::read_daemon_warm_index(&root).expect("reading warm index should succeed");
+        assert!(warm_index.is_some(), "warm index should exist after prewarm");
+        let warm_index = warm_index.unwrap();
+        assert_eq!(warm_index.files.len(), 1);
+
+        // MIR artifacts are persisted in the prewarm directory for cross-process reuse
         let prewarm_dir = daemon_prewarm_stage_dir(&root);
-        if prewarm_dir.is_dir() {
-            assert!(
-                fs::read_dir(&prewarm_dir)
-                    .expect("read prewarm dir")
-                    .next()
-                    .is_none()
-            );
-        }
+        assert!(prewarm_dir.is_dir(), "prewarm directory should exist");
+        let prewarm_entries: Vec<_> = fs::read_dir(&prewarm_dir)
+            .expect("read prewarm dir")
+            .collect();
+        assert!(
+            prewarm_entries.iter().any(|e| {
+                e.as_ref()
+                    .map(|e| {
+                        e.file_name()
+                            .to_string_lossy()
+                            .contains("_mir_")
+                    })
+                    .unwrap_or(false)
+            }),
+            "prewarm directory should contain MIR artifact(s)"
+        );
 
         let _ = fs::remove_dir_all(root);
     }
@@ -7763,7 +8660,7 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
             .expect("one-shot daemon run should succeed");
 
         let prewarmed =
@@ -7780,7 +8677,7 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
             .expect("one-shot daemon run should succeed");
 
         let warm_state =
@@ -7798,7 +8695,7 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
             .expect("one-shot daemon run should succeed");
         fs::write(&file, "fn main() -> i32 { return 1; }\n").expect("rewrite source");
 
@@ -7813,7 +8710,7 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
             .expect("one-shot daemon run should succeed");
 
         let warm =
@@ -7832,7 +8729,7 @@ mod tests {
         let file = root.join("broken.agam");
         fs::write(&file, "fn main(): missing_name\n").expect("write invalid source");
 
-        let error = run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+        let error = run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
             .expect_err("one-shot daemon run should fail");
         assert!(error.contains("semantic error"));
 
@@ -8019,7 +8916,7 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
             .expect("one-shot daemon run should succeed");
         assert!(daemon_status_path(&root).is_file());
 
@@ -8058,7 +8955,7 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false)
+        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
             .expect("one-shot daemon run should succeed");
         fs::remove_file(&file).expect("remove source");
 
