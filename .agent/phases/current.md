@@ -20,6 +20,9 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 | **17F** | partial | Standard library and native I/O expansion | `details/17F.md` |
 | **18** | partial | Agent-facing execution tool | `details/18.md` |
 | **19** | partial | Wrapper foundation for agent ecosystems | `details/19.md` |
+| **20** | completed | Language surface: effect/handler/perform syntax | `details/20.md` |
+| **21** | completed | Runtime hardening: OS-level sandbox enforcement | `details/21.md` |
+| **22** | partial | Broader standard library growth (network, crypto, async) | `details/22.md` |
 
 ### 15F Progress
 - ✅ Workspace snapshot + invalidation diff contract
@@ -111,6 +114,20 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 - ✅ The adapter hooks now smoke-test against live `langchain-core` and `llama-index-core` installs instead of only repo-local test doubles
 - ✅ `crates/agam_ffi/python` now carries publish-ready package metadata plus a GitHub Actions build-and-publish workflow for external package releases
 - ⬜ Exercise the external Python package release path end to end and keep the adapter surface current against upstream framework drift
+
+### 20 Progress
+- ✅ Registered `perform`, `handle`, and `effect` keywords in the lexer
+- ✅ Extended AST `ExprKind` with `Perform`, `HandleWith`, and `Resume` nodes
+- ✅ Implemented `parse_effect_decl` and `parse_handler_decl` with Pratt parser support
+- ✅ Updated `agam_sema` to identify and type-check algebraic effect declarations and handlers
+- ✅ Added and verified parser unit tests covering the new syntax
+
+### 21 Progress
+- ✅ Implemented OS-native sandboxing in `agam_runtime` for headless execution
+- ✅ Added Win32 `JobObject` enforcement for memory, active processes, and UI isolation
+- ✅ Added Linux `prctl(PR_SET_NO_NEW_PRIVS)` and `setrlimit` enforcement for resources
+- ✅ Built robust RAII handle lifecycle management for sandbox state
+- ✅ Added platform-specific crate dependencies (`windows-sys`, `libc`)
 
 ## Decision Rules
 
