@@ -15,6 +15,10 @@
 | `policy/project-overview.md` | Project vision and architecture summary | General orientation |
 | `rules/language-guardrails.md` | Agam syntax and language-design rules | Touching `.agam` syntax |
 | `rules/project-structure.md` | Crate and file layout conventions | Adding new code |
+| `rules/token-efficiency.md` | Token-saving conventions for all agents | Always (caveman default ON) |
+| `skills/caveman/` | Skill: ~75% output token reduction — **ALWAYS ON** | Every session |
+| `skills/caveman-compress/` | Skill: ~46% input token compression | `/caveman:compress <file>` |
+| `skills/graphify/` | Skill: codebase → knowledge graph | `/graphify [path]` |
 | `skills/benchmark-guard/` | Skill: benchmark-driven validation | Performance-sensitive changes |
 | `skills/language-guard/` | Skill: Agam language correctness | Syntax/parser changes |
 | `include/` | Legacy shared context (superseded by `CLAUDE.md`) | Rarely needed |
@@ -28,6 +32,8 @@ Active phases have their own detail files:
 - `details/15F.md` — Incremental daemon, prewarm, parallel compilation
 - `details/15G.md` — Premium experience layer (tooling unification)
 - `details/15H.md` — Native LLVM SDK distribution
+- `details/16.md` — Interactive REPL and sandboxed execution
 - `details/17A.md` — Workspace contract and dependency manifests
+- `details/17B.md` — Deterministic resolver and lockfile
 
-Future phases: `details/17B.md` through `details/17F.md` (package ecosystem)
+Future phases: `details/17C.md` through `details/17F.md`, plus `details/18.md` through `details/28.md`

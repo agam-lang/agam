@@ -1,9 +1,360 @@
-name: sdk-dist
+name: SDK Dist
+
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
 jobs:
-  build:
-    uses: agam-lang/.github/.github/workflows/sdk-dist.yml@main
+  build-sdk:
+    name: Build SDK (${{ matrix.host_platform }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: agam
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            host_platform: linux-x86_64
+            archive_format: tar.gz
+            archive_ext: tar.gz
+          - os: windows-latest
+            host_platform: windows-x86_64
+            archive_format: zip
+            archive_ext: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install LLVM seed tools on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Ensure LLVM seed tools on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Get-Command clang.exe -ErrorAction SilentlyContinue) {
+            Write-Host "clang.exe already available on PATH"
+            exit 0
+          }
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+          if (Test-Path $vswhere) {
+            $installPath = & $vswhere -latest -products * -property installationPath
+            if ($installPath) {
+              $candidates = @(
+                (Join-Path $installPath "VC\Tools\Llvm\x64\bin"),
+                (Join-Path $installPath "VC\Tools\Llvm\bin"),
+                (Join-Path $installPath "VC\Tools\Llvm\ARM64\bin")
+              )
+              foreach ($candidate in $candidates) {
+                if (Test-Path (Join-Path $candidate "clang.exe")) {
+                  $candidate | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+                  Write-Host "Added Visual Studio LLVM path: $candidate"
+                  exit 0
+                }
+              }
+            }
+          }
+
+          choco install llvm --no-progress
+          "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Setup Android SDK on Linux
+        if: runner.os == 'Linux'
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Show hosted-runner toolchain
+        shell: bash
+        run: |
+          echo "=== Python ==="
+          python --version
+          echo "=== Rust ==="
+          cargo --version
+          rustc --version
+          echo "=== LLVM ==="
+          if command -v clang >/dev/null 2>&1; then
+            clang --version
+          else
+            echo "clang not on PATH; package_sdk.py will use its own discovery fallback"
+          fi
+          echo "=== Platform ==="
+          uname -a || true
+
+      - name: Build agamc compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p agam_driver --bin agamc --release
+          echo "=== Compiler binary ==="
+          ls -lh target/release/agamc* || ls -lh target/release/agamc.exe 2>/dev/null || true
+
+      - name: Package and validate SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            python scripts/package_sdk.py
+            --compiler target/release/agamc$([ "${{ runner.os }}" = "Windows" ] && echo ".exe" || true)
+            --output dist/sdk/${{ matrix.host_platform }}
+            --require-llvm-bundle
+            --archive-format ${{ matrix.archive_format }}
+            --checksum
+            --verbose
+          )
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            args+=(--require-android-target-pack)
+          fi
+          "${args[@]}"
+
+      - name: Export SDK manifest summary
+        shell: python
+        working-directory: agam
+        run: |
+          from pathlib import Path
+          import json
+          import shutil
+
+          host_platform = "${{ matrix.host_platform }}"
+          source = Path("dist/sdk") / host_platform / "sdk-manifest.json"
+          destination = Path("dist/sdk") / f"sdk-manifest-{host_platform}.json"
+          shutil.copy2(source, destination)
+
+          manifest = json.loads(source.read_text(encoding="utf-8"))
+          print(f"=== SDK Manifest Summary ({host_platform}) ===")
+          print(f"  sdk_name:        {manifest.get('sdk_name', '?')}")
+          print(f"  host_platform:   {manifest.get('host_platform', '?')}")
+          print(f"  compiler_binary: {manifest.get('compiler_binary', '?')}")
+          print(f"  llvm_bundle:     {manifest.get('llvm_bundle_root', 'none')}")
+          print(f"  llvm_driver:     {manifest.get('preferred_llvm_driver', 'none')}")
+          targets = manifest.get("supported_targets", [])
+          print(f"  targets:         {len(targets)}")
+          for target in targets:
+              packaged = target.get("packaged_sysroot", "")
+              suffix = f" (packaged: {packaged})" if packaged else ""
+              print(f"    - {target.get('name', '?')}: {target.get('target_triple', '?')}{suffix}")
+
+      - name: Upload SDK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ matrix.host_platform }}
+          if-no-files-found: error
+          path: |
+            agam/dist/sdk/agam-sdk-${{ matrix.host_platform }}.${{ matrix.archive_ext }}
+            agam/dist/sdk/agam-sdk-${{ matrix.host_platform }}.${{ matrix.archive_ext }}.sha256
+            agam/dist/sdk/sdk-manifest-${{ matrix.host_platform }}.json
+
+  verify-artifacts:
+    name: Verify archived SDK artifacts
+    needs: build-sdk
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Download SDK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sdk-*
+          merge-multiple: true
+          path: verify-assets
+
+      - name: List downloaded assets
+        shell: bash
+        run: |
+          echo "=== Downloaded SDK assets ==="
+          find verify-assets -type f | sort
+
+      - name: Re-validate downloaded SDK archives
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import sys
+          import tarfile
+          import tempfile
+          import zipfile
+          from pathlib import Path
+
+          assets = Path("verify-assets")
+          archives = sorted(
+              [
+                  path
+                  for path in assets.iterdir()
+                  if path.is_file() and (path.suffix == ".zip" or path.name.endswith(".tar.gz"))
+              ]
+          )
+          if not archives:
+              raise SystemExit("no downloaded SDK archives found")
+
+          print(f"Found {len(archives)} SDK archive(s) to verify")
+
+          def sha256(path: Path) -> str:
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          for archive in archives:
+              print(f"\n=== Verifying {archive.name} ===")
+
+              # --- Checksum validation ---
+              checksum_path = Path(f"{archive}.sha256")
+              if not checksum_path.is_file():
+                  raise SystemExit(f"missing checksum file for {archive.name}")
+              expected = checksum_path.read_text(encoding="utf-8").strip().split()[0]
+              actual = sha256(archive)
+              if actual != expected:
+                  raise SystemExit(
+                      f"checksum mismatch for {archive.name}: expected {expected}, got {actual}"
+                  )
+              print(f"  checksum: OK ({actual[:16]}...)")
+
+              # --- Extract and validate contents ---
+              with tempfile.TemporaryDirectory(prefix="agam_sdk_verify_") as tempdir:
+                  extract_root = Path(tempdir)
+                  if archive.suffix == ".zip":
+                      with zipfile.ZipFile(archive) as bundle:
+                          bundle.extractall(extract_root)
+                  else:
+                      with tarfile.open(archive, "r:gz") as bundle:
+                          # Use data_filter on Python 3.12+ for security
+                          if sys.version_info >= (3, 12):
+                              bundle.extractall(extract_root, filter="data")
+                          else:
+                              bundle.extractall(extract_root)
+
+                  manifests = sorted(extract_root.glob("*/sdk-manifest.json"))
+                  if len(manifests) != 1:
+                      # Also check root-level manifest
+                      manifests = sorted(extract_root.glob("**/sdk-manifest.json"))
+                      if len(manifests) != 1:
+                          found = [str(m) for m in manifests]
+                          raise SystemExit(
+                              f"expected exactly one sdk-manifest.json for {archive.name}, found: {found}"
+                          )
+                  manifest_path = manifests[0]
+                  sdk_root = manifest_path.parent
+                  manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+                  print(f"  manifest: {manifest_path.relative_to(extract_root)}")
+                  print(f"  sdk_name: {manifest.get('sdk_name', '?')}")
+
+                  # --- Compiler binary ---
+                  compiler_binary = sdk_root / manifest["compiler_binary"]
+                  if not compiler_binary.is_file():
+                      raise SystemExit(
+                          f"compiler binary {compiler_binary} is missing in {archive.name}"
+                      )
+                  print(f"  compiler: OK ({manifest['compiler_binary']})")
+
+                  # --- LLVM bundle ---
+                  llvm_bundle_root = manifest.get("llvm_bundle_root")
+                  preferred_driver = manifest.get("preferred_llvm_driver")
+                  if llvm_bundle_root and not (sdk_root / llvm_bundle_root).is_dir():
+                      raise SystemExit(
+                          f"LLVM bundle {sdk_root / llvm_bundle_root} is missing in {archive.name}"
+                      )
+                  if preferred_driver and not (sdk_root / preferred_driver).is_file():
+                      raise SystemExit(
+                          f"LLVM driver {sdk_root / preferred_driver} is missing in {archive.name}"
+                      )
+                  if llvm_bundle_root:
+                      print(f"  llvm_bundle: OK ({llvm_bundle_root})")
+                  if preferred_driver:
+                      print(f"  llvm_driver: OK ({preferred_driver})")
+
+                  # --- Target packs ---
+                  for target in manifest.get("supported_targets", []):
+                      packaged_sysroot = target.get("packaged_sysroot")
+                      if not packaged_sysroot:
+                          continue
+                      sysroot_path = sdk_root / packaged_sysroot
+                      if not sysroot_path.is_dir():
+                          raise SystemExit(
+                              f"packaged sysroot {sysroot_path} is missing in {archive.name}"
+                          )
+                      if not (sysroot_path / "usr").is_dir():
+                          raise SystemExit(
+                              f"packaged sysroot {sysroot_path} is missing usr/ in {archive.name}"
+                          )
+                      print(f"  target_pack: OK ({target.get('name', '?')}: {packaged_sysroot})")
+
+              print(f"  PASSED")
+
+          print(f"\n=== All {len(archives)} SDK archive(s) verified successfully ===")
+
+  publish-release:
+    name: Publish release assets
+    if: github.event_name == 'release'
+    needs: verify-artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download SDK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sdk-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Inspect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== Release assets ==="
+          find release-assets -maxdepth 1 -type f -exec ls -lh {} \; | sort
+
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.release.tag_name }}"
+          mapfile -t files < <(find release-assets -maxdepth 1 -type f | sort)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "no SDK release assets were downloaded" >&2
+            exit 1
+          fi
+          echo "Uploading ${#files[@]} asset(s) to release $tag"
+          gh release upload "$tag" "${files[@]}" --clobber
+          echo "=== Release upload complete ==="

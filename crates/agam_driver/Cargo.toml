@@ -24,8 +24,20 @@ agam_runtime = { workspace = true }
 agam_profile = { workspace = true }
 agam_fmt = { workspace = true }
 agam_lsp = { workspace = true }
+agam_notebook = { workspace = true }
 agam_test = { workspace = true }
 clap = { workspace = true }
 miette = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }

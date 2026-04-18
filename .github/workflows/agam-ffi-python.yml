@@ -1,0 +1,60 @@
+name: Build and Publish agam-ffi
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Python package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/agam_ffi/python
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install packaging tools
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Run Python wrapper tests
+        run: python -m unittest tests.test_tool
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Validate package metadata
+        run: python -m twine check dist/*
+
+      - name: Upload Python package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agam-ffi-python-dist
+          path: crates/agam_ffi/python/dist/*
+
+  publish:
+    name: Publish to PyPI
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment:
+      name: pypi
+    steps:
+      - name: Download Python package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: agam-ffi-python-dist
+          path: dist
+
+      - name: Publish package
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

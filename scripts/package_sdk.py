@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -16,6 +17,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 COMPILER_NAME = "agamc.exe" if os.name == "nt" else "agamc"
 LLVM_DRIVER_NAMES = ["clang.exe", "clang++.exe"] if os.name == "nt" else ["clang", "clang++"]
+LLVM_SYSROOT_ENV = "AGAM_LLVM_SYSROOT"
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +36,16 @@ def parse_args() -> argparse.Namespace:
         help="path to an existing agamc binary; defaults to building target/debug/agamc",
     )
     parser.add_argument(
+        "--release",
+        action="store_true",
+        help="build the compiler in release mode for optimized distribution",
+    )
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="skip the cargo build step; requires --compiler to be set",
+    )
+    parser.add_argument(
         "--llvm-bundle",
         type=Path,
         help="existing LLVM bundle root or platform directory to package",
@@ -49,6 +61,32 @@ def parse_args() -> argparse.Namespace:
         help="fail if no LLVM bundle can be staged",
     )
     parser.add_argument(
+        "--android-sysroot",
+        type=Path,
+        help="Android sysroot directory to stage as an SDK target pack",
+    )
+    parser.add_argument(
+        "--require-android-target-pack",
+        action="store_true",
+        help="fail if no Android sysroot target pack can be staged",
+    )
+    parser.add_argument(
+        "--archive-format",
+        choices=["none", "auto", "zip", "tar.gz"],
+        default="none",
+        help="optionally archive the validated SDK output for distribution",
+    )
+    parser.add_argument(
+        "--archive-output",
+        type=Path,
+        help="explicit archive path; defaults to dist/sdk/agam-sdk-<platform>.<ext>",
+    )
+    parser.add_argument(
+        "--checksum",
+        action="store_true",
+        help="write a sha256 checksum file next to the generated archive",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="print command execution details",
@@ -58,7 +96,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    compiler = resolve_compiler(args.compiler, args.verbose)
+    if args.skip_build and args.compiler is None:
+        raise SystemExit("--skip-build requires --compiler to be set")
+    compiler = resolve_compiler(args.compiler, args.release, args.skip_build, args.verbose)
+    android_sysroot = discover_android_sysroot(args.android_sysroot)
 
     args.output = args.output.resolve()
     if args.output.exists():
@@ -67,11 +108,30 @@ def main() -> int:
     with temporary_llvm_bundle(args.llvm_bundle, args.llvm_driver, args.verbose) as bundle_root:
         if args.require_llvm_bundle and bundle_root is None:
             raise SystemExit("no LLVM bundle source was found; pass --llvm-bundle or --llvm-driver")
+        if args.require_android_target_pack and android_sysroot is None:
+            raise SystemExit(
+                "no Android sysroot was found; pass --android-sysroot or set "
+                f"{LLVM_SYSROOT_ENV}/ANDROID_NDK_HOME/ANDROID_NDK_ROOT"
+            )
 
-        package_sdk(compiler, args.output, bundle_root, args.verbose)
-        validate_sdk(args.output, expect_llvm=bundle_root is not None)
+        package_sdk(compiler, args.output, bundle_root, android_sysroot, args.verbose)
+        validate_sdk(
+            args.output,
+            expect_llvm=bundle_root is not None,
+            expect_android=android_sysroot is not None,
+        )
+        archive_path = maybe_archive_sdk(
+            args.output,
+            args.archive_format,
+            args.archive_output,
+            args.checksum,
+            args.verbose,
+        )
 
     print(f"SDK packaged and validated at {args.output}")
+    if archive_path is not None:
+        print(f"SDK archive written to {archive_path}")
+    print_manifest_summary(args.output)
     return 0
 
 
@@ -103,24 +163,45 @@ def normalize_machine(machine: str) -> str:
     return aliases.get(machine, machine)
 
 
-def resolve_compiler(explicit: Path | None, verbose: bool) -> Path:
+def resolve_compiler(
+    explicit: Path | None,
+    release: bool,
+    skip_build: bool,
+    verbose: bool,
+) -> Path:
     if explicit is not None:
         compiler = explicit.resolve()
         if not compiler.is_file():
             raise SystemExit(f"compiler `{compiler}` does not exist")
         return compiler
 
-    run(["cargo", "build", "-p", "agam_driver", "--bin", "agamc"], verbose=verbose)
-    compiler = REPO_ROOT / "target" / "debug" / COMPILER_NAME
+    if skip_build:
+        raise SystemExit("--skip-build requires --compiler to be set")
+
+    build_cmd = ["cargo", "build", "-p", "agam_driver", "--bin", "agamc"]
+    profile_dir = "debug"
+    if release:
+        build_cmd.append("--release")
+        profile_dir = "release"
+    run(build_cmd, verbose=verbose)
+    compiler = REPO_ROOT / "target" / profile_dir / COMPILER_NAME
     if not compiler.is_file():
         raise SystemExit(f"expected compiler binary at `{compiler}` after cargo build")
     return compiler
 
 
-def package_sdk(compiler: Path, output: Path, llvm_bundle: Path | None, verbose: bool) -> None:
+def package_sdk(
+    compiler: Path,
+    output: Path,
+    llvm_bundle: Path | None,
+    android_sysroot: Path | None,
+    verbose: bool,
+) -> None:
     command = [str(compiler), "package", "sdk", "--output", str(output)]
     if llvm_bundle is not None:
         command.extend(["--llvm-bundle", str(llvm_bundle)])
+    if android_sysroot is not None:
+        command.extend(["--android-sysroot", str(android_sysroot)])
     run(command, verbose=verbose)
 
 
@@ -224,6 +305,12 @@ def companion_llvm_drivers(primary_driver: Path) -> list[Path]:
         if candidate.is_file():
             candidates.append(candidate.resolve())
 
+    # Also discover clang-cl on Windows (useful for MSVC-compatible compilation)
+    if os.name == "nt":
+        clang_cl = primary_driver.with_name("clang-cl.exe")
+        if clang_cl.is_file():
+            candidates.append(clang_cl.resolve())
+
     if primary_driver.is_file() and primary_driver.resolve() not in candidates:
         candidates.insert(0, primary_driver.resolve())
 
@@ -237,7 +324,38 @@ def companion_llvm_drivers(primary_driver: Path) -> list[Path]:
     return deduped
 
 
-def validate_sdk(output: Path, expect_llvm: bool) -> None:
+def discover_android_sysroot(explicit: Path | None) -> Path | None:
+    if explicit is not None:
+        sysroot = explicit.resolve()
+        if not sysroot.is_dir():
+            raise SystemExit(f"Android sysroot `{sysroot}` does not exist")
+        return sysroot
+
+    configured = os.environ.get(LLVM_SYSROOT_ENV)
+    if configured:
+        sysroot = Path(configured).resolve()
+        if sysroot.is_dir():
+            return sysroot
+
+    for env_name in ("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT"):
+        ndk_root = os.environ.get(env_name)
+        if not ndk_root:
+            continue
+        sysroot = (
+            Path(ndk_root).resolve()
+            / "toolchains"
+            / "llvm"
+            / "prebuilt"
+            / host_platform_dir()
+            / "sysroot"
+        )
+        if sysroot.is_dir():
+            return sysroot
+
+    return None
+
+
+def validate_sdk(output: Path, expect_llvm: bool, expect_android: bool) -> None:
     manifest_path = output / "sdk-manifest.json"
     if not manifest_path.is_file():
         raise SystemExit(f"expected SDK manifest at `{manifest_path}`")
@@ -271,11 +389,158 @@ def validate_sdk(output: Path, expect_llvm: bool) -> None:
         if not (output / preferred_driver).is_file():
             raise SystemExit(f"packaged LLVM driver `{output / preferred_driver}` is missing")
 
+    packaged_android_targets = [
+        target
+        for target in supported_targets
+        if "android" in target.get("target_triple", "") and target.get("packaged_sysroot")
+    ]
+    if expect_android and not packaged_android_targets:
+        raise SystemExit("SDK manifest did not record a packaged Android target pack")
+    for target in packaged_android_targets:
+        sysroot_path = output / target["packaged_sysroot"]
+        if not sysroot_path.is_dir():
+            raise SystemExit(f"packaged Android sysroot `{sysroot_path}` is missing")
+        if not (sysroot_path / "usr").is_dir():
+            raise SystemExit(f"packaged Android sysroot `{sysroot_path}` is missing `usr/`")
+
+
+def maybe_archive_sdk(
+    output: Path,
+    requested_format: str,
+    archive_output: Path | None,
+    checksum: bool,
+    verbose: bool,
+) -> Path | None:
+    archive_format = resolve_archive_format(requested_format)
+    if archive_format is None:
+        return None
+
+    archive_path = create_archive(output, archive_format, archive_output, verbose)
+    if checksum:
+        checksum_path = write_sha256_file(archive_path)
+        if verbose:
+            print(f"wrote sha256 checksum {checksum_path}")
+    return archive_path
+
+
+def resolve_archive_format(requested_format: str) -> str | None:
+    if requested_format == "none":
+        return None
+    if requested_format == "auto":
+        return "zip" if os.name == "nt" else "tar.gz"
+    return requested_format
+
+
+def create_archive(
+    output: Path,
+    archive_format: str,
+    explicit_output: Path | None,
+    verbose: bool,
+) -> Path:
+    archive_path = resolve_archive_output(output, archive_format, explicit_output)
+    if archive_path.exists():
+        archive_path.unlink()
+
+    if archive_format == "zip":
+        base_name = archive_path.with_suffix("")
+        generated = shutil.make_archive(
+            str(base_name),
+            "zip",
+            root_dir=output.parent,
+            base_dir=output.name,
+        )
+    elif archive_format == "tar.gz":
+        base_name = archive_path.parent / archive_path.name.removesuffix(".tar.gz")
+        generated = shutil.make_archive(
+            str(base_name),
+            "gztar",
+            root_dir=output.parent,
+            base_dir=output.name,
+        )
+    else:
+        raise SystemExit(f"unsupported archive format `{archive_format}`")
+
+    generated_path = Path(generated).resolve()
+    if verbose:
+        print(f"created archive {generated_path}")
+    return generated_path
+
+
+def resolve_archive_output(
+    output: Path,
+    archive_format: str,
+    explicit_output: Path | None,
+) -> Path:
+    if explicit_output is not None:
+        archive_path = explicit_output.resolve()
+    else:
+        archive_path = default_archive_output(output, archive_format)
+
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_suffix = archive_suffix(archive_format)
+    if not str(archive_path).endswith(expected_suffix):
+        raise SystemExit(
+            f"archive output `{archive_path}` must end with `{expected_suffix}` for format `{archive_format}`"
+        )
+    return archive_path
+
+
+def default_archive_output(output: Path, archive_format: str) -> Path:
+    platform_dir = output.name or host_platform_dir()
+    return output.parent / f"agam-sdk-{platform_dir}{archive_suffix(archive_format)}"
+
+
+def archive_suffix(archive_format: str) -> str:
+    if archive_format == "zip":
+        return ".zip"
+    if archive_format == "tar.gz":
+        return ".tar.gz"
+    raise SystemExit(f"unsupported archive format `{archive_format}`")
+
+
+def write_sha256_file(path: Path) -> Path:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+
+    checksum_path = Path(f"{path}.sha256")
+    checksum_path.write_text(
+        f"{digest.hexdigest()}  {path.name}\n",
+        encoding="utf-8",
+    )
+    return checksum_path
+
 
 def run(command: list[str], verbose: bool) -> None:
     if verbose:
         print("+", " ".join(command))
     subprocess.run(command, cwd=REPO_ROOT, check=True)
+
+
+def print_manifest_summary(output: Path) -> None:
+    """Print a human-readable SDK manifest summary for CI log visibility."""
+    manifest_path = output / "sdk-manifest.json"
+    if not manifest_path.is_file():
+        return
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    print("\n=== SDK Manifest Summary ===")
+    print(f"  sdk_name:        {manifest.get('sdk_name', '?')}")
+    print(f"  host_platform:   {manifest.get('host_platform', '?')}")
+    print(f"  compiler_binary: {manifest.get('compiler_binary', '?')}")
+    print(f"  llvm_bundle:     {manifest.get('llvm_bundle_root', 'none')}")
+    print(f"  llvm_driver:     {manifest.get('preferred_llvm_driver', 'none')}")
+    targets = manifest.get("supported_targets", [])
+    print(f"  targets:         {len(targets)}")
+    for target in targets:
+        packaged = target.get("packaged_sysroot", "")
+        suffix = f" (packaged: {packaged})" if packaged else ""
+        print(f"    - {target.get('name', '?')}: {target.get('target_triple', '?')}{suffix}")
+    notes = manifest.get("notes", [])
+    if notes:
+        print(f"  notes:")
+        for note in notes:
+            print(f"    - {note}")
 
 
 if __name__ == "__main__":

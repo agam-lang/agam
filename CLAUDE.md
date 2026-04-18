@@ -5,6 +5,8 @@
 
 > **🤖 Unified Multi-AI Workflow:** Whether you are Gemini, Claude, Codex, or another AI, you are operating in a continuous, hand-off rotation. Read the existing context, respect the ongoing phase checklists, and do not invent your own workflows.
 
+> **🪨 Token Efficiency:** Follow `.agent/rules/token-efficiency.md`. Use caveman skill (full intensity) for terse output. If `graphify-out/GRAPH_REPORT.md` exists, read it before grepping raw files.
+
 ---
 
 ## 1. What Agam Is
@@ -53,25 +55,51 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 
 ### Key CLI (`agamc`)
 
-`build`, `run`, `check`, `new`, `dev`, `daemon`, `fmt`, `test`, `lsp`, `repl`, `doctor`, `cache status`, `package {pack,inspect,run,sdk}`
+`build`, `run`, `check`, `lock`, `new`, `dev`, `daemon`, `fmt`, `test`, `lsp`, `repl`, `exec`, `doctor`, `env`, `publish`, `registry`, `cache status`, `package {pack,inspect,run,sdk}`
 
 ---
 
 ## 4. Active Phases — What's Being Built
 
+### Phase 15H: Native LLVM SDK Distribution (completed)
+
+**Done:** `agamc package sdk`, bundled LLVM layout, release-ready archives/checksums, release-publish workflow, packaged Android target-pack staging/validation, downloaded-artifact revalidation job, hardened `sdk-dist.yml` for real hosted runners, local E2E validation script
+
+**Detail:** `.agent/phases/details/15H.md`
+
+### Phase 16: Interactive REPL and Headless Execution (completed)
+
+**Done:** buffered `agamc repl`, strict `--json` request/response contract, REPL-owned incremental `DaemonSession` reuse across buffer edits, and in-process JIT/LLVM/C `agamc repl --json` execution with captured `stdout` and buffered diagnostics
+
+**Detail:** `.agent/phases/details/16.md`
+
+### Phase 17A: Workspace Contract & Dependency Manifests (completed)
+
+**Done:** `agam.toml` manifest contract frozen at V1Stable, shared `WorkspaceSession` + `WorkspaceSnapshot`, `resolve_workspace_members`, direct/transitive path-dependency metadata reuse, and manifest validation across CLI/LSP/daemon/resolver flows
+
+**Detail:** `.agent/phases/details/17A.md`
+
 ### Phase 17B: Deterministic Resolver and Lockfile (completed)
 
-**Goal:** Build deterministic dependency resolution and a stable `agam.lock` format for reproducible builds.
+**Done:** deterministic workspace/path/git/registry resolution, `agam.lock`, automatic lock refresh, content drift diagnostics, and freshness checks that now validate aliases, workspace-member/session metadata, environments, and source/version-selector drift
 
-**Done:**
-- `DependencySourceKind` enum, `content_hash_directory()`, path/git/registry/workspace resolution
-- `resolve_dependencies()` main entry: `WorkspaceSession` → `WorkspaceLockfile` (deterministic, alphabetical)
-- Transitive dependency resolution via `resolve_dependency_tables_recursive()`
-- `is_lockfile_fresh()`, `generate_or_refresh_lockfile()`, `lockfile_diagnostics()`, `lockfile_content_drift()`
-- CLI integration: `agamc build`/`check`/`dev` auto-refresh `agam.lock`
-- Explicit `agamc lock` subcommand
-- 11 resolver tests covering all source kinds, freshness, determinism, content hashing, transitive resolution, and drift detection
 **Detail:** `.agent/phases/details/17B.md`
+
+### Phase 18: Agent-Facing Execution Tool (partial)
+
+**Done:** dedicated `agamc exec`, strict request/response contract reuse from `agam_notebook`, direct stdin/source/file execution flows, and request-level policy limits for source size, argument size, and native-backend opt-in
+
+**Remaining:** Add stronger OS-level isolation beyond the current request-policy contract
+
+**Detail:** `.agent/phases/details/18.md`
+
+### Phase 19: LangChain and LlamaIndex Wrappers (partial)
+
+**Done:** Rust and Python `agam_ffi` clients/tool wrappers plus optional Python extras and adapter hooks for LangChain and LlamaIndex
+
+**Remaining:** Validate and publish the adapter story against live upstream framework releases
+
+**Detail:** `.agent/phases/details/19.md`
 
 ### Phase 15F: Incremental Daemon & Parallel Compilation (completed)
 
@@ -101,23 +129,9 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 
 **Detail:** `.agent/phases/details/15G.md`
 
-### Phase 15H: Native LLVM SDK Distribution (supporting)
-
-**Done:** `agamc package sdk`, bundled LLVM layout, CI workflow skeleton
-
-**Next:** Validate real hosted-runner SDK builds; publish Windows/Linux artifacts; Android target-pack validation
-
-**Detail:** `.agent/phases/details/15H.md`
-
-### Phase 17A: Workspace Contract & Dependency Manifests (completed)
-
-**Done:** `agam.toml` manifest contract frozen at V1Stable, `WorkspaceManifest`/`DependencySpec`/`ToolchainRequirement`/`EnvironmentSpec` data models, manifest validation, `ManifestCompatibility` enum, `resolve_workspace_members`, LSP + formatter + daemon + resolver integration
-
-**Detail:** `.agent/phases/details/17A.md`
-
 ### Build Priority Order
 
-15F → 15G → 15H → 17A → 17B (lockfile) → 17C (registry) → 17D (environments) → 17E (distributions) → 17F (std lib)
+18 (sandbox hardening) → 19 (framework adapters) → 17F (stdlib/I/O)
 
 ---
 
@@ -133,7 +147,7 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 - **`PortablePackage`** — verified MIR + runtime metadata (`.agpkg.json`)
 - **`SdkDistributionManifest`** — host-native SDK layout (`sdk-manifest.json`)
 
-### `agam_driver` (`crates/agam_driver/src/main.rs`, ~8900 lines)
+### `agam_driver` (`crates/agam_driver/src/main.rs`)
 
 - **`DaemonSession`** — snapshot + per-file warm-state cache (`BTreeMap<PathBuf, BTreeMap<String, WarmState>>`)
 - **`WarmState`** — per-file-version: optional AST Module, HIR, MIR, source features
@@ -164,9 +178,9 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 
 ### Build & Verify
 ```powershell
-cargo check --manifest-path agam/Cargo.toml        # must pass
-cargo test --manifest-path agam/Cargo.toml          # must pass
-cargo fmt --manifest-path agam/Cargo.toml -- --check  # should pass
+cargo check --manifest-path Cargo.toml        # must pass
+cargo test --manifest-path Cargo.toml          # must pass
+cargo fmt --manifest-path Cargo.toml -- --check  # should pass
 ```
 
 ---
@@ -185,7 +199,7 @@ agam/
 │   │   └── details/     # Per-phase implementation checklists
 │   ├── policy/          # Package ecosystem architecture, project overview
 │   ├── rules/           # Language guardrails, project structure rules
-│   ├── skills/          # benchmark-guard, language-guard
+│   ├── skills/          # caveman, caveman-compress, graphify, benchmark-guard, language-guard
 │   ├── include/         # Legacy shared context (now mostly in this file)
 │   └── test/            # Localized phase-work benchmark sources
 ├── CLAUDE.md            # ← You are here
@@ -207,3 +221,5 @@ agam/
 | Syntax questions about `.agam` files? | `examples/*.agam`, `.agent/test/*.agam` |
 | Platform/SDK/LLVM toolchain details? | Run `agamc doctor` or read `README.md` |
 | Benchmark methodology? | `benchmarks/README.md` |
+| Architecture graph (if built)? | `graphify-out/GRAPH_REPORT.md` |
+| Token efficiency tools? | `.agent/rules/token-efficiency.md` |

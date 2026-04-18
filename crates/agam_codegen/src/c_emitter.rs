@@ -158,6 +158,7 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                     .unwrap_or(CType::Int),
                 Op::Cast { target_ty, value } => infer_ctype_from_type_id(*target_ty)
                     .unwrap_or_else(|| value_type(&layout, *value)),
+                Op::EffectPerform { .. } | Op::HandleWith { .. } => CType::Int,
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -1025,6 +1026,28 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
                 v,
                 result_ty.name(),
                 value.0
+            )
+            .unwrap();
+        }
+        Op::EffectPerform { effect, operation, .. } => {
+            writeln!(
+                out,
+                "  {} {} = 0; /* TODO: effect {}.{} */",
+                result_ty.name(),
+                v,
+                effect,
+                operation
+            )
+            .unwrap();
+        }
+        Op::HandleWith { effect, handler, .. } => {
+            writeln!(
+                out,
+                "  {} {} = 0; /* TODO: handle {} with {} */",
+                result_ty.name(),
+                v,
+                effect,
+                handler
             )
             .unwrap();
         }

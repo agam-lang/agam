@@ -7,6 +7,8 @@
 
 pub mod complex;
 pub mod dataframe;
+pub mod effects;
+pub mod io;
 pub mod linalg;
 pub mod math;
 pub mod ml;

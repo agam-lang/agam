@@ -1,0 +1,10 @@
+
+[agent-frameworks]
+langchain-core>=0.2
+llama-index-core>=0.10
+
+[langchain]
+langchain-core>=0.2
+
+[llamaindex]
+llama-index-core>=0.10

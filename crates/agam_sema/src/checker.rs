@@ -484,6 +484,18 @@ impl TypeChecker {
                 // resume passes a value to the continuation
                 self.types.fresh_var()
             }
+            ExprKind::Perform { args, .. } => {
+                for arg in args {
+                    self.infer_expr(arg);
+                }
+                // Effect operations return a type determined by the handler
+                self.types.fresh_var()
+            }
+            ExprKind::HandleWith { body, .. } => {
+                self.infer_expr(body);
+                // handle..with returns the result of the body under the handler
+                self.types.fresh_var()
+            }
             ExprKind::BlockExpr(block) => {
                 for stmt in &block.stmts {
                     self.check_stmt(stmt);

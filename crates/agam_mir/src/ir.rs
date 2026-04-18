@@ -95,6 +95,28 @@ pub enum Op {
 
     /// Type cast.
     Cast { value: ValueId, target_ty: TypeId },
+
+    /// Perform an algebraic effect operation.
+    ///
+    /// Dispatches to the handler registered for the named effect and
+    /// operation at runtime. Falls back to static dispatch for builtin
+    /// effects when the backend supports it.
+    EffectPerform {
+        effect: String,
+        operation: String,
+        args: Vec<ValueId>,
+    },
+
+    /// Install an effect handler for a scope.
+    ///
+    /// The handler's body is a callable that receives the performed
+    /// operation arguments. This is the MIR representation of
+    /// `with <handler> handle <effect> { ... }` blocks.
+    HandleWith {
+        effect: String,
+        handler: String,
+        body: BlockId,
+    },
 }
 
 /// MIR binary operations.

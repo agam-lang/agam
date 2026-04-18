@@ -502,6 +502,17 @@ impl Resolver {
             ExprKind::Resume(inner) => {
                 self.resolve_expr(inner);
             }
+            ExprKind::Perform { args, .. } => {
+                // Effect and operation names are resolved in the effects pass,
+                // but we resolve argument expressions here.
+                for arg in args {
+                    self.resolve_expr(arg);
+                }
+            }
+            ExprKind::HandleWith { body, .. } => {
+                // Handler name resolved in the effects pass.
+                self.resolve_expr(body);
+            }
             ExprKind::BlockExpr(block) => {
                 for stmt in &block.stmts {
                     self.resolve_stmt(stmt);

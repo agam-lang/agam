@@ -143,6 +143,21 @@ pub enum HirExprKind {
         expr: Box<HirExpr>,
         target_ty: TypeId,
     },
+
+    // ── Effects ──
+    /// Perform an effect operation: `perform Effect.operation(args)`.
+    Perform {
+        effect: String,
+        operation: String,
+        args: Vec<HirExpr>,
+    },
+    /// Install an effect handler for a scoped block:
+    /// `with handler handle Effect { body }`.
+    HandleWith {
+        effect: String,
+        handler: String,
+        body: Box<HirExpr>,
+    },
 }
 
 /// HIR binary operators (same as AST, kept separate for IR independence).

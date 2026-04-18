@@ -87,7 +87,8 @@ flowchart TD
 5. **Runtime**: `agam_runtime` carries ARC, SIMD, hardware detection, and runtime helpers used by native execution paths.
 6. **Diagnostics**: `agam_errors` is the canonical path for span-based reporting.
 7. **Profiling**: `agam_profile` is the required benchmarking and optimization-validation path.
-8. **Distribution Contract**: `agam_pkg` currently defines portable package metadata and the SDK distribution manifest used by `agamc package sdk`, while `scripts/package_sdk.py` and `.github/workflows/sdk-dist.yml` exercise that contract for hosted-runner SDK validation; it remains the planned home for the future source-package, lockfile, registry, and environment contracts.
+8. **Distribution Contract**: `agam_pkg` now defines portable package metadata, the SDK distribution manifest, the workspace manifest and lockfile contracts, the local registry-index publish/install contract used by `agamc publish` plus `agamc registry {install,update,inspect,audit,yank}`, the curated first-party profile and governance contract behind `agamc registry {governance,profile}`, and the resolved-environment selection helpers behind `agamc env {list,inspect}` plus environment-aware `agamc build/run/dev/doctor/package sdk` flows; release metadata carries download URLs and basic provenance, official first-party publication uses an explicit reserved-prefix governance path, `agam.lock` freshness now validates aliases plus source/version-selector drift instead of only added/removed package names, and `scripts/package_sdk.py` plus `.github/workflows/sdk-dist.yml` now package hosted-runner SDK archives with checksums, staged Android target packs, post-download artifact revalidation, and release-upload wiring while the broader package ecosystem contract continues expanding through the registry, environment, and first-party distribution phases.
+9. **Execution Surface**: `agam_notebook` now carries the strict JSON request/response contract for headless execution, `agamc exec` exposes that contract as the dedicated agent-facing execution tool, `agamc repl` ships both a buffered interactive shell and a backward-compatible `--json` mode on top of the same headless engine, and `agam_ffi` now provides both Rust-side and Python-side wrapper foundations over that execution surface. The new `crates/agam_ffi/python` scaffold exports Python-native request/response wrappers plus `AgamExecClient` and `AgamREPLTool` classes over the same `agamc exec --json` contract, with optional LangChain/LlamaIndex adapter hooks. Production headless requests now execute inside an isolated worker subprocess with structured `stdout`/`stderr`/exit metadata, request-level limits on source/arg size plus runtime/memory budget, default environment scrubbing, and explicit native-backend opt-in instead of shelling back into `agamc run`, while `.github/workflows/agam-ffi-python.yml` now carries the external Python-package build/publish path.
 
 ## 3. Implemented Features
 
@@ -137,31 +138,14 @@ flowchart TD
 
 ## 7. Immediate Next Phases
 
-1. **Phase 15F: Incremental Daemon + Parallel Compilation**
-   - Keep typed/lowered state warm across edits.
-   - Parallelize independent compiler work with deterministic diagnostics.
-2. **Phase 15G: First-Party Premium Experience Layer**
-   - Finish one stable workspace contract across tooling.
-   - Unify package/runtime/cache/tooling conventions behind the same first-party manifest and project layout instead of per-command discovery.
-3. **Phase 15H: Native LLVM SDK Distribution & Toolchain Bundles**
-   - Keep `agamc package sdk` and `agamc doctor` aligned around one SDK readiness contract.
-   - Produce CI-built Windows and Linux SDK packs with bundled LLVM.
-   - Add Android target-pack packaging and validation on top of the host SDK flow.
-4. **Phase 17A: Workspace Contract and Dependency Manifests**
-   - Freeze the stable `agam.toml` package/workspace contract before building resolver or registry complexity.
-   - Separate source-package metadata from portable runtime packages and SDK distributions.
-5. **Phase 17B: Deterministic Resolver and Lockfile**
-   - Land deterministic dependency resolution and `agam.lock`.
-   - Make reproducibility and content addressing the default.
-7. **Phase 17C: Registry Index and Publish Protocol**
-   - Define a thin central registry-index protocol and immutable publish contract.
-   - Keep package identity registry-based instead of repo-name-based.
-8. **Phase 17D: Environments and SDK Linking**
-   - Build named Agam environments that pin compiler, SDK packs, target packs, runtime expectations, and dependencies together.
-   - Keep environment selection explicit and reproducible instead of shell-global.
-9. **Phase 17E: First-Party Base Distributions and Official Packages**
-   - Ship curated first-party package profiles and official package governance.
-   - Keep foreign-language interop as layered packs, not the base package-manager contract.
-10. **Phase 17F: Standard Library and Native I/O Expansion**
-    - Grow `agam_std` and native I/O on top of the new package ecosystem.
-    - Keep standard-library growth aligned with the effects model and official package governance.
+1. **Phase 22: Broader Stdlib Growth**
+   - Expand `agam_std` beyond filesystem I/O to include networking, crypto, and async primitives.
+   - Keep new modules aligned with the effects model and distribution governance.
+2. **Phase 23: Agent Capability Expansion**
+   - Continue expanding the agent execution environment based on concrete sandbox enforcement.
+3. **Phase 24+: Ecosystem & Model Integration**
+   - Move into language server and ML-native capabilities.
+
+*Note: Phases 15H, 17F, 18, 19, 20 (Language Surface Expansion), and 21 (Runtime Hardening) are completed.*
+
+Later anti-hallucination, model, and broader ecosystem follow-ons resume after that sequence, with the restored Phase 22 through Phase 28 detail files available under `.agent/phases/details/`.

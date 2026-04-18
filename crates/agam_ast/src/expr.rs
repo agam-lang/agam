@@ -139,6 +139,19 @@ pub enum ExprKind {
 
     /// Resume from effect handler: `resume(value)`
     Resume(Box<Expr>),
+
+    /// Perform an effect operation: `perform Effect.operation(args)`
+    Perform {
+        effect: Ident,
+        operation: Ident,
+        args: Vec<Expr>,
+    },
+
+    /// Handle an expression with an effect handler: `handle expr with handler_name`
+    HandleWith {
+        body: Box<Expr>,
+        handler: Ident,
+    },
 }
 
 /// A part of an f-string.

@@ -314,6 +314,27 @@ fn remap_op(
             value: remap_value(*value, value_map),
             target_ty: *target_ty,
         },
+        Op::EffectPerform {
+            effect,
+            operation,
+            args,
+        } => Op::EffectPerform {
+            effect: effect.clone(),
+            operation: operation.clone(),
+            args: args
+                .iter()
+                .map(|arg| remap_value(*arg, value_map))
+                .collect(),
+        },
+        Op::HandleWith {
+            effect,
+            handler,
+            body,
+        } => Op::HandleWith {
+            effect: effect.clone(),
+            handler: handler.clone(),
+            body: *body,
+        },
     }
 }
 

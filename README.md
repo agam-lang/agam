@@ -17,7 +17,7 @@ Agam already has a real compiler pipeline and multiple execution paths:
 - a C backend and a direct LLVM IR backend
 - a Cranelift JIT for in-memory execution
 - profiling and call-cache infrastructure for adaptive optimization work
-- first-party CLI workflows such as `agamc new`, `agamc dev`, `agamc fmt`, `agamc doctor`, and `agamc package sdk`
+- first-party CLI workflows such as `agamc new`, `agamc dev`, `agamc fmt`, `agamc doctor`, `agamc env`, `agamc publish`, `agamc registry`, and `agamc package sdk`, including curated first-party profile and governance inspection
 
 The current product direction is native LLVM on Windows, Linux, and Android. WSL is a development and verification fallback, not the shipped backend story. macOS and iOS remain planned targets, but they are not validation-complete product targets yet.
 
@@ -30,7 +30,7 @@ The current product direction is native LLVM on Windows, Linux, and Android. WSL
 | C backend | Working |
 | LLVM backend | Active product path |
 | Cranelift JIT | Working |
-| Tooling (`agamc new/dev/fmt/doctor/cache status`) | Working first-party slice |
+| Tooling (`agamc new/dev/fmt/doctor/env/cache status/publish/registry`) | Working first-party slice with registry/profile/governance flows |
 | SDK packaging | Partial but real |
 | Native LLVM SDK bundles | In progress |
 | Adaptive specialization and value profiling | In progress |
@@ -167,18 +167,89 @@ agamc run path/to/file.agam --fast
 agamc build path/to/file.agam --backend llvm -O 3
 agamc run path/to/file.agam --backend jit
 
+# Interactive REPL
+agamc repl
+
+# Dedicated agent-facing execution tool
+printf 'fn main() -> i32 { println("hi"); return 0; }' | agamc exec
+printf '{"source":"fn main() -> i32 { println(\"hi\"); return 0; }","backend":"jit"}' | agamc exec --json
+agamc exec --file examples/hello.agam --pretty
+
 # Toolchain readiness
 agamc doctor
+agamc doctor . --env release
 
 # Inspect workspace cache state
 agamc cache status
 
+# List or inspect named project-local environments
+agamc env list
+agamc env inspect
+agamc env inspect release
+agamc build examples/hello.agam --env release
+agamc run . --env dev
+
+# Validate or publish a source package into a local registry index
+agamc publish --index ../registry-index --owner alice --dry-run
+agamc publish --index ../registry-index --owner alice --download-url https://cdn.example.com/hello_agam-0.1.0.agam-src.tar.gz
+agamc publish --index ../registry-index --official --owner agam-lang --repository https://github.com/agam-lang/agam-std
+
+# Install or refresh source dependencies from a local registry index
+agamc registry install --index ../registry-index hello_agam
+agamc registry update --index ../registry-index
+agamc registry profile install --index ../registry-index base
+
+# Inspect or audit a local registry package entry
+agamc registry inspect --index ../registry-index hello_agam
+agamc registry audit --index ../registry-index hello_agam
+agamc registry yank --index ../registry-index hello_agam 0.1.0
+
+# Inspect curated first-party package profiles and governance
+agamc registry governance
+agamc registry profile list
+agamc registry profile inspect data-ai
+
 # Stage an SDK bundle
 agamc package sdk
+agamc package sdk . --env release
+agamc package sdk . --env android-arm64 --android-sysroot /path/to/ndk/sysroot
 
 # Build and validate the hosted-runner SDK layout
 python scripts/package_sdk.py --require-llvm-bundle
+python scripts/package_sdk.py --require-llvm-bundle --archive-format auto --checksum
+python scripts/package_sdk.py --require-llvm-bundle --require-android-target-pack --archive-format auto --checksum
 ```
+
+`agamc exec` is the dedicated machine-facing execution surface. It accepts either raw Agam source
+from stdin, `--source`, or `--file`, or a strict JSON request via `agamc exec --json`, and it
+returns one JSON response with `success`, `exit_code`, `stdout`, `stderr`, and optional `error`
+fields. `agamc repl --json` remains as a backward-compatible alias to the same headless execution
+engine, while the interactive REPL keeps its source buffer plus backend/optimization settings,
+executes `:run` directly through the shared in-process CLI run path, and now reuses the shared
+incremental warm-state contract across buffer edits. Headless execution requests also carry an
+explicit policy envelope for source bytes, arg count, total arg bytes, wall-clock runtime, worker
+memory budget, optional environment inheritance, and native-backend opt-in. Production `agamc exec`
+requests now run inside an isolated worker subprocess with a sandbox working directory, scrubbed
+environment by default, timeout enforcement, and per-platform memory/process guards where the host
+supports them instead of relying only on a temp workspace and sanitized filename boundary.
+
+For Python-facing integrations, `crates/agam_ffi/python` now ships a minimal package scaffold with
+Python-native `HeadlessExecutionRequest`, `HeadlessExecutionResponse`, `AgamExecClient`, and
+`AgamREPLTool` wrappers over the same `agamc exec --json` contract. The package now exposes
+optional extras and adapter hooks for LangChain and LlamaIndex on top of that same strict
+execution contract while keeping the default install dependency-light, the current adapter shape
+now smoke-tests against live `langchain-core` and `llama-index-core` installs, and
+`.github/workflows/agam-ffi-python.yml` now builds and publishes the package on GitHub releases.
+
+`agam.lock` freshness now validates dependency aliases, source selectors, and version requirements
+instead of only detecting added or removed package names, so manifest drift invalidates stale lock
+state more reliably during `build`, `check`, `dev`, and explicit `agamc lock` runs.
+
+The shared SDK packaging script and `.github/workflows/sdk-dist.yml` now produce release-ready
+`agam-sdk-<platform>.zip` or `.tar.gz` archives plus `.sha256` checksums for hosted Windows/Linux
+runner validation and release uploads. SDK manifests can now record packaged Android target packs,
+and the CI flow re-downloads produced archives, verifies checksums, extracts them, and re-validates
+the manifest/layout contract before release publication.
 
 ## Backends
 
@@ -261,23 +332,17 @@ Agam is still under active compiler development. Important incomplete areas incl
 
 These are the active next phases from the repo's current program board:
 
-1. Phase 15F: Incremental Daemon, Background Prewarm, and Parallel Compilation
-   - keep typed/lowered state warm across edits
-   - parallelize independent work deterministically
-2. Phase 15G: First-Party Premium Experience Layer
-   - unify workspace, package, runtime, cache, and CLI conventions
-3. Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles
-   - ship supportable Windows/Linux SDK outputs
-   - extend Android target-pack validation
+1. Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles
+   - exercise the hosted-runner Windows/Linux SDK flow end to end
+   - confirm packaged Android target packs and post-download archive validation on GitHub infrastructure
+2. Phase 18: agent-facing execution tool hardening
+   - extend execution policy beyond request-size limits and native-backend gating
+3. Phase 19: LangChain and LlamaIndex wrappers
+   - validate and publish the packaged adapter hooks against live framework releases
+4. Phase 17F: standard library and native I/O expansion
+   - build on the new `agam_std::io` file/path helpers and keep pushing toward an effects-native I/O/networking story
 
-After those core LLVM, daemon, and SDK slices, the next package-ecosystem priorities are:
-
-1. Phase 17A: workspace contract and dependency manifests
-2. Phase 17B: deterministic resolver and `agam.lock`
-3. Phase 17C: registry index and publish protocol
-4. Phase 17D: named environments and SDK linking
-5. Phase 17E: first-party base distributions and official package governance
-6. Phase 17F: standard-library growth on top of the new package ecosystem
+Later anti-hallucination, model, and broader ecosystem phases resume after that sequence, starting with Phases 20 through 28.
 
 ## Repository Layout
 
@@ -774,7 +839,7 @@ Agam's current repo-visible features include:
 - native runtime helpers for arguments, printing, ARC, SIMD, and host-facing support
 - call-cache profiling, adaptive admission, and guarded specialization work
 - persisted optimization and specialization planning
-- first-party CLI workflows: `new`, `dev`, `fmt`, `doctor`, `cache status`, `package sdk`
+- first-party CLI workflows: `new`, `dev`, `fmt`, `doctor`, `env`, `cache status`, `publish`, `registry`, `package sdk`
 - standard-library-facing work for numerical, tensor, dataframe, and ML-oriented code paths
 - SDK packaging and host-toolchain discovery for the native LLVM direction
 

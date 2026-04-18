@@ -7,11 +7,15 @@
 //! - `build` — Compile source files to a native binary
 //! - `run`   — Build and immediately execute
 //! - `package` — Build, inspect, and run portable packages
+//! - `publish` — Validate and publish source packages to a registry index
+//! - `registry` — Inspect, audit, install, update, and profile source packages in a registry index
+//! - `env` — List and inspect named project-local environments
 //! - `check` — Type-check without generating code (fast)
 //! - `new`   — Scaffold a first-party Agam project
 //! - `dev`   — Run the first-party local development workflow
 //! - `cache` — Inspect the local Agam build/package cache
 //! - `repl`  — Interactive REPL
+//! - `exec`  — Strict agent-facing headless execution tool
 //! - `fmt`   — Format source files
 //! - `lsp`   — Start the Language Server Protocol server
 //! - `test`  — Run tests
@@ -19,17 +23,24 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::io::Write;
+use std::ffi::c_void;
+use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Stdio};
 use std::sync::{
-    Mutex,
-    atomic::{AtomicUsize, Ordering},
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    mpsc,
 };
+use std::time::Duration;
 
 use agam_ast::decl::DeclKind;
 use agam_errors::{Diagnostic, DiagnosticEmitter, Label, SourceFile, SourceId, Span};
 use agam_lexer::{Token, TokenKind};
+use agam_notebook::{
+    HeadlessExecutionBackend, HeadlessExecutionPolicy, HeadlessExecutionRequest,
+    HeadlessExecutionResponse,
+};
 
 /// The Agam programming language compiler.
 #[derive(Parser, Debug)]
@@ -60,6 +71,23 @@ enum Backend {
 enum LtoMode {
     Thin,
     Full,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum DependencyTable {
+    Main,
+    Dev,
+    Build,
+}
+
+impl DependencyTable {
+    fn manifest_label(self) -> &'static str {
+        match self {
+            Self::Main => "dependencies",
+            Self::Dev => "dev-dependencies",
+            Self::Build => "build-dependencies",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -175,6 +203,8 @@ const DAEMON_HEARTBEAT_STALE_MS: u128 = 5_000;
 const DAEMON_DEFAULT_POLL_MS: u64 = 1_000;
 const NESTED_BUILD_REQUEST_ENV: &str = "AGAM_NESTED_BUILD_REQUEST";
 const NESTED_CHECK_REQUEST_ENV: &str = "AGAM_NESTED_CHECK_REQUEST";
+const HEADLESS_EXEC_WORKER_ENV: &str = "AGAM_HEADLESS_EXEC_WORKER";
+const HEADLESS_SANDBOX_ROOT_ENV: &str = "AGAM_HEADLESS_SANDBOX_ROOT";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct BuildRequest {
@@ -238,6 +268,10 @@ enum Command {
         #[arg(required = true)]
         files: Vec<PathBuf>,
 
+        /// Named project-local environment to apply
+        #[arg(long)]
+        env: Option<String>,
+
         /// Output file path
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -285,6 +319,10 @@ enum Command {
         #[arg(required = true)]
         file: PathBuf,
 
+        /// Named project-local environment to apply
+        #[arg(long)]
+        env: Option<String>,
+
         /// Code generation backend
         #[arg(long, value_enum, default_value_t = Backend::Auto)]
         backend: Backend,
@@ -328,8 +366,65 @@ enum Command {
         command: PackageCommand,
     },
 
+    /// Inspect, audit, install, update, and profile source packages in a registry index
+    Registry {
+        #[command(subcommand)]
+        command: RegistryCommand,
+    },
+
+    /// List and inspect named project-local environments
+    Env {
+        #[command(subcommand)]
+        command: EnvCommand,
+    },
+
+    /// Validate and publish a source package into a registry index
+    Publish {
+        /// Workspace root or manifest path to publish (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Registry index root directory
+        #[arg(long, value_name = "DIR")]
+        index: PathBuf,
+
+        /// Package owner handle recorded in the registry entry
+        #[arg(long = "owner", value_name = "OWNER")]
+        owners: Vec<String>,
+
+        /// Optional publish-time description override
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Optional publish-time homepage URL
+        #[arg(long)]
+        homepage: Option<String>,
+
+        /// Optional publish-time repository URL
+        #[arg(long)]
+        repository: Option<String>,
+
+        /// Optional release download URL recorded in the registry entry
+        #[arg(long)]
+        download_url: Option<String>,
+
+        /// Publish through the official first-party governance contract
+        #[arg(long)]
+        official: bool,
+
+        /// Validate and print the publish contract without mutating the index
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Inspect native backend and SDK readiness on the current machine
-    Doctor,
+    Doctor {
+        /// Workspace root or manifest path used for environment-aware diagnostics
+        path: Option<PathBuf>,
+
+        /// Named project-local environment to diagnose
+        #[arg(long)]
+        env: Option<String>,
+    },
 
     /// Type-check without generating code (fast feedback)
     Check {
@@ -353,6 +448,10 @@ enum Command {
     Dev {
         /// Project directory, manifest path, or source file (defaults to current directory)
         path: Option<PathBuf>,
+
+        /// Named project-local environment to apply
+        #[arg(long)]
+        env: Option<String>,
 
         /// Code generation backend used for the final run step
         #[arg(long, value_enum, default_value_t = Backend::Auto)]
@@ -381,8 +480,67 @@ enum Command {
         command: CacheCommand,
     },
 
-    /// Start the interactive REPL
-    Repl,
+    /// Execute Agam source through the strict headless execution tool
+    Exec {
+        /// Read a strict JSON execution request from stdin and emit a JSON response
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty-print the JSON response
+        #[arg(long)]
+        pretty: bool,
+
+        /// Read Agam source from a file instead of stdin
+        #[arg(long, value_name = "FILE", conflicts_with = "source")]
+        file: Option<PathBuf>,
+
+        /// Execute an inline Agam source string instead of reading stdin
+        #[arg(long, value_name = "SOURCE", conflicts_with = "file")]
+        source: Option<String>,
+
+        /// Filename reported in diagnostics and the temporary execution workspace
+        #[arg(long)]
+        filename: Option<String>,
+
+        /// Code generation backend
+        #[arg(long, value_enum, default_value_t = Backend::Jit)]
+        backend: Backend,
+
+        /// Optimization level (0-3)
+        #[arg(short = 'O', long, default_value = "2")]
+        opt_level: u8,
+
+        /// Use the fastest current execution path
+        #[arg(long)]
+        fast: bool,
+
+        /// Arguments passed to the executed program
+        #[arg(long = "arg")]
+        args: Vec<String>,
+
+        /// Sandbox isolation level: "none", "process" (default), or "strict"
+        #[arg(long, default_value = "process")]
+        sandbox_level: String,
+
+        /// Deny network access from executed programs
+        #[arg(long)]
+        deny_network: bool,
+
+        /// Deny child process spawning from executed programs
+        #[arg(long)]
+        deny_process_spawn: bool,
+    },
+
+    /// Start the interactive REPL or execute one structured JSON request from stdin
+    Repl {
+        /// Read a strict JSON execution request from stdin and emit a JSON response
+        #[arg(long)]
+        json: bool,
+
+        /// Pretty-print the JSON response when `--json` is enabled
+        #[arg(long)]
+        pretty: bool,
+    },
 
     /// Format source files
     Fmt {
@@ -462,6 +620,13 @@ enum PackageCommand {
 
     /// Assemble a host-native Agam SDK distribution layout
     Sdk {
+        /// Workspace root or manifest path used for environment-aware SDK metadata
+        path: Option<PathBuf>,
+
+        /// Named project-local environment to apply
+        #[arg(long)]
+        env: Option<String>,
+
         /// Output directory for the SDK distribution
         #[arg(short, long)]
         output: Option<PathBuf>,
@@ -469,6 +634,155 @@ enum PackageCommand {
         /// Optional bundled LLVM root to copy into the SDK
         #[arg(long, value_name = "DIR")]
         llvm_bundle: Option<PathBuf>,
+
+        /// Optional Android sysroot directory to stage as a target pack
+        #[arg(long, value_name = "DIR")]
+        android_sysroot: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum RegistryCommand {
+    /// Inspect package metadata from a registry index
+    Inspect {
+        /// Registry index root directory
+        #[arg(long, value_name = "DIR")]
+        index: PathBuf,
+
+        /// Package name recorded in the registry index
+        #[arg(required = true)]
+        name: String,
+    },
+
+    /// Print an audit-friendly release history for a registry package
+    Audit {
+        /// Registry index root directory
+        #[arg(long, value_name = "DIR")]
+        index: PathBuf,
+
+        /// Package name recorded in the registry index
+        #[arg(required = true)]
+        name: String,
+    },
+
+    /// Add or pin a registry dependency in `agam.toml`
+    Install {
+        /// Registry index root directory
+        #[arg(long, value_name = "DIR")]
+        index: PathBuf,
+
+        /// Workspace root or manifest path (defaults to current directory)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+
+        /// Dependency table to update
+        #[arg(long, value_enum, default_value_t = DependencyTable::Main)]
+        table: DependencyTable,
+
+        /// Package name recorded in the registry index
+        #[arg(required = true)]
+        name: String,
+
+        /// Optional version requirement to resolve before pinning the selected release
+        #[arg(long)]
+        version: Option<String>,
+    },
+
+    /// Update one or more manifest dependencies from a registry index
+    Update {
+        /// Registry index root directory
+        #[arg(long, value_name = "DIR")]
+        index: PathBuf,
+
+        /// Workspace root or manifest path (defaults to current directory)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+
+        /// Dependency table to update
+        #[arg(long, value_enum, default_value_t = DependencyTable::Main)]
+        table: DependencyTable,
+
+        /// Optional dependency keys or package names to update; defaults to all matching entries
+        names: Vec<String>,
+    },
+
+    /// Mark or unmark a published registry release as yanked
+    Yank {
+        /// Registry index root directory
+        #[arg(long, value_name = "DIR")]
+        index: PathBuf,
+
+        /// Package name recorded in the registry index
+        #[arg(required = true)]
+        name: String,
+
+        /// Published package version to change
+        #[arg(required = true)]
+        version: String,
+
+        /// Clear the yanked flag instead of setting it
+        #[arg(long)]
+        undo: bool,
+    },
+
+    /// Inspect curated first-party distribution profiles
+    Profile {
+        #[command(subcommand)]
+        command: RegistryProfileCommand,
+    },
+
+    /// Print the official first-party package governance contract
+    Governance,
+}
+
+#[derive(Subcommand, Debug)]
+enum RegistryProfileCommand {
+    /// List curated first-party distribution profiles
+    List,
+
+    /// Inspect one curated first-party distribution profile
+    Inspect {
+        /// Curated profile name
+        #[arg(required = true)]
+        name: String,
+    },
+
+    /// Install all recommended packages from one curated profile
+    Install {
+        /// Registry index root directory
+        #[arg(long, value_name = "DIR")]
+        index: PathBuf,
+
+        /// Workspace root or manifest path (defaults to current directory)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+
+        /// Dependency table to update
+        #[arg(long, value_enum, default_value_t = DependencyTable::Main)]
+        table: DependencyTable,
+
+        /// Curated profile name
+        #[arg(required = true)]
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum EnvCommand {
+    /// List named environments declared in `agam.toml`
+    List {
+        /// Workspace root or manifest path (defaults to current directory)
+        path: Option<PathBuf>,
+    },
+
+    /// Inspect one resolved environment view
+    Inspect {
+        /// Workspace root or manifest path (defaults to current directory)
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+
+        /// Environment name to inspect; defaults to the implicit selection rules
+        name: Option<String>,
     },
 }
 
@@ -548,17 +862,23 @@ struct DaemonStatusRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum DaemonIpcRequest {
     Status,
-    GetWarmMir { file_path: String, content_hash: String },
+    GetWarmMir {
+        file_path: String,
+        content_hash: String,
+    },
     Stop,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum DaemonIpcResponse {
     Status(DaemonStatusRecord),
-    WarmMir { found: bool, mir_json: Option<String> },
+    WarmMir {
+        found: bool,
+        mir_json: Option<String>,
+        call_cache_json: Option<String>,
+    },
     Error(String),
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DaemonLiveness {
@@ -631,6 +951,20 @@ struct WarmState {
     pub module: Option<agam_ast::Module>,
     pub hir: Option<agam_hir::nodes::HirModule>,
     pub mir: Option<agam_mir::ir::MirModule>,
+}
+
+#[derive(Debug, Serialize)]
+struct DaemonWarmArtifact<'a> {
+    mir: &'a agam_mir::ir::MirModule,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_cache: Option<&'a CallCacheSelection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DaemonWarmArtifactOwned {
+    mir: agam_mir::ir::MirModule,
+    #[serde(default)]
+    call_cache: Option<CallCacheSelection>,
 }
 
 /// Daemon pipeline and state owner.
@@ -723,6 +1057,7 @@ fn main() {
         }
         Command::Build {
             files,
+            env,
             output,
             target,
             opt_level,
@@ -733,8 +1068,22 @@ fn main() {
             pgo_use,
             call_cache,
         } => {
+            let environment = match maybe_resolve_build_environment(&files, env.as_deref()) {
+                Ok(environment) => environment,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            };
+            let target = selected_target_for_command(target, environment.as_ref());
+            let requested_backend = requested_backend_for_command(
+                backend,
+                environment.as_ref(),
+                false,
+                target.as_deref(),
+            );
             let opt_level = effective_opt_level(opt_level, fast);
-            let backend = resolve_backend(backend, false);
+            let backend = resolve_backend(requested_backend, false);
             let tuning = ReleaseTuning {
                 target: target.clone(),
                 native_cpu: fast,
@@ -749,6 +1098,22 @@ fn main() {
             }
             if cli.verbose && !is_nested_build_request() {
                 eprintln!("[agamc] Building {} file(s)...", files.len());
+                if let Some(environment) = environment.as_ref() {
+                    eprintln!(
+                        "[agamc] Environment: {}",
+                        environment_selection_label(environment)
+                    );
+                    if requested_backend_from_environment(&environment.environment, false).is_none()
+                        && matches!(
+                            environment.environment.preferred_backend,
+                            Some(agam_runtime::contract::RuntimeBackend::Jit)
+                        )
+                    {
+                        eprintln!(
+                            "[agamc] Environment backend `jit` does not apply to `build`; using normal AOT backend selection"
+                        );
+                    }
+                }
                 if let Some(ref t) = target {
                     eprintln!("[agamc] Target: {}", t);
                 }
@@ -886,6 +1251,7 @@ fn main() {
 
         Command::Run {
             file,
+            env,
             backend,
             opt_level,
             fast,
@@ -895,10 +1261,27 @@ fn main() {
             call_cache,
             args,
         } => {
+            let environment =
+                match maybe_resolve_workspace_environment(Some(file.clone()), env.as_deref()) {
+                    Ok(environment) => environment,
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                };
             let opt_level = effective_opt_level(opt_level, fast);
-            let backend = resolve_backend(backend, true);
+            let requested_target = environment
+                .as_ref()
+                .and_then(|report| report.environment.target.clone());
+            let requested_backend = requested_backend_for_command(
+                backend,
+                environment.as_ref(),
+                true,
+                requested_target.as_deref(),
+            );
+            let backend = resolve_backend(requested_backend, true);
             let tuning = ReleaseTuning {
-                target: None,
+                target: requested_target,
                 native_cpu: fast,
                 lto,
                 pgo_generate,
@@ -918,8 +1301,17 @@ fn main() {
             };
             if cli.verbose {
                 eprintln!("[agamc] Running {}...", file.display());
+                if let Some(environment) = environment.as_ref() {
+                    eprintln!(
+                        "[agamc] Environment: {}",
+                        environment_selection_label(environment)
+                    );
+                }
                 if !args.is_empty() {
                     eprintln!("[agamc] Args: {:?}", args);
+                }
+                if let Some(target) = tuning.target.as_ref() {
+                    eprintln!("[agamc] Target: {}", target);
                 }
                 eprintln!("[agamc] Optimization level: O{}", opt_level);
                 if fast {
@@ -1015,11 +1407,28 @@ fn main() {
                 }
             }
             PackageCommand::Sdk {
+                path,
+                env,
                 output,
                 llvm_bundle,
+                android_sysroot,
             } => {
+                let environment =
+                    match maybe_resolve_optional_workspace_environment(path, env.as_deref()) {
+                        Ok(environment) => environment,
+                        Err(e) => {
+                            eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                            process::exit(1);
+                        }
+                    };
                 let output = output.unwrap_or_else(default_sdk_distribution_output_dir);
-                match package_sdk_distribution(&output, llvm_bundle.as_ref(), cli.verbose) {
+                match package_sdk_distribution(
+                    &output,
+                    llvm_bundle.as_ref(),
+                    android_sysroot.as_ref(),
+                    environment.as_ref(),
+                    cli.verbose,
+                ) {
                     Ok(outcome) => {
                         eprintln!("\x1b[1;32m✓\x1b[0m SDK staged: {}", outcome.root.display());
                         eprintln!(
@@ -1040,6 +1449,12 @@ fn main() {
                                 "\x1b[1;33mwarning\x1b[0m: staged SDK does not yet include a bundled LLVM toolchain"
                             );
                         }
+                        if let Some(android_sysroot_root) = outcome.android_sysroot_root.as_ref() {
+                            eprintln!(
+                                "\x1b[1;32minfo\x1b[0m: android target pack -> {}",
+                                android_sysroot_root.display()
+                            );
+                        }
                     }
                     Err(e) => {
                         eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
@@ -1049,17 +1464,167 @@ fn main() {
             }
         },
 
-        Command::Doctor => match run_doctor(cli.verbose) {
-            Ok(healthy) => {
-                if !healthy {
-                    process::exit(1);
+        Command::Registry { command } => match command {
+            RegistryCommand::Inspect { index, name } => {
+                match inspect_registry_package(&index, &name) {
+                    Ok(report) => print_registry_inspect_report(&report, cli.verbose),
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
                 }
             }
+            RegistryCommand::Audit { index, name } => {
+                match audit_registry_index_package(&index, &name) {
+                    Ok(report) => print_registry_audit_report(&report),
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+            RegistryCommand::Install {
+                index,
+                path,
+                table,
+                name,
+                version,
+            } => match install_registry_dependency(
+                path,
+                &index,
+                table,
+                &name,
+                version.as_deref(),
+                cli.verbose,
+            ) {
+                Ok(report) => print_registry_install_report(&report, cli.verbose),
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            },
+            RegistryCommand::Update {
+                index,
+                path,
+                table,
+                names,
+            } => match update_registry_dependencies(path, &index, table, &names, cli.verbose) {
+                Ok(report) => print_registry_update_report(&report, cli.verbose),
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            },
+            RegistryCommand::Yank {
+                index,
+                name,
+                version,
+                undo,
+            } => match yank_registry_release(&index, &name, &version, undo) {
+                Ok(report) => print_registry_yank_report(&report),
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            },
+            RegistryCommand::Profile { command } => match command {
+                RegistryProfileCommand::List => {
+                    print_registry_profile_list_report(&list_registry_profiles())
+                }
+                RegistryProfileCommand::Inspect { name } => match inspect_registry_profile(&name) {
+                    Ok(report) => print_registry_profile_inspect_report(&report),
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                },
+                RegistryProfileCommand::Install {
+                    index,
+                    path,
+                    table,
+                    name,
+                } => match install_registry_profile(path, &index, table, &name, cli.verbose) {
+                    Ok(report) => print_registry_profile_install_report(&report, cli.verbose),
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                },
+            },
+            RegistryCommand::Governance => {
+                print_registry_governance_report(&registry_governance_report())
+            }
+        },
+
+        Command::Env { command } => match command {
+            EnvCommand::List { path } => match list_workspace_environments(path) {
+                Ok(report) => print_environment_list_report(&report),
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            },
+            EnvCommand::Inspect { path, name } => {
+                match inspect_workspace_environment(path, name.as_deref()) {
+                    Ok(report) => print_environment_inspect_report(&report),
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                }
+            }
+        },
+
+        Command::Publish {
+            path,
+            index,
+            owners,
+            description,
+            homepage,
+            repository,
+            download_url,
+            official,
+            dry_run,
+        } => match publish_workspace_to_registry(
+            path,
+            &index,
+            &owners,
+            description.as_ref(),
+            homepage.as_ref(),
+            repository.as_ref(),
+            download_url.as_ref(),
+            official,
+            dry_run,
+            cli.verbose,
+        ) {
+            Ok(report) => print_publish_report(&report, cli.verbose),
             Err(e) => {
                 eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
                 process::exit(1);
             }
         },
+
+        Command::Doctor { path, env } => {
+            let environment =
+                match maybe_resolve_optional_workspace_environment(path, env.as_deref()) {
+                    Ok(environment) => environment,
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                };
+            match run_doctor(environment.as_ref(), cli.verbose) {
+                Ok(healthy) => {
+                    if !healthy {
+                        process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
 
         Command::Check { files } => {
             let files = match agam_pkg::expand_agam_inputs(files) {
@@ -1150,15 +1715,31 @@ fn main() {
 
         Command::Dev {
             path,
+            env,
             backend,
             opt_level,
             fix,
             no_run,
             no_tests,
         } => {
-            if let Err(e) =
-                run_dev_workflow(path, backend, opt_level, fix, no_run, no_tests, cli.verbose)
-            {
+            let environment =
+                match maybe_resolve_workspace_environment(path.clone(), env.as_deref()) {
+                    Ok(environment) => environment,
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                        process::exit(1);
+                    }
+                };
+            if let Err(e) = run_dev_workflow(
+                path,
+                environment,
+                backend,
+                opt_level,
+                fix,
+                no_run,
+                no_tests,
+                cli.verbose,
+            ) {
                 eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
                 process::exit(1);
             }
@@ -1173,12 +1754,64 @@ fn main() {
             }
         },
 
-        Command::Repl => {
-            println!("Agam REPL v0.1.0");
-            println!("Type :help for help, :quit to exit.");
-            eprintln!(
-                "\x1b[1;32minfo\x1b[0m: REPL shell is not implemented yet; the first Cranelift JIT runtime now exists, but interactive evaluation still needs a frontend layer"
-            );
+        Command::Exec {
+            json,
+            pretty,
+            file,
+            source,
+            filename,
+            backend,
+            opt_level,
+            fast,
+            args,
+            sandbox_level,
+            deny_network,
+            deny_process_spawn,
+        } => {
+            match run_exec_tool(
+                json,
+                pretty,
+                file,
+                source,
+                filename,
+                backend,
+                opt_level,
+                fast,
+                args,
+                cli.verbose,
+                sandbox_level,
+                deny_network,
+                deny_process_spawn,
+            ) {
+                Ok(code) => {
+                    if code != 0 {
+                        process::exit(code);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+
+        Command::Repl { json, pretty } => {
+            let outcome = if json {
+                run_headless_json_request(pretty, cli.verbose)
+            } else {
+                run_repl_shell(cli.verbose)
+            };
+            match outcome {
+                Ok(code) => {
+                    if code != 0 {
+                        process::exit(code);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
         }
 
         Command::Fmt { files, check } => {
@@ -2148,6 +2781,65 @@ fn resolve_android_ndk_sysroot() -> Option<PathBuf> {
     sysroot.exists().then_some(sysroot)
 }
 
+fn packaged_sdk_root_for_executable(executable: &Path) -> Option<PathBuf> {
+    let exe_dir = executable.parent()?;
+    for candidate in [Some(exe_dir), exe_dir.parent()].into_iter().flatten() {
+        if candidate.join("sdk-manifest.json").is_file() {
+            return Some(candidate.to_path_buf());
+        }
+    }
+    None
+}
+
+fn detect_packaged_sdk_manifest() -> Option<(PathBuf, agam_pkg::SdkDistributionManifest)> {
+    let current_exe = std::env::current_exe().ok()?;
+    let root = packaged_sdk_root_for_executable(&current_exe)?;
+    let manifest =
+        agam_pkg::read_sdk_distribution_manifest_from_path(&root.join("sdk-manifest.json")).ok()?;
+    Some((root, manifest))
+}
+
+fn resolve_packaged_android_sysroot(target_triple: Option<&str>) -> Option<PathBuf> {
+    let (sdk_root, manifest) = detect_packaged_sdk_manifest()?;
+    let mut best_match: Option<(u8, PathBuf)> = None;
+    for profile in manifest.supported_targets {
+        if classify_llvm_target_platform(Some(profile.target_triple.as_str()))
+            != LlvmTargetPlatform::Android
+        {
+            continue;
+        }
+        let packaged_sysroot = match profile.packaged_sysroot {
+            Some(path) => sdk_root.join(path),
+            None => continue,
+        };
+        if !packaged_sysroot.is_dir() {
+            continue;
+        }
+        let priority = match target_triple {
+            Some(target) if target == profile.target_triple => 2,
+            Some(_) => 1,
+            None => 1,
+        };
+        match &best_match {
+            Some((best_priority, _)) if *best_priority >= priority => {}
+            _ => best_match = Some((priority, packaged_sysroot)),
+        }
+    }
+    best_match.map(|(_, path)| path)
+}
+
+fn resolve_android_sysroot_for_target(target_triple: Option<&str>) -> Option<PathBuf> {
+    env_path(LLVM_SYSROOT_ENV)
+        .or_else(resolve_android_ndk_sysroot)
+        .or_else(|| resolve_packaged_android_sysroot(target_triple))
+}
+
+fn resolve_sdk_android_sysroot_source(explicit: Option<&PathBuf>) -> Option<PathBuf> {
+    explicit
+        .cloned()
+        .or_else(|| resolve_android_sysroot_for_target(None))
+}
+
 fn resolve_llvm_target_config(tuning: &ReleaseTuning) -> LlvmTargetConfig {
     let target_triple = tuning
         .target
@@ -2159,13 +2851,11 @@ fn resolve_llvm_target_config(tuning: &ReleaseTuning) -> LlvmTargetConfig {
         })
         .map(|value| value.trim().to_string());
     let platform = classify_llvm_target_platform(target_triple.as_deref());
-    let sysroot = env_path(LLVM_SYSROOT_ENV).or_else(|| {
-        if platform == LlvmTargetPlatform::Android {
-            resolve_android_ndk_sysroot()
-        } else {
-            None
-        }
-    });
+    let sysroot = if platform == LlvmTargetPlatform::Android {
+        resolve_android_sysroot_for_target(target_triple.as_deref())
+    } else {
+        env_path(LLVM_SYSROOT_ENV)
+    };
     let sdk_root = env_path(LLVM_SDKROOT_ENV).or_else(|| env_path("SDKROOT"));
     LlvmTargetConfig {
         target_triple,
@@ -2555,7 +3245,10 @@ fn try_lockfile_refresh(
         let diagnostics = agam_pkg::lockfile_diagnostics(manifest, &lockfile);
         if diagnostics.is_empty() {
             if had_lockfile {
-                eprintln!("[agamc] lockfile: fresh ({} package(s))", lockfile.packages.len());
+                eprintln!(
+                    "[agamc] lockfile: fresh ({} package(s))",
+                    lockfile.packages.len()
+                );
             } else {
                 eprintln!(
                     "[agamc] lockfile: generated agam.lock ({} package(s))",
@@ -2580,6 +3273,1682 @@ fn try_lockfile_refresh(
     Ok(Some(lockfile))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PublishReport {
+    dry_run: bool,
+    official: bool,
+    workspace_root: PathBuf,
+    manifest_path: PathBuf,
+    index_root: PathBuf,
+    index_name: String,
+    index_path: String,
+    owners: Vec<String>,
+    manifest: agam_pkg::PublishManifest,
+    receipt: Option<agam_pkg::PublishReceipt>,
+    bootstrapped_config: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryInspectReport {
+    index_root: PathBuf,
+    index_name: String,
+    index_path: String,
+    entry: agam_pkg::RegistryPackageEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryAuditReport {
+    index_root: PathBuf,
+    index_name: String,
+    index_path: String,
+    lines: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryProfileListReport {
+    profiles: Vec<agam_pkg::FirstPartyDistributionProfile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryProfileInspectReport {
+    profile: agam_pkg::FirstPartyDistributionProfile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryGovernanceReport {
+    governance: agam_pkg::OfficialPackageGovernance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EnvironmentListReport {
+    workspace_root: PathBuf,
+    manifest_path: PathBuf,
+    default_environment: Option<String>,
+    environments: Vec<agam_pkg::ResolvedEnvironment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EnvironmentInspectReport {
+    workspace_root: PathBuf,
+    manifest_path: PathBuf,
+    selected_by_default: bool,
+    environment: agam_pkg::ResolvedEnvironment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryYankReport {
+    index_root: PathBuf,
+    index_name: String,
+    package_name: String,
+    version: String,
+    yanked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryInstallReport {
+    workspace_root: PathBuf,
+    manifest_path: PathBuf,
+    index_root: PathBuf,
+    index_name: String,
+    dependency_table: DependencyTable,
+    dependency_key: String,
+    package_name: String,
+    requested_version: Option<String>,
+    selected_version: String,
+    added_new_entry: bool,
+    changed_manifest: bool,
+    lockfile_package_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryProfileInstallItem {
+    package_name: String,
+    requested_version: String,
+    selected_version: String,
+    added_new_entry: bool,
+    changed_manifest: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryProfileInstallReport {
+    workspace_root: PathBuf,
+    manifest_path: PathBuf,
+    index_root: PathBuf,
+    index_name: String,
+    dependency_table: DependencyTable,
+    profile: agam_pkg::FirstPartyDistributionProfile,
+    items: Vec<RegistryProfileInstallItem>,
+    lockfile_package_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryUpdateItem {
+    dependency_key: String,
+    package_name: String,
+    previous_version: Option<String>,
+    selected_version: String,
+    updated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryUpdateReport {
+    workspace_root: PathBuf,
+    manifest_path: PathBuf,
+    index_root: PathBuf,
+    index_name: String,
+    dependency_table: DependencyTable,
+    items: Vec<RegistryUpdateItem>,
+    lockfile_package_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryDependencyTarget {
+    dependency_key: String,
+    package_name: String,
+}
+
+fn backend_from_runtime_backend(backend: agam_runtime::contract::RuntimeBackend) -> Backend {
+    match backend {
+        agam_runtime::contract::RuntimeBackend::Auto => Backend::Auto,
+        agam_runtime::contract::RuntimeBackend::C => Backend::C,
+        agam_runtime::contract::RuntimeBackend::Llvm => Backend::Llvm,
+        agam_runtime::contract::RuntimeBackend::Jit => Backend::Jit,
+    }
+}
+
+fn requested_backend_from_environment(
+    environment: &agam_pkg::ResolvedEnvironment,
+    allow_jit: bool,
+) -> Option<Backend> {
+    match environment.preferred_backend {
+        Some(agam_runtime::contract::RuntimeBackend::Jit) if !allow_jit => None,
+        Some(backend) => Some(backend_from_runtime_backend(backend)),
+        None => None,
+    }
+}
+
+fn requested_backend_for_command(
+    cli_backend: Backend,
+    environment: Option<&EnvironmentInspectReport>,
+    allow_jit: bool,
+    target: Option<&str>,
+) -> Backend {
+    if cli_backend != Backend::Auto {
+        return cli_backend;
+    }
+    if let Some(environment) = environment {
+        if let Some(backend) =
+            requested_backend_from_environment(&environment.environment, allow_jit)
+        {
+            return backend;
+        }
+    }
+    if target.is_some() {
+        return Backend::Llvm;
+    }
+    Backend::Auto
+}
+
+fn selected_target_for_command(
+    cli_target: Option<String>,
+    environment: Option<&EnvironmentInspectReport>,
+) -> Option<String> {
+    cli_target.or_else(|| environment.and_then(|report| report.environment.target.clone()))
+}
+
+fn environment_selection_label(report: &EnvironmentInspectReport) -> String {
+    if report.selected_by_default {
+        format!("{} (default)", report.environment.name)
+    } else {
+        report.environment.name.clone()
+    }
+}
+
+fn maybe_resolve_workspace_environment(
+    path: Option<PathBuf>,
+    requested: Option<&str>,
+) -> Result<Option<EnvironmentInspectReport>, String> {
+    let session = resolve_workspace_session_for_driver(path)?;
+    let Some(manifest_path) = session.layout.manifest_path.clone() else {
+        if requested.is_some() {
+            return Err(
+                "`--env` requires a workspace rooted by `agam.toml`; single-file sessions do not define environments"
+                    .into(),
+            );
+        }
+        return Ok(None);
+    };
+    let Some(manifest) = session.manifest.clone() else {
+        if requested.is_some() {
+            return Err(format!(
+                "`--env` requires a manifest at `{}`",
+                manifest_path.display()
+            ));
+        }
+        return Ok(None);
+    };
+    if manifest.environments.is_empty() {
+        if let Some(requested) = requested {
+            return Err(format!(
+                "workspace `{}` defines no named environments; cannot select `{requested}`",
+                manifest.project.name
+            ));
+        }
+        return Ok(None);
+    }
+
+    let lockfile = agam_pkg::resolve_dependencies(&session)?;
+    let selected_by_default = requested.is_none();
+    let environment = agam_pkg::resolve_environment(&manifest, &lockfile, requested)?
+        .ok_or_else(|| "no environment selected".to_string())?;
+
+    Ok(Some(EnvironmentInspectReport {
+        workspace_root: session.layout.root,
+        manifest_path,
+        selected_by_default,
+        environment,
+    }))
+}
+
+fn maybe_resolve_optional_workspace_environment(
+    path: Option<PathBuf>,
+    requested: Option<&str>,
+) -> Result<Option<EnvironmentInspectReport>, String> {
+    let Some(path) = path else {
+        return if requested.is_some() {
+            Err(
+                "`--env` requires a workspace rooted by `agam.toml`; no workspace path was provided"
+                    .into(),
+            )
+        } else {
+            Ok(None)
+        };
+    };
+
+    match maybe_resolve_workspace_environment(Some(path), requested) {
+        Ok(environment) => Ok(environment),
+        Err(_) if requested.is_none() => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn maybe_resolve_build_environment(
+    files: &[PathBuf],
+    requested: Option<&str>,
+) -> Result<Option<EnvironmentInspectReport>, String> {
+    let mut selected: Option<EnvironmentInspectReport> = None;
+    let mut saw_environment = false;
+    let mut saw_environment_free = false;
+    let mut seen = BTreeSet::new();
+
+    for input in files {
+        let file = resolve_entry_source_path(input)?;
+        if !seen.insert(file.clone()) {
+            continue;
+        }
+
+        match maybe_resolve_workspace_environment(Some(file), requested)? {
+            Some(report) => {
+                saw_environment = true;
+                if let Some(existing) = selected.as_ref() {
+                    let existing_backend =
+                        requested_backend_from_environment(&existing.environment, false);
+                    let report_backend =
+                        requested_backend_from_environment(&report.environment, false);
+                    if existing.environment.target != report.environment.target
+                        || existing_backend != report_backend
+                    {
+                        return Err(format!(
+                            "build inputs resolve to incompatible environments: `{}` -> `{}` (target={}, backend={}); `{}` -> `{}` (target={}, backend={})",
+                            existing.workspace_root.display(),
+                            environment_selection_label(existing),
+                            existing.environment.target.as_deref().unwrap_or("host"),
+                            existing_backend
+                                .map(render_backend_cli_value)
+                                .unwrap_or("auto"),
+                            report.workspace_root.display(),
+                            environment_selection_label(&report),
+                            report.environment.target.as_deref().unwrap_or("host"),
+                            report_backend
+                                .map(render_backend_cli_value)
+                                .unwrap_or("auto"),
+                        ));
+                    }
+                } else {
+                    selected = Some(report);
+                }
+            }
+            None => saw_environment_free = true,
+        }
+    }
+
+    if saw_environment && saw_environment_free {
+        return Err(
+            "build inputs mix environment-aware workspaces with environment-free inputs; build them separately or add a consistent project-local environment contract"
+                .into(),
+        );
+    }
+
+    Ok(selected)
+}
+
+struct RegistryIndexEnvRestore {
+    key: String,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl RegistryIndexEnvRestore {
+    fn capture(key: &str) -> Self {
+        Self {
+            key: key.to_string(),
+            previous: std::env::var_os(key),
+        }
+    }
+}
+
+impl Drop for RegistryIndexEnvRestore {
+    fn drop(&mut self) {
+        match self.previous.as_ref() {
+            Some(previous) => unsafe {
+                std::env::set_var(&self.key, previous);
+            },
+            None => unsafe {
+                std::env::remove_var(&self.key);
+            },
+        }
+    }
+}
+
+fn registry_env_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn with_registry_index_env<R>(registry: &str, index_root: &Path, f: impl FnOnce() -> R) -> R {
+    let _guard = registry_env_lock()
+        .lock()
+        .expect("registry env lock should not be poisoned");
+    let key = agam_pkg::registry_index_env_var(registry);
+    let restore = RegistryIndexEnvRestore::capture(&key);
+    unsafe {
+        std::env::set_var(&key, index_root);
+    }
+    let result = f();
+    drop(restore);
+    result
+}
+
+fn registry_field_for_index(index_name: &str) -> Option<String> {
+    (index_name != "agam").then(|| index_name.to_string())
+}
+
+fn dependency_registry_name(spec: &agam_pkg::DependencySpec) -> &str {
+    spec.registry.as_deref().unwrap_or("agam")
+}
+
+fn workspace_member_names(session: &agam_pkg::WorkspaceSession) -> BTreeSet<String> {
+    session
+        .members
+        .iter()
+        .map(|member| member.layout.project_name.clone())
+        .collect()
+}
+
+fn dependency_table(
+    manifest: &agam_pkg::WorkspaceManifest,
+    table: DependencyTable,
+) -> &BTreeMap<String, agam_pkg::DependencySpec> {
+    match table {
+        DependencyTable::Main => &manifest.dependencies,
+        DependencyTable::Dev => &manifest.dev_dependencies,
+        DependencyTable::Build => &manifest.build_dependencies,
+    }
+}
+
+fn dependency_table_mut(
+    manifest: &mut agam_pkg::WorkspaceManifest,
+    table: DependencyTable,
+) -> &mut BTreeMap<String, agam_pkg::DependencySpec> {
+    match table {
+        DependencyTable::Main => &mut manifest.dependencies,
+        DependencyTable::Dev => &mut manifest.dev_dependencies,
+        DependencyTable::Build => &mut manifest.build_dependencies,
+    }
+}
+
+fn is_registry_dependency(
+    dependency_key: &str,
+    spec: &agam_pkg::DependencySpec,
+    workspace_members: &BTreeSet<String>,
+) -> bool {
+    !workspace_members.contains(dependency_key)
+        && spec.path.is_none()
+        && spec.git.is_none()
+        && (spec.version.is_some() || spec.registry.is_some())
+}
+
+fn ensure_registry_dependency_slot(
+    dependency_key: &str,
+    package_name: &str,
+    spec: &agam_pkg::DependencySpec,
+    index_name: &str,
+    workspace_members: &BTreeSet<String>,
+    table: DependencyTable,
+) -> Result<(), String> {
+    if workspace_members.contains(dependency_key) {
+        return Err(format!(
+            "cannot modify `{dependency_key}` in `{}` because it resolves to a workspace member",
+            table.manifest_label()
+        ));
+    }
+    if spec.path.is_some() || spec.git.is_some() {
+        return Err(format!(
+            "cannot modify `{dependency_key}` in `{}` because it already uses a non-registry source",
+            table.manifest_label()
+        ));
+    }
+
+    let existing_package = spec.package.as_deref().unwrap_or(dependency_key);
+    if existing_package != package_name {
+        return Err(format!(
+            "cannot modify `{dependency_key}` in `{}` because it already targets package `{existing_package}`",
+            table.manifest_label()
+        ));
+    }
+
+    let existing_registry = dependency_registry_name(spec);
+    if existing_registry != index_name {
+        return Err(format!(
+            "cannot modify `{dependency_key}` in `{}` because it targets registry `{existing_registry}` instead of `{index_name}`",
+            table.manifest_label()
+        ));
+    }
+
+    Ok(())
+}
+
+fn collect_registry_update_targets(
+    manifest: &agam_pkg::WorkspaceManifest,
+    table: DependencyTable,
+    names: &[String],
+    index_name: &str,
+    workspace_members: &BTreeSet<String>,
+) -> Result<Vec<RegistryDependencyTarget>, String> {
+    let dependencies = dependency_table(manifest, table);
+    if names.is_empty() {
+        let targets = dependencies
+            .iter()
+            .filter(|(dependency_key, spec)| {
+                is_registry_dependency(dependency_key, spec, workspace_members)
+                    && dependency_registry_name(spec) == index_name
+            })
+            .map(|(dependency_key, spec)| RegistryDependencyTarget {
+                dependency_key: dependency_key.clone(),
+                package_name: spec
+                    .package
+                    .clone()
+                    .unwrap_or_else(|| dependency_key.clone()),
+            })
+            .collect::<Vec<_>>();
+
+        if targets.is_empty() {
+            return Err(format!(
+                "no registry dependencies in `{}` target registry `{index_name}`",
+                table.manifest_label()
+            ));
+        }
+
+        return Ok(targets);
+    }
+
+    let mut targets = Vec::new();
+    let mut seen = BTreeSet::new();
+    for raw_name in names {
+        let name = raw_name.trim();
+        if name.is_empty() {
+            return Err("registry update names cannot be empty".into());
+        }
+
+        if let Some(spec) = dependencies.get(name) {
+            ensure_registry_dependency_slot(
+                name,
+                spec.package.as_deref().unwrap_or(name),
+                spec,
+                index_name,
+                workspace_members,
+                table,
+            )?;
+            if seen.insert(name.to_string()) {
+                targets.push(RegistryDependencyTarget {
+                    dependency_key: name.to_string(),
+                    package_name: spec.package.clone().unwrap_or_else(|| name.to_string()),
+                });
+            }
+            continue;
+        }
+
+        let matches = dependencies
+            .iter()
+            .filter(|(dependency_key, spec)| {
+                spec.package.as_deref() == Some(name)
+                    && is_registry_dependency(dependency_key, spec, workspace_members)
+                    && dependency_registry_name(spec) == index_name
+            })
+            .map(|(dependency_key, _)| dependency_key.clone())
+            .collect::<Vec<_>>();
+
+        match matches.len() {
+            0 => {
+                return Err(format!(
+                    "dependency or package `{name}` was not found in `{}` for registry `{index_name}`",
+                    table.manifest_label()
+                ));
+            }
+            1 => {
+                let dependency_key = matches[0].clone();
+                if seen.insert(dependency_key.clone()) {
+                    targets.push(RegistryDependencyTarget {
+                        dependency_key,
+                        package_name: name.to_string(),
+                    });
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "package `{name}` maps to multiple dependency keys in `{}`; update by dependency key instead",
+                    table.manifest_label()
+                ));
+            }
+        }
+    }
+
+    Ok(targets)
+}
+
+fn refresh_lockfile_with_registry_index(
+    workspace_root: &Path,
+    index_name: &str,
+    index_root: &Path,
+    verbose: bool,
+) -> Result<usize, String> {
+    with_registry_index_env(index_name, index_root, || {
+        let session = resolve_workspace_session_for_driver(Some(workspace_root.to_path_buf()))?;
+        Ok(try_lockfile_refresh(&session, verbose)?
+            .map(|lockfile| lockfile.packages.len())
+            .unwrap_or(0))
+    })
+}
+
+fn persist_manifest_and_refresh_lockfile(
+    original_manifest: &agam_pkg::WorkspaceManifest,
+    updated_manifest: &agam_pkg::WorkspaceManifest,
+    manifest_path: &Path,
+    workspace_root: &Path,
+    index_name: &str,
+    index_root: &Path,
+    verbose: bool,
+) -> Result<usize, String> {
+    agam_pkg::validate_workspace_manifest(workspace_root, updated_manifest)?;
+    agam_pkg::write_workspace_manifest_to_path(manifest_path, updated_manifest)?;
+
+    match refresh_lockfile_with_registry_index(workspace_root, index_name, index_root, verbose) {
+        Ok(lockfile_package_count) => Ok(lockfile_package_count),
+        Err(error) => {
+            let restore =
+                agam_pkg::write_workspace_manifest_to_path(manifest_path, original_manifest);
+            match restore {
+                Ok(()) => Err(error),
+                Err(restore_error) => Err(format!(
+                    "{error}; failed to restore manifest `{}` after the lockfile refresh failed: {restore_error}",
+                    manifest_path.display()
+                )),
+            }
+        }
+    }
+}
+
+fn install_registry_dependency(
+    path: Option<PathBuf>,
+    index_root: &Path,
+    table: DependencyTable,
+    package_name: &str,
+    version_req: Option<&str>,
+    verbose: bool,
+) -> Result<RegistryInstallReport, String> {
+    let session = resolve_workspace_session_for_driver(path)?;
+    let manifest_path = session.layout.manifest_path.clone().ok_or_else(|| {
+        "registry install requires a workspace rooted by `agam.toml`; single-file sessions are not installable"
+            .to_string()
+    })?;
+    let index_name = resolve_registry_index_name(index_root)?;
+    let selected_release =
+        agam_pkg::select_registry_release(index_root, package_name, version_req)?;
+    let workspace_members = workspace_member_names(&session);
+    if workspace_members.contains(package_name) {
+        return Err(format!(
+            "cannot install `{package_name}` into `{}` because it already resolves to a workspace member",
+            table.manifest_label()
+        ));
+    }
+
+    let original_manifest = session.manifest.clone().ok_or_else(|| {
+        format!(
+            "registry install requires a manifest at `{}`",
+            manifest_path.display()
+        )
+    })?;
+    let mut updated_manifest = original_manifest.clone();
+    let dependency_key = package_name.to_string();
+    let dependencies = dependency_table_mut(&mut updated_manifest, table);
+
+    let mut next_spec = dependencies
+        .get(&dependency_key)
+        .cloned()
+        .unwrap_or_else(agam_pkg::DependencySpec::default);
+    let mut added_new_entry = true;
+    if let Some(existing) = dependencies.get(&dependency_key) {
+        ensure_registry_dependency_slot(
+            &dependency_key,
+            package_name,
+            existing,
+            &index_name,
+            &workspace_members,
+            table,
+        )?;
+        added_new_entry = false;
+    }
+
+    let previous_version = next_spec.version.clone();
+    let previous_registry = next_spec.registry.clone();
+    next_spec.version = Some(selected_release.version.clone());
+    next_spec.registry = registry_field_for_index(&index_name);
+    next_spec.path = None;
+    next_spec.git = None;
+    next_spec.rev = None;
+    next_spec.branch = None;
+    next_spec.package = None;
+    let changed_manifest =
+        previous_version != next_spec.version || previous_registry != next_spec.registry;
+    dependencies.insert(dependency_key.clone(), next_spec);
+
+    let lockfile_package_count = if changed_manifest {
+        persist_manifest_and_refresh_lockfile(
+            &original_manifest,
+            &updated_manifest,
+            &manifest_path,
+            &session.layout.root,
+            &index_name,
+            index_root,
+            verbose,
+        )?
+    } else {
+        refresh_lockfile_with_registry_index(
+            &session.layout.root,
+            &index_name,
+            index_root,
+            verbose,
+        )?
+    };
+
+    Ok(RegistryInstallReport {
+        workspace_root: session.layout.root,
+        manifest_path,
+        index_root: index_root.to_path_buf(),
+        index_name,
+        dependency_table: table,
+        dependency_key,
+        package_name: package_name.to_string(),
+        requested_version: version_req.map(str::to_string),
+        selected_version: selected_release.version,
+        added_new_entry,
+        changed_manifest,
+        lockfile_package_count,
+    })
+}
+
+fn update_registry_dependencies(
+    path: Option<PathBuf>,
+    index_root: &Path,
+    table: DependencyTable,
+    names: &[String],
+    verbose: bool,
+) -> Result<RegistryUpdateReport, String> {
+    let session = resolve_workspace_session_for_driver(path)?;
+    let manifest_path = session.layout.manifest_path.clone().ok_or_else(|| {
+        "registry update requires a workspace rooted by `agam.toml`; single-file sessions are not installable"
+            .to_string()
+    })?;
+    let index_name = resolve_registry_index_name(index_root)?;
+    let workspace_members = workspace_member_names(&session);
+    let original_manifest = session.manifest.clone().ok_or_else(|| {
+        format!(
+            "registry update requires a manifest at `{}`",
+            manifest_path.display()
+        )
+    })?;
+    let targets = collect_registry_update_targets(
+        &original_manifest,
+        table,
+        names,
+        &index_name,
+        &workspace_members,
+    )?;
+
+    let mut updated_manifest = original_manifest.clone();
+    let dependencies = dependency_table_mut(&mut updated_manifest, table);
+    let mut items = Vec::new();
+    let mut any_manifest_change = false;
+
+    for target in targets {
+        let selected_release =
+            agam_pkg::select_registry_release(index_root, &target.package_name, None)?;
+        let spec = dependencies
+            .get_mut(&target.dependency_key)
+            .ok_or_else(|| {
+                format!(
+                    "dependency `{}` disappeared from `{}` while preparing the update",
+                    target.dependency_key,
+                    table.manifest_label()
+                )
+            })?;
+
+        let previous_version = spec.version.clone();
+        let previous_registry = spec.registry.clone();
+        spec.version = Some(selected_release.version.clone());
+        spec.registry = registry_field_for_index(&index_name);
+        spec.path = None;
+        spec.git = None;
+        spec.rev = None;
+        spec.branch = None;
+        if target.dependency_key == target.package_name {
+            spec.package = None;
+        } else {
+            spec.package = Some(target.package_name.clone());
+        }
+
+        let updated = previous_version != spec.version || previous_registry != spec.registry;
+        any_manifest_change |= updated;
+        items.push(RegistryUpdateItem {
+            dependency_key: target.dependency_key,
+            package_name: target.package_name,
+            previous_version,
+            selected_version: selected_release.version,
+            updated,
+        });
+    }
+
+    let lockfile_package_count = if any_manifest_change {
+        persist_manifest_and_refresh_lockfile(
+            &original_manifest,
+            &updated_manifest,
+            &manifest_path,
+            &session.layout.root,
+            &index_name,
+            index_root,
+            verbose,
+        )?
+    } else {
+        refresh_lockfile_with_registry_index(
+            &session.layout.root,
+            &index_name,
+            index_root,
+            verbose,
+        )?
+    };
+
+    Ok(RegistryUpdateReport {
+        workspace_root: session.layout.root,
+        manifest_path,
+        index_root: index_root.to_path_buf(),
+        index_name,
+        dependency_table: table,
+        items,
+        lockfile_package_count,
+    })
+}
+
+fn yank_registry_release(
+    index_root: &Path,
+    package_name: &str,
+    version: &str,
+    undo: bool,
+) -> Result<RegistryYankReport, String> {
+    let index_name = resolve_registry_index_name(index_root)?;
+    let release = agam_pkg::set_registry_release_yanked(index_root, package_name, version, !undo)?;
+    Ok(RegistryYankReport {
+        index_root: index_root.to_path_buf(),
+        index_name,
+        package_name: package_name.to_string(),
+        version: release.version,
+        yanked: release.yanked,
+    })
+}
+
+fn list_registry_profiles() -> RegistryProfileListReport {
+    RegistryProfileListReport {
+        profiles: agam_pkg::first_party_distribution_profiles(),
+    }
+}
+
+fn inspect_registry_profile(name: &str) -> Result<RegistryProfileInspectReport, String> {
+    let profile = agam_pkg::first_party_distribution_profile(name)
+        .ok_or_else(|| format!("unknown curated first-party profile `{name}`"))?;
+    Ok(RegistryProfileInspectReport { profile })
+}
+
+fn registry_governance_report() -> RegistryGovernanceReport {
+    RegistryGovernanceReport {
+        governance: agam_pkg::official_package_governance(),
+    }
+}
+
+fn install_registry_profile(
+    path: Option<PathBuf>,
+    index_root: &Path,
+    table: DependencyTable,
+    profile_name: &str,
+    verbose: bool,
+) -> Result<RegistryProfileInstallReport, String> {
+    let session = resolve_workspace_session_for_driver(path)?;
+    let manifest_path = session.layout.manifest_path.clone().ok_or_else(|| {
+        "registry profile install requires a workspace rooted by `agam.toml`; single-file sessions are not installable"
+            .to_string()
+    })?;
+    let profile = agam_pkg::first_party_distribution_profile(profile_name)
+        .ok_or_else(|| format!("unknown curated first-party profile `{profile_name}`"))?;
+    let index_name = resolve_registry_index_name(index_root)?;
+    let workspace_members = workspace_member_names(&session);
+    let original_manifest = session.manifest.clone().ok_or_else(|| {
+        format!(
+            "registry profile install requires a manifest at `{}`",
+            manifest_path.display()
+        )
+    })?;
+
+    let mut updated_manifest = original_manifest.clone();
+    let dependencies = dependency_table_mut(&mut updated_manifest, table);
+    let mut items = Vec::new();
+    let mut any_manifest_change = false;
+
+    for recommendation in &profile.packages {
+        if workspace_members.contains(&recommendation.name) {
+            return Err(format!(
+                "cannot install profile `{}` because `{}` already resolves to a workspace member",
+                profile.name, recommendation.name
+            ));
+        }
+
+        let selected_release = agam_pkg::select_registry_release(
+            index_root,
+            &recommendation.name,
+            Some(&recommendation.version_req),
+        )?;
+        let dependency_key = recommendation.name.clone();
+        let mut next_spec = dependencies
+            .get(&dependency_key)
+            .cloned()
+            .unwrap_or_else(agam_pkg::DependencySpec::default);
+        let added_new_entry = !dependencies.contains_key(&dependency_key);
+        if let Some(existing) = dependencies.get(&dependency_key) {
+            ensure_registry_dependency_slot(
+                &dependency_key,
+                &recommendation.name,
+                existing,
+                &index_name,
+                &workspace_members,
+                table,
+            )?;
+        }
+
+        let previous_version = next_spec.version.clone();
+        let previous_registry = next_spec.registry.clone();
+        next_spec.version = Some(selected_release.version.clone());
+        next_spec.registry = registry_field_for_index(&index_name);
+        next_spec.path = None;
+        next_spec.git = None;
+        next_spec.rev = None;
+        next_spec.branch = None;
+        next_spec.package = None;
+        let changed_manifest =
+            previous_version != next_spec.version || previous_registry != next_spec.registry;
+        any_manifest_change |= changed_manifest;
+        dependencies.insert(dependency_key, next_spec);
+
+        items.push(RegistryProfileInstallItem {
+            package_name: recommendation.name.clone(),
+            requested_version: recommendation.version_req.clone(),
+            selected_version: selected_release.version,
+            added_new_entry,
+            changed_manifest,
+        });
+    }
+
+    let lockfile_package_count = if any_manifest_change {
+        persist_manifest_and_refresh_lockfile(
+            &original_manifest,
+            &updated_manifest,
+            &manifest_path,
+            &session.layout.root,
+            &index_name,
+            index_root,
+            verbose,
+        )?
+    } else {
+        refresh_lockfile_with_registry_index(
+            &session.layout.root,
+            &index_name,
+            index_root,
+            verbose,
+        )?
+    };
+
+    Ok(RegistryProfileInstallReport {
+        workspace_root: session.layout.root,
+        manifest_path,
+        index_root: index_root.to_path_buf(),
+        index_name,
+        dependency_table: table,
+        profile,
+        items,
+        lockfile_package_count,
+    })
+}
+
+fn resolve_environment_session_and_lockfile(
+    path: Option<PathBuf>,
+) -> Result<
+    (
+        agam_pkg::WorkspaceSession,
+        PathBuf,
+        agam_pkg::WorkspaceManifest,
+        agam_pkg::WorkspaceLockfile,
+    ),
+    String,
+> {
+    let session = resolve_workspace_session_for_driver(path)?;
+    let manifest_path = session.layout.manifest_path.clone().ok_or_else(|| {
+        "environment commands require a workspace rooted by `agam.toml`; single-file sessions do not define environments"
+            .to_string()
+    })?;
+    let manifest = session.manifest.clone().ok_or_else(|| {
+        format!(
+            "environment commands require a manifest at `{}`",
+            manifest_path.display()
+        )
+    })?;
+    let lockfile = agam_pkg::resolve_dependencies(&session)?;
+    Ok((session, manifest_path, manifest, lockfile))
+}
+
+fn list_workspace_environments(path: Option<PathBuf>) -> Result<EnvironmentListReport, String> {
+    let (session, manifest_path, manifest, lockfile) =
+        resolve_environment_session_and_lockfile(path)?;
+    let default_environment = agam_pkg::default_environment_name(&manifest);
+    let environments = agam_pkg::resolve_environment_catalog(&manifest, &lockfile)
+        .into_values()
+        .collect();
+
+    Ok(EnvironmentListReport {
+        workspace_root: session.layout.root,
+        manifest_path,
+        default_environment,
+        environments,
+    })
+}
+
+fn inspect_workspace_environment(
+    path: Option<PathBuf>,
+    name: Option<&str>,
+) -> Result<EnvironmentInspectReport, String> {
+    let (session, manifest_path, manifest, lockfile) =
+        resolve_environment_session_and_lockfile(path)?;
+    let selected_by_default = name.is_none();
+    let environment =
+        agam_pkg::resolve_environment(&manifest, &lockfile, name)?.ok_or_else(|| {
+            if manifest.environments.is_empty() {
+                "workspace defines no named environments".to_string()
+            } else {
+                "no environment selected".to_string()
+            }
+        })?;
+
+    Ok(EnvironmentInspectReport {
+        workspace_root: session.layout.root,
+        manifest_path,
+        selected_by_default,
+        environment,
+    })
+}
+
+fn publish_workspace_to_registry(
+    path: Option<PathBuf>,
+    index_root: &Path,
+    owners: &[String],
+    description: Option<&String>,
+    homepage: Option<&String>,
+    repository: Option<&String>,
+    download_url: Option<&String>,
+    official: bool,
+    dry_run: bool,
+    _verbose: bool,
+) -> Result<PublishReport, String> {
+    let session = resolve_workspace_session_for_driver(path)?;
+    let manifest_path = session.layout.manifest_path.clone().ok_or_else(|| {
+        "publish requires a workspace rooted by `agam.toml`; single-file sessions are not publishable"
+            .to_string()
+    })?;
+
+    let mut manifest = agam_pkg::build_publish_manifest(&session)?;
+    if let Some(description) = normalize_publish_text(description.map(String::as_str)) {
+        manifest.description = Some(description);
+    }
+    if let Some(homepage) = normalize_publish_text(homepage.map(String::as_str)) {
+        manifest.homepage = Some(homepage);
+    }
+    if let Some(repository) = normalize_publish_text(repository.map(String::as_str)) {
+        manifest.repository = Some(repository);
+    }
+    if let Some(download_url) = normalize_publish_text(download_url.map(String::as_str)) {
+        manifest.download_url = Some(download_url);
+    }
+
+    let owners = normalize_publish_owners(owners);
+    let (index_name, bootstrapped_config) = ensure_registry_index_ready(index_root, dry_run)?;
+    let index_path = agam_pkg::registry_index_path(&manifest.name);
+
+    if official {
+        agam_pkg::validate_official_publish_manifest(&manifest, &index_name, &owners)?;
+    } else {
+        agam_pkg::validate_publish_manifest(&manifest)?;
+    }
+
+    let receipt = if dry_run {
+        None
+    } else if official {
+        Some(agam_pkg::publish_official_package_to_registry_index(
+            index_root,
+            &manifest,
+            &owners,
+            &publish_timestamp(),
+            &index_name,
+        )?)
+    } else {
+        Some(agam_pkg::publish_to_registry_index(
+            index_root,
+            &manifest,
+            &owners,
+            &publish_timestamp(),
+        )?)
+    };
+
+    Ok(PublishReport {
+        dry_run,
+        official,
+        workspace_root: session.layout.root,
+        manifest_path,
+        index_root: index_root.to_path_buf(),
+        index_name,
+        index_path,
+        owners,
+        manifest,
+        receipt,
+        bootstrapped_config,
+    })
+}
+
+fn normalize_publish_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn normalize_publish_owners(owners: &[String]) -> Vec<String> {
+    owners
+        .iter()
+        .map(|owner| owner.trim())
+        .filter(|owner| !owner.is_empty())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn inferred_registry_index_name(index_root: &Path) -> String {
+    index_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or("agam")
+        .to_string()
+}
+
+fn resolve_registry_index_name(index_root: &Path) -> Result<String, String> {
+    if !index_root.exists() {
+        return Err(format!(
+            "registry index root `{}` does not exist",
+            index_root.display()
+        ));
+    }
+    if !index_root.is_dir() {
+        return Err(format!(
+            "registry index root `{}` is not a directory",
+            index_root.display()
+        ));
+    }
+
+    let config_path = index_root.join("config.json");
+    if config_path.exists() && !config_path.is_file() {
+        return Err(format!(
+            "registry config path `{}` is not a file",
+            config_path.display()
+        ));
+    }
+
+    if config_path.is_file() {
+        let config = agam_pkg::read_registry_config(index_root)?;
+        if config.format_version != agam_pkg::REGISTRY_INDEX_FORMAT_VERSION {
+            return Err(format!(
+                "registry index `{}` uses unsupported format version {}; expected {}",
+                index_root.display(),
+                config.format_version,
+                agam_pkg::REGISTRY_INDEX_FORMAT_VERSION
+            ));
+        }
+        Ok(config
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| inferred_registry_index_name(index_root)))
+    } else {
+        Ok(inferred_registry_index_name(index_root))
+    }
+}
+
+fn ensure_registry_index_ready(index_root: &Path, dry_run: bool) -> Result<(String, bool), String> {
+    if index_root.exists() && !index_root.is_dir() {
+        return Err(format!(
+            "registry index root `{}` is not a directory",
+            index_root.display()
+        ));
+    }
+
+    let config_path = index_root.join("config.json");
+    if config_path.exists() && !config_path.is_file() {
+        return Err(format!(
+            "registry config path `{}` is not a file",
+            config_path.display()
+        ));
+    }
+
+    if config_path.is_file() {
+        let config = agam_pkg::read_registry_config(index_root)?;
+        if config.format_version != agam_pkg::REGISTRY_INDEX_FORMAT_VERSION {
+            return Err(format!(
+                "registry index `{}` uses unsupported format version {}; expected {}",
+                index_root.display(),
+                config.format_version,
+                agam_pkg::REGISTRY_INDEX_FORMAT_VERSION
+            ));
+        }
+        let index_name = config
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| inferred_registry_index_name(index_root));
+        return Ok((index_name, false));
+    }
+
+    let index_name = inferred_registry_index_name(index_root);
+    if dry_run {
+        return Ok((index_name, false));
+    }
+
+    agam_pkg::write_registry_config(
+        index_root,
+        &agam_pkg::RegistryConfig {
+            format_version: agam_pkg::REGISTRY_INDEX_FORMAT_VERSION,
+            api_url: None,
+            download_url: None,
+            name: Some(index_name.clone()),
+        },
+    )?;
+
+    Ok((index_name, true))
+}
+
+fn publish_timestamp() -> String {
+    now_unix_ms().to_string()
+}
+
+fn inspect_registry_package(
+    index_root: &Path,
+    name: &str,
+) -> Result<RegistryInspectReport, String> {
+    let index_name = resolve_registry_index_name(index_root)?;
+    let entry = agam_pkg::read_registry_package_entry(index_root, name)?;
+    Ok(RegistryInspectReport {
+        index_root: index_root.to_path_buf(),
+        index_name,
+        index_path: agam_pkg::registry_index_path(name),
+        entry,
+    })
+}
+
+fn audit_registry_index_package(
+    index_root: &Path,
+    name: &str,
+) -> Result<RegistryAuditReport, String> {
+    let index_name = resolve_registry_index_name(index_root)?;
+    let lines = agam_pkg::audit_registry_package(index_root, name)?;
+    Ok(RegistryAuditReport {
+        index_root: index_root.to_path_buf(),
+        index_name,
+        index_path: agam_pkg::registry_index_path(name),
+        lines,
+    })
+}
+
+fn print_publish_report(report: &PublishReport, verbose: bool) {
+    println!("publish: {}", if report.dry_run { "dry-run" } else { "ok" });
+    println!(
+        "package: {}@{}",
+        report.manifest.name, report.manifest.version
+    );
+    println!("workspace: {}", report.workspace_root.display());
+    println!("manifest: {}", report.manifest_path.display());
+    println!(
+        "registry: {} ({})",
+        report.index_name,
+        report.index_root.display()
+    );
+    println!("index path: {}", report.index_path);
+    println!("checksum: {}", report.manifest.checksum);
+    println!("manifest checksum: {}", report.manifest.manifest_checksum);
+    println!("agam version: {}", report.manifest.agam_version);
+    println!("official: {}", if report.official { "yes" } else { "no" });
+    println!(
+        "owners: {}",
+        if report.owners.is_empty() {
+            "none".to_string()
+        } else {
+            report.owners.join(", ")
+        }
+    );
+    println!("dependencies: {}", report.manifest.dependencies.len());
+
+    if let Some(description) = report.manifest.description.as_deref() {
+        println!("description: {description}");
+    } else if verbose {
+        println!("description: none");
+    }
+    if let Some(homepage) = report.manifest.homepage.as_deref() {
+        println!("homepage: {homepage}");
+    } else if verbose {
+        println!("homepage: none");
+    }
+    if let Some(repository) = report.manifest.repository.as_deref() {
+        println!("repository: {repository}");
+    } else if verbose {
+        println!("repository: none");
+    }
+    if let Some(download_url) = report.manifest.download_url.as_deref() {
+        println!("download: {download_url}");
+    } else if verbose {
+        println!("download: registry default or none");
+    }
+    if !report.manifest.keywords.is_empty() {
+        println!("keywords: {}", report.manifest.keywords.join(", "));
+    } else if verbose {
+        println!("keywords: none");
+    }
+
+    if verbose && !report.manifest.dependencies.is_empty() {
+        println!("dependency detail:");
+        for dependency in &report.manifest.dependencies {
+            let mut line = format!("  {} {}", dependency.name, dependency.version_req);
+            if let Some(registry) = dependency.registry.as_deref() {
+                line.push_str(&format!(" [registry: {registry}]"));
+            }
+            if dependency.optional {
+                line.push_str(" [optional]");
+            }
+            if !dependency.features.is_empty() {
+                line.push_str(&format!(" [features: {}]", dependency.features.join(", ")));
+            }
+            println!("{line}");
+        }
+    }
+
+    if report.bootstrapped_config {
+        println!("registry config: initialized config.json");
+    } else if verbose {
+        println!("registry config: existing or skipped");
+    }
+
+    if let Some(receipt) = report.receipt.as_ref() {
+        println!("published at: {}", receipt.published_at);
+    } else if verbose {
+        println!("published at: pending (dry-run)");
+    }
+}
+
+fn print_registry_inspect_report(report: &RegistryInspectReport, verbose: bool) {
+    println!("package: {}", report.entry.name);
+    println!(
+        "registry: {} ({})",
+        report.index_name,
+        report.index_root.display()
+    );
+    println!("index path: {}", report.index_path);
+    println!("created: {}", report.entry.created_at);
+    println!(
+        "owners: {}",
+        if report.entry.owners.is_empty() {
+            "none".to_string()
+        } else {
+            report.entry.owners.join(", ")
+        }
+    );
+    println!("releases: {}", report.entry.releases.len());
+
+    if let Some(description) = report.entry.description.as_deref() {
+        println!("description: {description}");
+    } else if verbose {
+        println!("description: none");
+    }
+    if let Some(homepage) = report.entry.homepage.as_deref() {
+        println!("homepage: {homepage}");
+    } else if verbose {
+        println!("homepage: none");
+    }
+    if let Some(repository) = report.entry.repository.as_deref() {
+        println!("repository: {repository}");
+    } else if verbose {
+        println!("repository: none");
+    }
+    if !report.entry.keywords.is_empty() {
+        println!("keywords: {}", report.entry.keywords.join(", "));
+    } else if verbose {
+        println!("keywords: none");
+    }
+
+    if verbose && !report.entry.releases.is_empty() {
+        println!("release detail:");
+        for release in &report.entry.releases {
+            let yanked = if release.yanked { " [yanked]" } else { "" };
+            println!(
+                "  {} (checksum: {}, agam: {}, published: {}{}, deps: {}, features: {})",
+                release.version,
+                release.checksum,
+                release.agam_version,
+                release.published_at,
+                yanked,
+                release.dependencies.len(),
+                release.features.len()
+            );
+            if let Some(download_url) = release.download_url.as_deref() {
+                println!("    download: {download_url}");
+            }
+            if let Some(provenance) = release.provenance.as_ref() {
+                println!(
+                    "    provenance: source={}, manifest={}",
+                    provenance.source_checksum, provenance.manifest_checksum
+                );
+                if let Some(published_by) = provenance.published_by.as_deref() {
+                    println!("    published by: {published_by}");
+                }
+                if let Some(source_repository) = provenance.source_repository.as_deref() {
+                    println!("    source repository: {source_repository}");
+                }
+            }
+        }
+    }
+}
+
+fn print_registry_audit_report(report: &RegistryAuditReport) {
+    println!(
+        "registry: {} ({})",
+        report.index_name,
+        report.index_root.display()
+    );
+    println!("index path: {}", report.index_path);
+    for line in &report.lines {
+        println!("{line}");
+    }
+}
+
+fn print_registry_profile_list_report(report: &RegistryProfileListReport) {
+    println!("profiles: {}", report.profiles.len());
+    for profile in &report.profiles {
+        println!(
+            "{} | packages={} | {}",
+            profile.name,
+            profile.packages.len(),
+            profile.summary
+        );
+    }
+}
+
+fn print_registry_profile_inspect_report(report: &RegistryProfileInspectReport) {
+    println!("profile: {}", report.profile.name);
+    println!("summary: {}", report.profile.summary);
+    println!("description: {}", report.profile.description);
+    println!("packages: {}", report.profile.packages.len());
+    for package in &report.profile.packages {
+        println!(
+            "  {} {} | {}",
+            package.name, package.version_req, package.rationale
+        );
+    }
+    if !report.profile.notes.is_empty() {
+        println!("notes:");
+        for note in &report.profile.notes {
+            println!("  {note}");
+        }
+    }
+}
+
+fn print_registry_governance_report(report: &RegistryGovernanceReport) {
+    println!("registry: {}", report.governance.registry);
+    println!("reserved prefix: {}", report.governance.reserved_prefix);
+    println!(
+        "repository namespace: {}",
+        report.governance.repository_namespace
+    );
+    println!(
+        "owners: {}",
+        if report.governance.owner_handles.is_empty() {
+            "none".to_string()
+        } else {
+            report.governance.owner_handles.join(", ")
+        }
+    );
+    println!("rules: {}", report.governance.publication_rules.len());
+    for rule in &report.governance.publication_rules {
+        println!("  {rule}");
+    }
+}
+
+fn print_registry_install_report(report: &RegistryInstallReport, verbose: bool) {
+    println!(
+        "install: {}",
+        if report.changed_manifest {
+            "ok"
+        } else {
+            "up-to-date"
+        }
+    );
+    println!(
+        "package: {}@{}",
+        report.package_name, report.selected_version
+    );
+    println!("workspace: {}", report.workspace_root.display());
+    println!("manifest: {}", report.manifest_path.display());
+    println!(
+        "registry: {} ({})",
+        report.index_name,
+        report.index_root.display()
+    );
+    println!("table: {}", report.dependency_table.manifest_label());
+    println!("dependency: {}", report.dependency_key);
+    println!(
+        "manifest change: {}",
+        if report.added_new_entry {
+            "added dependency"
+        } else if report.changed_manifest {
+            "updated existing dependency"
+        } else {
+            "unchanged"
+        }
+    );
+    println!("lockfile packages: {}", report.lockfile_package_count);
+
+    if let Some(requested_version) = report.requested_version.as_deref() {
+        println!("requested: {requested_version}");
+    } else if verbose {
+        println!("requested: latest");
+    }
+}
+
+fn print_registry_profile_install_report(report: &RegistryProfileInstallReport, verbose: bool) {
+    let changed = report
+        .items
+        .iter()
+        .filter(|item| item.changed_manifest)
+        .count();
+    let unchanged = report.items.len().saturating_sub(changed);
+
+    println!(
+        "profile install: {}",
+        if changed > 0 { "ok" } else { "up-to-date" }
+    );
+    println!("profile: {}", report.profile.name);
+    println!("workspace: {}", report.workspace_root.display());
+    println!("manifest: {}", report.manifest_path.display());
+    println!(
+        "registry: {} ({})",
+        report.index_name,
+        report.index_root.display()
+    );
+    println!("table: {}", report.dependency_table.manifest_label());
+    println!("packages: {}", report.items.len());
+    println!("updated: {changed}");
+    println!("unchanged: {unchanged}");
+    println!("lockfile packages: {}", report.lockfile_package_count);
+
+    for item in &report.items {
+        if item.changed_manifest || verbose {
+            let status = if item.added_new_entry {
+                "added"
+            } else if item.changed_manifest {
+                "updated"
+            } else {
+                "unchanged"
+            };
+            println!(
+                "{}: {} -> {} ({status})",
+                item.package_name, item.requested_version, item.selected_version
+            );
+        }
+    }
+}
+
+fn print_registry_update_report(report: &RegistryUpdateReport, verbose: bool) {
+    let updated = report.items.iter().filter(|item| item.updated).count();
+    let unchanged = report.items.len().saturating_sub(updated);
+
+    println!("update: ok");
+    println!("workspace: {}", report.workspace_root.display());
+    println!("manifest: {}", report.manifest_path.display());
+    println!(
+        "registry: {} ({})",
+        report.index_name,
+        report.index_root.display()
+    );
+    println!("table: {}", report.dependency_table.manifest_label());
+    println!("updated: {updated}");
+    println!("unchanged: {unchanged}");
+    println!("lockfile packages: {}", report.lockfile_package_count);
+
+    for item in &report.items {
+        if item.updated || verbose {
+            let label = if item.dependency_key == item.package_name {
+                item.dependency_key.clone()
+            } else {
+                format!("{} ({})", item.dependency_key, item.package_name)
+            };
+            let previous = item.previous_version.as_deref().unwrap_or("*");
+            println!("{}: {} -> {}", label, previous, item.selected_version);
+        }
+    }
+}
+
+fn print_registry_yank_report(report: &RegistryYankReport) {
+    println!(
+        "yank: {}",
+        if report.yanked { "yanked" } else { "available" }
+    );
+    println!("package: {}@{}", report.package_name, report.version);
+    println!(
+        "registry: {} ({})",
+        report.index_name,
+        report.index_root.display()
+    );
+}
+
+fn print_environment_list_report(report: &EnvironmentListReport) {
+    println!("workspace: {}", report.workspace_root.display());
+    println!("manifest: {}", report.manifest_path.display());
+    println!("environments: {}", report.environments.len());
+    println!(
+        "default: {}",
+        report.default_environment.as_deref().unwrap_or("none")
+    );
+
+    for environment in &report.environments {
+        let default_marker =
+            if report.default_environment.as_deref() == Some(environment.name.as_str()) {
+                " [default]"
+            } else {
+                ""
+            };
+        println!(
+            "{}{} | compiler={} | sdk={} | target={} | backend={} | profiles={} | packages={}",
+            environment.name,
+            default_marker,
+            environment.compiler,
+            environment.sdk.as_deref().unwrap_or("none"),
+            environment.target.as_deref().unwrap_or("none"),
+            environment
+                .preferred_backend
+                .map(|backend| format!("{backend:?}").to_lowercase())
+                .unwrap_or_else(|| "none".to_string()),
+            if environment.profiles.is_empty() {
+                "none".to_string()
+            } else {
+                environment.profiles.join(", ")
+            },
+            environment.packages.len()
+        );
+    }
+}
+
+fn print_environment_inspect_report(report: &EnvironmentInspectReport) {
+    println!("workspace: {}", report.workspace_root.display());
+    println!("manifest: {}", report.manifest_path.display());
+    println!("environment: {}", report.environment.name);
+    println!(
+        "selected by: {}",
+        if report.selected_by_default {
+            "implicit default rules"
+        } else {
+            "explicit request"
+        }
+    );
+    println!("compiler: {}", report.environment.compiler);
+    println!(
+        "sdk: {}",
+        report.environment.sdk.as_deref().unwrap_or("none")
+    );
+    println!(
+        "target: {}",
+        report.environment.target.as_deref().unwrap_or("none")
+    );
+    println!(
+        "runtime abi: {}",
+        report
+            .environment
+            .runtime_abi
+            .map(|abi| abi.to_string())
+            .unwrap_or_else(|| "none".to_string())
+    );
+    println!(
+        "backend: {}",
+        report
+            .environment
+            .preferred_backend
+            .map(|backend| format!("{backend:?}").to_lowercase())
+            .unwrap_or_else(|| "none".to_string())
+    );
+    println!(
+        "profiles: {}",
+        if report.environment.profiles.is_empty() {
+            "none".to_string()
+        } else {
+            report.environment.profiles.join(", ")
+        }
+    );
+    println!("packages: {}", report.environment.packages.len());
+    for package in &report.environment.packages {
+        println!("  {package}");
+    }
+}
 
 struct DaemonWorkspaceTarget {
     root: PathBuf,
@@ -2767,7 +5136,7 @@ fn run_source_file(
 
     // Fallback: try the multi-file warm index
     if let Some(warm_state) = load_daemon_warm_state_for_file(file, verbose) {
-        if warm_state.mir.is_some() {
+        if warm_state_supports_runnable_reuse(&warm_state) {
             return run_source_file_with_optional_warm_state(
                 file,
                 args,
@@ -2777,6 +5146,11 @@ fn run_source_file(
                 verbose,
                 features,
                 Some(&warm_state),
+            );
+        } else if verbose && warm_state.mir.is_some() {
+            eprintln!(
+                "[agamc] warm state for `{}` is incomplete for runnable reuse; falling back to local compilation",
+                file.display()
             );
         }
     }
@@ -2804,6 +5178,17 @@ fn warm_state_source_features<'a>(
         .source_features
         .as_ref()
         .ok_or_else(|| format!("warm source features missing for `{}`", file.display()))
+}
+
+fn source_features_from_call_cache(call_cache: CallCacheSelection) -> SourceFeatureFlags {
+    SourceFeatureFlags {
+        call_cache,
+        experimental_usages: Vec::new(),
+    }
+}
+
+fn warm_state_supports_runnable_reuse(warm_state: &WarmState) -> bool {
+    warm_state.mir.is_some() && warm_state.source_features.is_some()
 }
 
 fn warm_state_module<'a>(
@@ -3078,6 +5463,7 @@ fn dev_daemon_status_message(root: &Path) -> Result<String, String> {
 
 fn run_dev_workflow(
     path: Option<PathBuf>,
+    environment: Option<EnvironmentInspectReport>,
     backend: Backend,
     opt_level: u8,
     fix: bool,
@@ -3090,7 +5476,16 @@ fn run_dev_workflow(
     let cache = agam_runtime::cache::CacheStore::for_path(&workspace.root)?;
     let cache_status = cache.status(3)?;
     let native_llvm = resolve_native_llvm_command();
-    let resolved_backend = resolve_backend(backend, !no_run);
+    let requested_target = environment
+        .as_ref()
+        .and_then(|report| report.environment.target.clone());
+    let requested_backend = requested_backend_for_command(
+        backend,
+        environment.as_ref(),
+        true,
+        requested_target.as_deref(),
+    );
+    let resolved_backend = resolve_backend(requested_backend, !no_run);
 
     // Resolve or refresh the lockfile for manifested workspaces.
     let lockfile = try_lockfile_refresh(&session, verbose)?;
@@ -3104,6 +5499,21 @@ fn run_dev_workflow(
     }
     println!("project: {}", workspace.project_name);
     println!("entry: {}", workspace.entry_file.display());
+    if let Some(environment) = environment.as_ref() {
+        println!("environment: {}", environment_selection_label(environment));
+        println!(
+            "environment target: {}",
+            environment.environment.target.as_deref().unwrap_or("host")
+        );
+        println!(
+            "environment backend: {}",
+            environment
+                .environment
+                .preferred_backend
+                .map(runtime_backend_label)
+                .unwrap_or("auto")
+        );
+    }
     println!("sources: {}", workspace.source_files.len());
     println!("tests: {}", workspace.test_files.len());
     if let Some(ref lf) = lockfile {
@@ -3231,7 +5641,7 @@ fn run_dev_workflow(
     }
 
     let tuning = ReleaseTuning {
-        target: None,
+        target: requested_target,
         native_cpu: true,
         lto: None,
         pgo_generate: None,
@@ -3295,15 +5705,11 @@ fn now_unix_ms() -> u128 {
 }
 
 fn daemon_status_path(root: &Path) -> PathBuf {
-    root.join(".agam_cache")
-        .join("daemon")
-        .join("status.json")
+    root.join(".agam_cache").join("daemon").join("status.json")
 }
 
 fn daemon_pid_path(root: &Path) -> PathBuf {
-    root.join(".agam_cache")
-        .join("daemon")
-        .join("daemon.pid")
+    root.join(".agam_cache").join("daemon").join("daemon.pid")
 }
 
 fn daemon_shutdown_path(root: &Path) -> PathBuf {
@@ -3313,9 +5719,7 @@ fn daemon_shutdown_path(root: &Path) -> PathBuf {
 }
 
 fn daemon_port_path(root: &Path) -> PathBuf {
-    root.join(".agam_cache")
-        .join("daemon")
-        .join("daemon.port")
+    root.join(".agam_cache").join("daemon").join("daemon.port")
 }
 
 fn ensure_daemon_status_dir(root: &Path) -> Result<PathBuf, String> {
@@ -3720,7 +6124,14 @@ fn prewarm_daemon_entry_artifacts(
             }
         };
 
-        match write_mir_artifact(&artifact_path, mir) {
+        match write_warm_artifact(
+            &artifact_path,
+            mir,
+            warm_state
+                .source_features
+                .as_ref()
+                .map(|features| &features.call_cache),
+        ) {
             Ok(()) => {
                 warm_index.files.insert(
                     file_snapshot.path.display().to_string(),
@@ -3746,7 +6157,10 @@ fn prewarm_daemon_entry_artifacts(
 
     // Write the warm index
     if let Err(error) = agam_pkg::write_daemon_warm_index(root, &warm_index) {
-        record_prewarm_error(&mut summary, format!("failed to write daemon warm index: {error}"));
+        record_prewarm_error(
+            &mut summary,
+            format!("failed to write daemon warm index: {error}"),
+        );
     } else if verbose {
         eprintln!(
             "[agamc] daemon warm index: {}/{} file(s) indexed",
@@ -3946,7 +6360,11 @@ fn daemon_prewarm_mir_artifact_path(root: &Path, file: &Path) -> Result<PathBuf,
     Ok(dir.join(format!("{stem}_mir_{hash}.json")))
 }
 
-fn write_mir_artifact(path: &Path, mir: &agam_mir::ir::MirModule) -> Result<(), String> {
+fn write_warm_artifact(
+    path: &Path,
+    mir: &agam_mir::ir::MirModule,
+    call_cache: Option<&CallCacheSelection>,
+) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             format!(
@@ -3955,17 +6373,32 @@ fn write_mir_artifact(path: &Path, mir: &agam_mir::ir::MirModule) -> Result<(), 
             )
         })?;
     }
-    let json = serde_json::to_vec(mir)
-        .map_err(|e| format!("failed to serialize MIR artifact: {e}"))?;
+    let json = serde_json::to_vec(&DaemonWarmArtifact { mir, call_cache })
+        .map_err(|e| format!("failed to serialize daemon warm artifact: {e}"))?;
     std::fs::write(path, json)
         .map_err(|e| format!("failed to write MIR artifact `{}`: {e}", path.display()))
 }
 
-fn read_mir_artifact(path: &Path) -> Result<agam_mir::ir::MirModule, String> {
+fn read_warm_artifact(path: &Path) -> Result<WarmState, String> {
     let json = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read MIR artifact `{}`: {e}", path.display()))?;
-    serde_json::from_str(&json)
-        .map_err(|e| format!("failed to parse MIR artifact `{}`: {e}", path.display()))
+    if let Ok(artifact) = serde_json::from_str::<DaemonWarmArtifactOwned>(&json) {
+        return Ok(WarmState {
+            source_features: artifact.call_cache.map(source_features_from_call_cache),
+            module: None,
+            hir: None,
+            mir: Some(artifact.mir),
+        });
+    }
+
+    let mir = serde_json::from_str(&json)
+        .map_err(|e| format!("failed to parse MIR artifact `{}`: {e}", path.display()))?;
+    Ok(WarmState {
+        source_features: None,
+        module: None,
+        hir: None,
+        mir: Some(mir),
+    })
 }
 
 /// Attempt to load daemon-prewarmed warm state for any file via the IPC or warm index.
@@ -3973,29 +6406,44 @@ fn load_daemon_warm_state_for_file(path: &Path, verbose: bool) -> Option<WarmSta
     let workspace = match resolve_daemon_workspace_target(Some(path.to_path_buf())) {
         Ok(workspace) => workspace,
         Err(error) => {
-            if verbose { eprintln!("[agamc] warm state lookup skipped: {}", error); }
+            if verbose {
+                eprintln!("[agamc] warm state lookup skipped: {}", error);
+            }
             return None;
         }
     };
-    
+
     let source_bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) => {
-            if verbose { eprintln!("[agamc] warm state hash check failed for `{}`: {}", path.display(), error); }
+            if verbose {
+                eprintln!(
+                    "[agamc] warm state hash check failed for `{}`: {}",
+                    path.display(),
+                    error
+                );
+            }
             return None;
         }
     };
     let current_hash = agam_runtime::cache::hash_bytes(&source_bytes);
-    
+
     // 1. Try IPC query first
     let req = DaemonIpcRequest::GetWarmMir {
         file_path: path.display().to_string(),
         content_hash: current_hash.clone(),
     };
-    
-    if let Ok(DaemonIpcResponse::WarmMir { found, mir_json }) = send_daemon_ipc_request(&workspace.root, req) {
+
+    if let Ok(DaemonIpcResponse::WarmMir {
+        found,
+        mir_json,
+        call_cache_json,
+    }) = send_daemon_ipc_request(&workspace.root, req)
+    {
         if found {
-            if verbose { eprintln!("[agamc] IPC warm cache hit for `{}`", path.display()); }
+            if verbose {
+                eprintln!("[agamc] IPC warm cache hit for `{}`", path.display());
+            }
             let mut warm = WarmState {
                 source_features: None,
                 module: None,
@@ -4009,38 +6457,68 @@ fn load_daemon_warm_state_for_file(path: &Path, verbose: bool) -> Option<WarmSta
                     eprintln!("[agamc] IPC warm cache parse err for `{}`", path.display());
                 }
             }
+            if let Some(json) = call_cache_json {
+                if let Ok(call_cache) = serde_json::from_str(&json) {
+                    warm.source_features = Some(source_features_from_call_cache(call_cache));
+                } else if verbose {
+                    eprintln!(
+                        "[agamc] IPC warm cache call-cache parse err for `{}`",
+                        path.display()
+                    );
+                }
+            }
             return Some(warm);
         } else {
-            if verbose { eprintln!("[agamc] IPC warm cache miss for `{}`", path.display()); }
+            if verbose {
+                eprintln!("[agamc] IPC warm cache miss for `{}`", path.display());
+            }
             return None; // Daemon definitively doesn't have it matching the hash
         }
     }
-    
+
     // 2. Fallback to Disk Index
     let index = match agam_pkg::read_daemon_warm_index(&workspace.root) {
         Ok(Some(index)) => index,
         _ => return None,
     };
-    
+
     let key = path.display().to_string();
     let entry = match index.files.get(&key) {
         Some(e) => e,
         None => return None,
     };
-    
+
     if current_hash != entry.content_hash {
-        if verbose { eprintln!("[agamc] disk warm index stale for `{}`", path.display()); }
+        if verbose {
+            eprintln!("[agamc] disk warm index stale for `{}`", path.display());
+        }
         return None;
     }
-    
-    if entry.warm_level == agam_pkg::DaemonWarmLevel::Checked || entry.warm_level == agam_pkg::DaemonWarmLevel::Lowered {
-        let mir = entry.artifact_path.as_deref().and_then(|artifact_path| {
-            let artifact = Path::new(artifact_path);
-            if !artifact.is_file() { return None; }
-            read_mir_artifact(artifact).ok()
+
+    if entry.warm_level == agam_pkg::DaemonWarmLevel::Checked {
+        if verbose {
+            eprintln!("[agamc] Reused checked warm state for `{}`", path.display());
+        }
+        return Some(WarmState {
+            source_features: None,
+            module: None,
+            hir: None,
+            mir: None,
         });
-        if verbose { eprintln!("[agamc] Reused disk warm state for `{}`", path.display()); }
-        return Some(WarmState { source_features: None, module: None, hir: None, mir });
+    }
+
+    if entry.warm_level == agam_pkg::DaemonWarmLevel::Lowered {
+        let warm_state = entry.artifact_path.as_deref().and_then(|artifact_path| {
+            let artifact = Path::new(artifact_path);
+            if !artifact.is_file() {
+                return None;
+            }
+            read_warm_artifact(artifact).ok()
+        });
+        if verbose && warm_state.is_some() {
+            eprintln!("[agamc] Reused disk warm state for `{}`", path.display());
+        }
+        return warm_state;
     }
     None
 }
@@ -4278,22 +6756,29 @@ fn run_daemon_cycle(
 }
 fn spawn_ipc_server(
     workspace_root: &Path,
-) -> Result<std::sync::mpsc::Receiver<(DaemonIpcRequest, std::sync::mpsc::Sender<DaemonIpcResponse>)>, String> {
+) -> Result<
+    std::sync::mpsc::Receiver<(DaemonIpcRequest, std::sync::mpsc::Sender<DaemonIpcResponse>)>,
+    String,
+> {
     use std::io::Read;
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| format!("failed to bind IPC listener: {e}"))?;
-    
+
     let port_path = daemon_port_path(workspace_root);
     if let Some(parent) = port_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let port = listener.local_addr()
-        .map_err(|e| format!("failed to get IPC port: {e}"))?.port();
-    
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("failed to get IPC port: {e}"))?
+        .port();
+
     std::fs::write(&port_path, format!("{port}"))
         .map_err(|e| format!("failed to write port file: {e}"))?;
 
-    let (req_tx, req_rx) = std::sync::mpsc::channel::<(DaemonIpcRequest, std::sync::mpsc::Sender<DaemonIpcResponse>)>();
+    let (req_tx, req_rx) =
+        std::sync::mpsc::channel::<(DaemonIpcRequest, std::sync::mpsc::Sender<DaemonIpcResponse>)>(
+        );
 
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -4321,24 +6806,25 @@ fn send_daemon_ipc_request(
     req: DaemonIpcRequest,
 ) -> Result<DaemonIpcResponse, String> {
     let port_path = daemon_port_path(root);
-    let port_str = std::fs::read_to_string(&port_path)
-        .map_err(|e| format!("no port file: {e}"))?;
-    let port: u16 = port_str.trim().parse().map_err(|e| format!("invalid port: {e}"))?;
-    
+    let port_str = std::fs::read_to_string(&port_path).map_err(|e| format!("no port file: {e}"))?;
+    let port: u16 = port_str
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid port: {e}"))?;
+
     let mut stream = std::net::TcpStream::connect(format!("127.0.0.1:{port}"))
         .map_err(|e| format!("failed to connect to IPC socket: {e}"))?;
-    
-    serde_json::to_writer(&stream, &req)
-        .map_err(|e| format!("failed to write JSON: {e}"))?;
+
+    serde_json::to_writer(&stream, &req).map_err(|e| format!("failed to write JSON: {e}"))?;
     stream.shutdown(std::net::Shutdown::Write).ok();
-    
+
     use std::io::Read;
     let mut resp_payload = String::new();
-    stream.read_to_string(&mut resp_payload)
+    stream
+        .read_to_string(&mut resp_payload)
         .map_err(|e| format!("failed to read IPC response: {e}"))?;
-    
-    serde_json::from_str(&resp_payload)
-        .map_err(|e| format!("failed to parse IPC response: {e}"))
+
+    serde_json::from_str(&resp_payload).map_err(|e| format!("failed to parse IPC response: {e}"))
 }
 
 fn run_daemon_foreground(
@@ -4488,7 +6974,7 @@ fn run_daemon_foreground(
 
         let timeout = std::time::Duration::from_millis(poll_ms.max(100));
         let sleep_start = std::time::Instant::now();
-        
+
         while sleep_start.elapsed() < timeout {
             let remain = timeout.saturating_sub(sleep_start.elapsed());
             if remain.is_zero() {
@@ -4508,19 +6994,32 @@ fn run_daemon_foreground(
                                     DaemonIpcResponse::Error("status unknown".into())
                                 }
                             }
-                            DaemonIpcRequest::GetWarmMir { file_path, content_hash } => {
+                            DaemonIpcRequest::GetWarmMir {
+                                file_path,
+                                content_hash,
+                            } => {
                                 let pb = PathBuf::from(&file_path);
                                 let mut found = false;
                                 let mut mir_json = None;
+                                let mut call_cache_json = None;
                                 if let Some(versions) = session.cache.get(&pb) {
                                     if let Some(state) = versions.get(&content_hash) {
                                         found = true;
                                         if let Some(mir) = &state.mir {
                                             mir_json = serde_json::to_string(mir).ok();
                                         }
+                                        if let Some(source_features) = &state.source_features {
+                                            call_cache_json =
+                                                serde_json::to_string(&source_features.call_cache)
+                                                    .ok();
+                                        }
                                     }
                                 }
-                                DaemonIpcResponse::WarmMir { found, mir_json }
+                                DaemonIpcResponse::WarmMir {
+                                    found,
+                                    mir_json,
+                                    call_cache_json,
+                                }
                             }
                             DaemonIpcRequest::Stop => {
                                 let _ = resp_tx.send(DaemonIpcResponse::Error("stopping".into()));
@@ -4539,7 +7038,7 @@ fn run_daemon_foreground(
                 break;
             }
         }
-        
+
         first_cycle = false;
     }
 }
@@ -4574,7 +7073,8 @@ fn start_daemon_background(
     }
 
     // Find our own executable
-    let exe = std::env::current_exe().map_err(|e| format!("failed to find agamc executable: {e}"))?;
+    let exe =
+        std::env::current_exe().map_err(|e| format!("failed to find agamc executable: {e}"))?;
 
     let mut cmd = std::process::Command::new(&exe);
     cmd.arg("daemon");
@@ -4599,7 +7099,9 @@ fn start_daemon_background(
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
 
-    let child = cmd.spawn().map_err(|e| format!("failed to spawn background daemon: {e}"))?;
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("failed to spawn background daemon: {e}"))?;
     let child_pid = child.id();
 
     // Ensure daemon directory exists and write PID
@@ -4633,7 +7135,9 @@ fn stop_daemon_background(path: Option<PathBuf>, verbose: bool) -> Result<(), St
 
     // First try IPC stop for immediate clean shutdown
     let mut ipc_success = false;
-    if let Ok(DaemonIpcResponse::Error(_)) = send_daemon_ipc_request(&workspace.root, DaemonIpcRequest::Stop) {
+    if let Ok(DaemonIpcResponse::Error(_)) =
+        send_daemon_ipc_request(&workspace.root, DaemonIpcRequest::Stop)
+    {
         ipc_success = true;
     }
 
@@ -5016,8 +7520,14 @@ fn compile_dev_source_file(
         }
         // Fallback: try the warm index (only if it includes MIR)
         if let Some(warm_state) = load_daemon_warm_state_for_file(path, verbose) {
-            if warm_state.mir.is_some() {
+            if warm_state_supports_runnable_reuse(&warm_state) {
                 return Ok(Some(warm_state));
+            }
+            if verbose && warm_state.mir.is_some() {
+                eprintln!(
+                    "[agamc] warm state for `{}` is incomplete for runnable reuse; rebuilding locally",
+                    path.display()
+                );
             }
         }
         Ok(Some(compile_file_with_warm_state(path, verbose)?))
@@ -5160,8 +7670,13 @@ fn warm_workspace_session(
         } else {
             // Parallel warm using scoped threads with work-stealing
             let next_index = AtomicUsize::new(0);
-            let results: Mutex<Vec<Option<(agam_pkg::WorkspaceFileSnapshot, Result<WarmState, String>)>>> =
-                Mutex::new(std::iter::repeat_with(|| None).take(files_to_warm.len()).collect());
+            let results: Mutex<
+                Vec<Option<(agam_pkg::WorkspaceFileSnapshot, Result<WarmState, String>)>>,
+            > = Mutex::new(
+                std::iter::repeat_with(|| None)
+                    .take(files_to_warm.len())
+                    .collect(),
+            );
             let worker_count = parallelism.max(1).min(files_to_warm.len());
 
             std::thread::scope(|scope| {
@@ -5366,12 +7881,1728 @@ fn print_package_summary(package: &agam_pkg::PortablePackage) {
     );
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplSession {
+    request: HeadlessExecutionRequest,
+}
+
+impl Default for ReplSession {
+    fn default() -> Self {
+        Self {
+            request: HeadlessExecutionRequest {
+                filename: "repl.agam".into(),
+                ..HeadlessExecutionRequest::default()
+            },
+        }
+    }
+}
+
+impl ReplSession {
+    fn append_line(&mut self, line: &str) {
+        self.request.source.push_str(line);
+        self.request.source.push('\n');
+    }
+
+    fn replace_source(&mut self, filename: String, source: String) {
+        self.request.filename = filename;
+        self.request.source = source;
+    }
+
+    fn clear(&mut self) {
+        self.request.source.clear();
+    }
+}
+
+#[derive(Debug)]
+struct ReplExecutionCache {
+    root: PathBuf,
+    manifest_path: PathBuf,
+    source_path: PathBuf,
+    filename: String,
+    source_hash: Option<String>,
+    daemon_session: DaemonSession,
+}
+
+impl ReplExecutionCache {
+    fn new(filename: &str) -> Result<Self, String> {
+        let root = create_headless_temp_dir()?;
+        let filename = sanitize_headless_filename(filename);
+        let manifest_path = agam_pkg::default_manifest_path(&root);
+        write_repl_workspace_manifest(&manifest_path, &filename)?;
+        let source_path = repl_workspace_entry_path(&root, &filename);
+        Ok(Self {
+            root,
+            manifest_path,
+            source_path,
+            filename,
+            source_hash: None,
+            daemon_session: DaemonSession::default(),
+        })
+    }
+
+    fn source_path(&self) -> &PathBuf {
+        &self.source_path
+    }
+
+    fn materialize_request(&mut self, request: &HeadlessExecutionRequest) -> Result<(), String> {
+        let filename = sanitize_headless_filename(&request.filename);
+        if filename != self.filename {
+            let previous_source_path = self.source_path.clone();
+            self.filename = filename.clone();
+            self.source_path = repl_workspace_entry_path(&self.root, &filename);
+            write_repl_workspace_manifest(&self.manifest_path, &filename)?;
+            if previous_source_path.is_file() && previous_source_path != self.source_path {
+                std::fs::remove_file(&previous_source_path).map_err(|error| {
+                    format!(
+                        "failed to remove stale REPL source `{}`: {error}",
+                        previous_source_path.display()
+                    )
+                })?;
+            }
+            self.source_hash = None;
+        }
+
+        let source_hash = agam_runtime::cache::hash_bytes(request.source.as_bytes());
+        if self.source_hash.as_deref() == Some(source_hash.as_str()) && self.source_path.is_file() {
+            return Ok(());
+        }
+
+        if let Some(parent) = self.source_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create REPL temp dir `{}`: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+        std::fs::write(&self.source_path, &request.source).map_err(|error| {
+            format!(
+                "failed to write REPL source `{}`: {error}",
+                self.source_path.display()
+            )
+        })?;
+        self.source_hash = Some(source_hash);
+        Ok(())
+    }
+
+    fn ensure_materialized_warm_state(&mut self, verbose: bool) -> Result<&WarmState, String> {
+        let snapshot = agam_pkg::snapshot_workspace(Some(self.root.clone()))?;
+        let (_, diff_summary) =
+            refresh_daemon_session(&mut self.daemon_session, snapshot.clone(), verbose)?;
+        if verbose && !daemon_diff_has_changes(&diff_summary) {
+            eprintln!(
+                "[agamc] Reused REPL daemon warm state for `{}`",
+                self.source_path.display()
+            );
+        }
+        let file = daemon_entry_snapshot(&snapshot)
+            .filter(|file| file.path == self.source_path)
+            .ok_or_else(|| {
+                format!(
+                    "internal error: REPL snapshot entry missing for `{}`",
+                    self.source_path.display()
+                )
+            })?;
+        warm_state_for_snapshot_file(&self.daemon_session, file).ok_or_else(|| {
+            format!(
+                "internal error: REPL warm state missing for `{}`",
+                self.source_path.display()
+            )
+        })
+    }
+}
+
+impl Drop for ReplExecutionCache {
+    fn drop(&mut self) {
+        cleanup_headless_temp_dir(&self.root, false);
+    }
+}
+
+fn repl_workspace_entry_relative_path(filename: &str) -> String {
+    format!("src/{filename}")
+}
+
+fn repl_workspace_entry_path(root: &Path, filename: &str) -> PathBuf {
+    root.join("src").join(filename)
+}
+
+fn write_repl_workspace_manifest(manifest_path: &Path, filename: &str) -> Result<(), String> {
+    let mut manifest = agam_pkg::scaffold_workspace_manifest("repl-session");
+    manifest.project.entry = Some(repl_workspace_entry_relative_path(filename));
+    agam_pkg::write_workspace_manifest_to_path(manifest_path, &manifest)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReplCommandKind {
+    Help,
+    Quit,
+    Reset,
+    Show,
+    Run,
+    Load(PathBuf),
+    Backend(HeadlessExecutionBackend),
+    Opt(u8),
+    Fast(bool),
+}
+
+fn run_repl_shell(verbose: bool) -> Result<i32, String> {
+    let mut session = ReplSession::default();
+    let mut execution_cache = ReplExecutionCache::new(&session.request.filename)?;
+    let stdin = std::io::stdin();
+    let mut handle = stdin.lock();
+
+    println!("Agam REPL v0.1.0");
+    println!("Type :help for commands, :quit to exit.");
+
+    loop {
+        print!("agam> ");
+        std::io::stdout()
+            .flush()
+            .map_err(|error| format!("failed to flush REPL prompt: {error}"))?;
+
+        let mut line = String::new();
+        let read = handle
+            .read_line(&mut line)
+            .map_err(|error| format!("failed to read REPL input: {error}"))?;
+        if read == 0 {
+            println!();
+            break;
+        }
+
+        let line = line.trim_end_matches(['\r', '\n']);
+        match parse_repl_command(line)? {
+            Some(ReplCommandKind::Help) => print_repl_help(),
+            Some(ReplCommandKind::Quit) => break,
+            Some(ReplCommandKind::Reset) => {
+                session.clear();
+                println!("session cleared");
+            }
+            Some(ReplCommandKind::Show) => {
+                if session.request.source.is_empty() {
+                    println!("(empty)");
+                } else {
+                    print!("{}", session.request.source);
+                    if !session.request.source.ends_with('\n') {
+                        println!();
+                    }
+                }
+            }
+            Some(ReplCommandKind::Run) => {
+                if session.request.source.trim().is_empty() {
+                    eprintln!("buffer is empty; add Agam source before `:run`");
+                    continue;
+                }
+                match execute_repl_request(&session.request, &mut execution_cache, verbose) {
+                    Ok(code) => {
+                        if code != 0 {
+                            eprintln!("[agamc] exit code {code}");
+                        }
+                    }
+                    Err(error) => eprintln!("[agamc] {error}"),
+                }
+            }
+            Some(ReplCommandKind::Load(path)) => {
+                let source = std::fs::read_to_string(&path).map_err(|error| {
+                    format!("failed to read `{}` for `:load`: {error}", path.display())
+                })?;
+                let filename = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| sanitize_headless_filename(name))
+                    .unwrap_or_else(|| "repl.agam".into());
+                session.replace_source(filename, source);
+                println!("loaded {}", path.display());
+            }
+            Some(ReplCommandKind::Backend(backend)) => {
+                session.request.backend = backend;
+                println!(
+                    "backend = {}",
+                    render_headless_backend_label(session.request.backend)
+                );
+            }
+            Some(ReplCommandKind::Opt(opt_level)) => {
+                session.request.opt_level = opt_level;
+                println!("opt_level = {opt_level}");
+            }
+            Some(ReplCommandKind::Fast(fast)) => {
+                session.request.fast = fast;
+                println!("fast = {}", if fast { "on" } else { "off" });
+            }
+            None => session.append_line(line),
+        }
+    }
+
+    Ok(0)
+}
+
+fn print_repl_help() {
+    println!("Commands:");
+    println!("  :help                 show this help");
+    println!("  :run                  execute the buffered Agam source");
+    println!("  :show                 print the current source buffer");
+    println!("  :reset                clear the current source buffer");
+    println!("  :load <path>          replace the buffer with a file");
+    println!("  :backend <name>       set backend to auto, c, llvm, or jit");
+    println!("  :opt <0-3>            set optimization level used for non-JIT runs");
+    println!("  :fast <on|off>        toggle fast-mode run requests");
+    println!("  :quit                 exit the REPL");
+    println!("Notes:");
+    println!("  Free-form lines are appended to the current buffer.");
+    println!("  `:run` expects the buffer to be a valid Agam source file.");
+}
+
+fn parse_repl_command(input: &str) -> Result<Option<ReplCommandKind>, String> {
+    let trimmed = input.trim();
+    if !trimmed.starts_with(':') {
+        return Ok(None);
+    }
+
+    let body = trimmed[1..].trim();
+    if body.is_empty() {
+        return Err("empty repl command".into());
+    }
+
+    let command = body
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| "empty repl command".to_string())?;
+    let tail = body[command.len()..].trim();
+
+    match command {
+        "help" => Ok(Some(ReplCommandKind::Help)),
+        "q" | "quit" | "exit" => Ok(Some(ReplCommandKind::Quit)),
+        "reset" | "clear" => Ok(Some(ReplCommandKind::Reset)),
+        "show" => Ok(Some(ReplCommandKind::Show)),
+        "run" => Ok(Some(ReplCommandKind::Run)),
+        "load" => {
+            if tail.is_empty() {
+                return Err("`:load` requires a path".into());
+            }
+            Ok(Some(ReplCommandKind::Load(PathBuf::from(tail))))
+        }
+        "backend" => Ok(Some(ReplCommandKind::Backend(
+            parse_headless_backend_label(tail)?,
+        ))),
+        "opt" => {
+            if tail.is_empty() {
+                return Err("`:opt` requires a value from 0 to 3".into());
+            }
+            let opt_level = tail
+                .parse::<u8>()
+                .map_err(|_| format!("invalid optimization level `{tail}`"))?;
+            if opt_level > 3 {
+                return Err(format!("optimization level `{opt_level}` must be 0..=3"));
+            }
+            Ok(Some(ReplCommandKind::Opt(opt_level)))
+        }
+        "fast" => Ok(Some(ReplCommandKind::Fast(parse_repl_fast_flag(tail)?))),
+        _ => Err(format!("unknown repl command `:{command}`")),
+    }
+}
+
+fn parse_repl_fast_flag(value: &str) -> Result<bool, String> {
+    match value {
+        "on" | "true" | "1" => Ok(true),
+        "off" | "false" | "0" => Ok(false),
+        _ => Err("`:fast` expects `on` or `off`".into()),
+    }
+}
+
+fn run_exec_tool(
+    json: bool,
+    pretty: bool,
+    file: Option<PathBuf>,
+    source: Option<String>,
+    filename: Option<String>,
+    backend: Backend,
+    opt_level: u8,
+    fast: bool,
+    args: Vec<String>,
+    verbose: bool,
+    sandbox_level: String,
+    deny_network: bool,
+    deny_process_spawn: bool,
+) -> Result<i32, String> {
+    if json {
+        return run_headless_json_request(pretty, verbose);
+    }
+
+    let request = build_exec_request(
+        file,
+        source,
+        filename,
+        backend,
+        opt_level,
+        fast,
+        args,
+        sandbox_level,
+        deny_network,
+        deny_process_spawn,
+    )?;
+
+    // Activate the sandbox guard around execution based on the policy sandbox_level.
+    let _sandbox_guard = if request.policy.sandbox_level != "none" {
+        let sandbox_policy = agam_runtime::sandbox::SandboxPolicy {
+            deny_network: request.policy.deny_network,
+            deny_process_spawn: request.policy.deny_process_spawn,
+            ..agam_runtime::sandbox::SandboxPolicy::default()
+        };
+        match agam_runtime::sandbox::SandboxGuard::acquire(&sandbox_policy) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                if verbose {
+                    eprintln!("[agamc] sandbox activation failed: {error}");
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let response = execute_headless_request(&request, verbose);
+    let exit_code = headless_response_exit_code(&response);
+    write_headless_response(&response, pretty)?;
+    Ok(exit_code)
+}
+
+fn build_exec_request(
+    file: Option<PathBuf>,
+    source: Option<String>,
+    filename: Option<String>,
+    backend: Backend,
+    opt_level: u8,
+    fast: bool,
+    args: Vec<String>,
+    sandbox_level: String,
+    deny_network: bool,
+    deny_process_spawn: bool,
+) -> Result<HeadlessExecutionRequest, String> {
+    let (source, request_filename) = if let Some(source) = source {
+        (
+            source,
+            filename.unwrap_or_else(agam_notebook::default_headless_filename),
+        )
+    } else if let Some(file) = file {
+        let source = std::fs::read_to_string(&file)
+            .map_err(|error| format!("failed to read Agam source `{}`: {error}", file.display()))?;
+        let request_filename = filename.unwrap_or_else(|| {
+            file.file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_string)
+                .unwrap_or_else(agam_notebook::default_headless_filename)
+        });
+        (source, request_filename)
+    } else {
+        let mut source = String::new();
+        std::io::stdin()
+            .read_to_string(&mut source)
+            .map_err(|error| format!("failed to read Agam source from stdin: {error}"))?;
+        (
+            source,
+            filename.unwrap_or_else(agam_notebook::default_headless_filename),
+        )
+    };
+    let mut policy = HeadlessExecutionPolicy::default();
+    if !matches!(backend, Backend::Jit) {
+        policy.allow_native_backends = true;
+    }
+    policy.sandbox_level = sandbox_level;
+    policy.deny_network = deny_network;
+    policy.deny_process_spawn = deny_process_spawn;
+
+    Ok(HeadlessExecutionRequest {
+        source,
+        filename: request_filename,
+        args,
+        backend: backend_to_headless_backend(backend),
+        opt_level,
+        fast,
+        policy,
+    })
+}
+
+fn run_headless_json_request(pretty: bool, verbose: bool) -> Result<i32, String> {
+    let mut payload = String::new();
+    std::io::stdin()
+        .read_to_string(&mut payload)
+        .map_err(|error| format!("failed to read JSON request from stdin: {error}"))?;
+
+    let request = match serde_json::from_str::<HeadlessExecutionRequest>(&payload) {
+        Ok(request) => request,
+        Err(error) => {
+            let response = HeadlessExecutionResponse::execution_error(
+                &HeadlessExecutionRequest::default(),
+                format!("failed to parse JSON request: {error}"),
+                String::new(),
+            );
+            write_headless_response(&response, pretty)?;
+            return Ok(1);
+        }
+    };
+
+    let response = execute_headless_request(&request, verbose);
+    let exit_code = headless_response_exit_code(&response);
+    write_headless_response(&response, pretty)?;
+    Ok(exit_code)
+}
+
+fn write_headless_response(
+    response: &HeadlessExecutionResponse,
+    pretty: bool,
+) -> Result<(), String> {
+    if pretty {
+        serde_json::to_writer_pretty(std::io::stdout().lock(), response)
+            .map_err(|error| format!("failed to serialize JSON response: {error}"))?;
+    } else {
+        serde_json::to_writer(std::io::stdout().lock(), response)
+            .map_err(|error| format!("failed to serialize JSON response: {error}"))?;
+    }
+    println!();
+    Ok(())
+}
+
+fn headless_response_exit_code(response: &HeadlessExecutionResponse) -> i32 {
+    if let Some(code) = response.exit_code {
+        code
+    } else if response.success {
+        0
+    } else {
+        1
+    }
+}
+
+fn backend_to_headless_backend(backend: Backend) -> HeadlessExecutionBackend {
+    match backend {
+        Backend::Auto => HeadlessExecutionBackend::Auto,
+        Backend::C => HeadlessExecutionBackend::C,
+        Backend::Llvm => HeadlessExecutionBackend::Llvm,
+        Backend::Jit => HeadlessExecutionBackend::Jit,
+    }
+}
+
+fn render_headless_parse_errors(errors: &[agam_parser::ParseError]) -> String {
+    let mut stderr = String::new();
+    for error in errors {
+        stderr.push_str("\x1b[1;31merror\x1b[0m: ");
+        stderr.push_str(&error.message);
+        stderr.push('\n');
+    }
+    stderr
+}
+
+fn build_headless_warm_state(
+    request: &HeadlessExecutionRequest,
+    verbose: bool,
+) -> Result<(WarmState, String), String> {
+    let source = request.source.clone();
+    let source_file = SourceFile::new(SourceId(0), request.filename.clone(), source.clone());
+    let mut parse_emitter = DiagnosticEmitter::buffered();
+    parse_emitter.add_source(source_file);
+
+    if verbose {
+        eprintln!(
+            "[agamc] Read headless source {} ({} bytes)",
+            request.filename,
+            source.len()
+        );
+    }
+
+    let tokens = agam_lexer::tokenize(&source, SourceId(0));
+    if verbose {
+        eprintln!("[agamc] Lexed {} tokens", tokens.len());
+    }
+
+    let mut source_features = source_feature_flags_from_tokens(&tokens);
+    let module = match agam_parser::parse(tokens, SourceId(0)) {
+        Ok(module) => module,
+        Err(errors) => {
+            let mut stderr = render_headless_parse_errors(&errors);
+            stderr.push_str(&parse_emitter.take_rendered_output());
+            return Err(stderr);
+        }
+    };
+
+    if verbose {
+        eprintln!(
+            "[agamc] Parsed {} top-level declarations",
+            module.declarations.len()
+        );
+    }
+
+    merge_function_call_cache_annotations(&module, &mut source_features.call_cache);
+    collect_experimental_function_features(&module, &mut source_features.experimental_usages);
+    emit_experimental_feature_warnings(&mut parse_emitter, &source_features.experimental_usages);
+
+    let mut stderr = parse_emitter.take_rendered_output();
+    let mut sema_emitter = DiagnosticEmitter::buffered();
+    sema_emitter.add_source(SourceFile::new(
+        SourceId(0),
+        request.filename.clone(),
+        source.clone(),
+    ));
+
+    let mut resolver = agam_sema::resolver::Resolver::new();
+    resolver.resolve_module(&module);
+    let resolve_error_count = resolver.errors.len();
+    if verbose {
+        eprintln!("[agamc] Name resolution: {} error(s)", resolve_error_count);
+    }
+    for error in &resolver.errors {
+        emit_resolve_error(&mut sema_emitter, error);
+    }
+    if resolve_error_count > 0 {
+        stderr.push_str(&sema_emitter.take_rendered_output());
+        return Err(stderr);
+    }
+
+    let mut checker = agam_sema::checker::TypeChecker::from_resolver(resolver);
+    checker.check_module(&module);
+    let type_error_count = checker.errors.len();
+    if verbose {
+        eprintln!("[agamc] Type checking: {} error(s)", type_error_count);
+    }
+    for error in &checker.errors {
+        emit_type_error(&mut sema_emitter, error);
+    }
+    if type_error_count > 0 {
+        stderr.push_str(&sema_emitter.take_rendered_output());
+        return Err(stderr);
+    }
+
+    stderr.push_str(&sema_emitter.take_rendered_output());
+    let (hir, mir) = lower_module_to_hir_and_optimized_mir(&module, verbose);
+    Ok((
+        WarmState {
+            source_features: Some(source_features),
+            module: Some(module),
+            hir: Some(hir),
+            mir: Some(mir),
+        },
+        stderr,
+    ))
+}
+
+fn run_with_jit_prelowered_captured(
+    args: &[String],
+    mir: &agam_mir::ir::MirModule,
+    source_features: &SourceFeatureFlags,
+    verbose: bool,
+    features: FeatureFlags,
+) -> Result<(i32, String), String> {
+    let call_cache = effective_call_cache_selection(features, source_features);
+    let jit_options = agam_jit::JitOptions {
+        call_cache: call_cache.resolved_enable_all(),
+        call_cache_only: call_cache.included_functions(),
+        call_cache_exclude: call_cache.excluded_functions(),
+        call_cache_optimize: call_cache.optimize_all,
+        call_cache_optimize_only: call_cache.optimized_functions(),
+        ..Default::default()
+    };
+
+    if verbose {
+        let analysis = agam_jit::analyze_call_cache(mir, &jit_options);
+        log_call_cache_analysis("JIT", &call_cache, &analysis);
+        eprintln!("[agamc] Executing via Cranelift JIT");
+    }
+
+    let (exit_code, stdout) = agam_jit::run_main_with_options_captured(mir, args, jit_options)?;
+
+    if call_cache.is_enabled() {
+        let stats = agam_jit::take_last_call_cache_stats();
+        if verbose {
+            if let Some(stats) = stats.as_ref() {
+                eprintln!(
+                    "[agamc] JIT call cache: {} hits / {} calls across {} cacheable function(s), {} store(s)",
+                    stats.total_hits,
+                    stats.total_calls,
+                    stats.functions.len(),
+                    stats.total_stores
+                );
+            }
+        }
+    }
+
+    Ok((exit_code, stdout))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapturedExecution {
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+}
+
+fn capture_command_output(
+    command: &mut std::process::Command,
+    program: &Path,
+) -> Result<CapturedExecution, String> {
+    let output = command
+        .output()
+        .map_err(|error| format!("failed to run {}: {}", program.display(), error))?;
+    Ok(CapturedExecution {
+        exit_code: output.status.code().unwrap_or(1),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn run_with_c_prelowered_captured(
+    path: &PathBuf,
+    args: &[String],
+    opt_level: u8,
+    tuning: &ReleaseTuning,
+    mir: &agam_mir::ir::MirModule,
+    source_features: &SourceFeatureFlags,
+    verbose: bool,
+    features: FeatureFlags,
+) -> Result<CapturedExecution, String> {
+    if !command_exists(default_c_compiler()) {
+        return Err(format!(
+            "C run requires `{}` on PATH; headless execution cannot shell through the legacy CLI bridge anymore",
+            default_c_compiler()
+        ));
+    }
+
+    let exe_path = default_native_binary_output_path(path, tuning.target.as_deref());
+    let call_cache = effective_call_cache_selection(features, source_features);
+    let outcome = build_prelowered_file(
+        path,
+        &exe_path,
+        opt_level,
+        Backend::C,
+        tuning,
+        mir,
+        &call_cache,
+        &[],
+        false,
+        verbose,
+    )?;
+    if !outcome.native_binary {
+        return Err(format!(
+            "backend {:?} emitted {} but no native executable was produced",
+            Backend::C,
+            outcome.generated_path.display()
+        ));
+    }
+
+    let mut command = std::process::Command::new(&exe_path);
+    command.args(args);
+    capture_command_output(&mut command, &exe_path)
+}
+
+fn run_with_llvm_prelowered_captured(
+    path: &PathBuf,
+    args: &[String],
+    opt_level: u8,
+    tuning: &ReleaseTuning,
+    mir: &agam_mir::ir::MirModule,
+    source_features: &SourceFeatureFlags,
+    verbose: bool,
+    features: FeatureFlags,
+) -> Result<CapturedExecution, String> {
+    let allow_dev_wsl_llvm = allow_dev_wsl_llvm();
+    let toolchain = resolve_llvm_run_toolchain();
+    if matches!(toolchain, None) {
+        if cfg!(windows) && wsl_command_exists("clang") && !allow_dev_wsl_llvm {
+            let native_hint = windows_native_llvm_install_hint().unwrap_or_else(|| {
+                format!(
+                    "install a native LLVM/Clang toolchain or set `{LLVM_CLANG_ENV}` to `clang` or `clang++`"
+                )
+            });
+            return Err(format!(
+                "LLVM run requires a native Windows clang toolchain; {native_hint}. For development-only WSL execution, set {DEV_WSL_LLVM_ENV}=1 to opt into the WSL clang fallback for `agamc run --backend llvm`"
+            ));
+        }
+        return Err(format!(
+            "LLVM run requires a native LLVM toolchain or bundled clang; use `agamc doctor` to inspect readiness for `{}`",
+            path.display()
+        ));
+    }
+
+    let call_cache = effective_call_cache_selection(features, source_features);
+    let persisted_profile = if call_cache.is_enabled() {
+        load_persisted_llvm_profile(path, mir, &call_cache, verbose)
+    } else {
+        None
+    };
+    let (effective_call_cache, persisted_promotions) =
+        apply_persisted_optimize_profile(&call_cache, persisted_profile.as_ref());
+    let specialization_plans =
+        apply_persisted_specialization_profile(&effective_call_cache, persisted_profile.as_ref());
+
+    if verbose {
+        if let Some(profile) = persisted_profile.as_ref() {
+            eprintln!(
+                "[agamc] Loaded persisted LLVM profile: {} run(s), {} function(s), {} total call(s)",
+                profile.runs,
+                profile.functions.len(),
+                profile.total_calls
+            );
+            if !persisted_promotions.is_empty() {
+                eprintln!(
+                    "[agamc]   pre-promoted {} function(s) from prior runs: {}",
+                    persisted_promotions.len(),
+                    persisted_promotions.join(", ")
+                );
+            }
+            if !specialization_plans.is_empty() {
+                let rendered = specialization_plans
+                    .iter()
+                    .map(|plan| {
+                        let slots = plan
+                            .stable_values
+                            .iter()
+                            .map(|value| format!("arg{}=0x{:X}", value.index, value.raw_bits))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("{} [{}]", plan.name, slots)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                eprintln!(
+                    "[agamc]   prepared {} guarded LLVM specialization clone(s): {}",
+                    specialization_plans.len(),
+                    rendered
+                );
+            }
+        }
+        if matches!(toolchain, Some(LlvmToolchain::Wsl)) {
+            eprintln!("[agamc] Executing LLVM backend through dev-only WSL fallback");
+        }
+    }
+
+    let exe_path = default_native_binary_output_path(path, tuning.target.as_deref());
+    let outcome = build_prelowered_file(
+        path,
+        &exe_path,
+        opt_level,
+        Backend::Llvm,
+        tuning,
+        mir,
+        &effective_call_cache,
+        &specialization_plans,
+        allow_dev_wsl_llvm,
+        verbose,
+    )?;
+    if !outcome.native_binary {
+        return Err(format!(
+            "backend {:?} emitted {} but no native executable was produced",
+            Backend::Llvm,
+            outcome.generated_path.display()
+        ));
+    }
+
+    let profile_capture = llvm_profile_capture_path(&exe_path);
+    let _ = std::fs::remove_file(&profile_capture);
+    let mut command = match toolchain.expect("toolchain checked above") {
+        LlvmToolchain::Wsl => {
+            let exe_wsl = path_to_wsl(&exe_path)?;
+            let mut command = std::process::Command::new("wsl");
+            if effective_call_cache.is_enabled() {
+                let profile_wsl = path_to_wsl(&profile_capture)?;
+                command.arg("env");
+                command.arg(format!("AGAM_LLVM_CALL_CACHE_PROFILE_OUT={profile_wsl}"));
+            }
+            command.arg(exe_wsl);
+            command
+        }
+        LlvmToolchain::Native => {
+            let mut command = std::process::Command::new(&exe_path);
+            if effective_call_cache.is_enabled() {
+                command.env("AGAM_LLVM_CALL_CACHE_PROFILE_OUT", &profile_capture);
+            }
+            command
+        }
+    };
+    command.args(args);
+    let captured = capture_command_output(&mut command, &exe_path)?;
+
+    if effective_call_cache.is_enabled() {
+        match std::fs::read_to_string(&profile_capture) {
+            Ok(profile_text) => match parse_llvm_call_cache_run_profile(&profile_text) {
+                Ok(run_profile) => {
+                    if verbose {
+                        eprintln!(
+                            "[agamc] LLVM call cache: {} hits / {} calls across {} cacheable function(s), {} store(s)",
+                            run_profile.total_hits,
+                            run_profile.total_calls,
+                            run_profile.functions.len(),
+                            run_profile.total_stores
+                        );
+                        for function in &run_profile.functions {
+                            if function.calls > 0 || function.stores > 0 {
+                                eprintln!(
+                                    "[agamc]   {} -> calls={}, hits={}, stores={}, entries={}",
+                                    function.name,
+                                    function.calls,
+                                    function.hits,
+                                    function.stores,
+                                    function.entries
+                                );
+                                if function.profile.avg_reuse_distance.is_some()
+                                    || function.profile.max_reuse_distance.is_some()
+                                {
+                                    let avg_reuse = function
+                                        .profile
+                                        .avg_reuse_distance
+                                        .map(|value| value.to_string())
+                                        .unwrap_or_else(|| "n/a".into());
+                                    let max_reuse = function
+                                        .profile
+                                        .max_reuse_distance
+                                        .map(|value| value.to_string())
+                                        .unwrap_or_else(|| "n/a".into());
+                                    eprintln!(
+                                        "[agamc]      reuse distance: avg={}, max={}",
+                                        avg_reuse, max_reuse
+                                    );
+                                }
+                                if !function.profile.stable_values.is_empty() {
+                                    let stable = function
+                                        .profile
+                                        .stable_values
+                                        .iter()
+                                        .map(|value| {
+                                            format!(
+                                                "arg{}=0x{:X} (score {})",
+                                                value.index, value.raw_bits, value.matches
+                                            )
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    eprintln!("[agamc]      stable scalars: {}", stable);
+                                }
+                                let specialization_attempts =
+                                    function.profile.specialization_guard_hits.saturating_add(
+                                        function.profile.specialization_guard_fallbacks,
+                                    );
+                                if specialization_attempts > 0 {
+                                    let hit_rate = function
+                                        .profile
+                                        .specialization_guard_hits
+                                        .saturating_mul(100)
+                                        / specialization_attempts.max(1);
+                                    eprintln!(
+                                        "[agamc]      specialization guard: hits={}, fallbacks={}, matched={}%",
+                                        function.profile.specialization_guard_hits,
+                                        function.profile.specialization_guard_fallbacks,
+                                        hit_rate
+                                    );
+                                }
+                                if !matches!(
+                                    function.profile.specialization_hint,
+                                    agam_profile::CallCacheSpecializationHint::None
+                                ) {
+                                    eprintln!(
+                                        "[agamc]      specialization hint: {}",
+                                        function.profile.specialization_hint
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    let merged_profile =
+                        agam_profile::merge_persistent_profile(persisted_profile, &run_profile);
+                    store_persisted_llvm_profile(path, mir, &call_cache, &merged_profile, verbose);
+                }
+                Err(error) => {
+                    if verbose {
+                        eprintln!(
+                            "[agamc] Failed to parse LLVM call-cache profile `{}`: {}",
+                            profile_capture.display(),
+                            error
+                        );
+                    }
+                }
+            },
+            Err(error) => {
+                if verbose && error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "[agamc] Failed to read LLVM call-cache profile `{}`: {}",
+                        profile_capture.display(),
+                        error
+                    );
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&profile_capture);
+    }
+
+    Ok(captured)
+}
+
+fn execute_headless_request_in_process(
+    request: &HeadlessExecutionRequest,
+    backend: Backend,
+    verbose: bool,
+) -> HeadlessExecutionResponse {
+    let temp_root = match create_headless_temp_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            return HeadlessExecutionResponse::execution_error(request, error, String::new());
+        }
+    };
+    let source_path = temp_root.join(&request.filename);
+
+    let response = if let Some(parent) = source_path.parent() {
+        match std::fs::create_dir_all(parent) {
+            Ok(()) => None,
+            Err(error) => Some(HeadlessExecutionResponse::execution_error(
+                request,
+                format!(
+                    "failed to create headless source directory `{}`: {error}",
+                    parent.display()
+                ),
+                String::new(),
+            )),
+        }
+    } else {
+        None
+    };
+
+    let response = response.unwrap_or_else(|| {
+        if let Err(error) = std::fs::write(&source_path, &request.source) {
+            return HeadlessExecutionResponse::execution_error(
+                request,
+                format!(
+                    "failed to write headless source `{}`: {error}",
+                    source_path.display()
+                ),
+                String::new(),
+            );
+        }
+
+        let (warm_state, mut stderr) = match build_headless_warm_state(request, verbose) {
+            Ok(result) => result,
+            Err(stderr) => {
+                return HeadlessExecutionResponse::execution_error(
+                    request,
+                    "failed to compile headless Agam request",
+                    stderr,
+                );
+            }
+        };
+
+        let Some(mir) = warm_state.mir.as_ref() else {
+            return HeadlessExecutionResponse::execution_error(
+                request,
+                "internal error: headless warm state is missing MIR",
+                stderr,
+            );
+        };
+        let Some(source_features) = warm_state.source_features.as_ref() else {
+            return HeadlessExecutionResponse::execution_error(
+                request,
+                "internal error: headless warm state is missing source features",
+                stderr,
+            );
+        };
+
+        let tuning = ReleaseTuning {
+            target: None,
+            native_cpu: request.fast,
+            lto: None,
+            pgo_generate: None,
+            pgo_use: None,
+        };
+        if let Err(error) = validate_release_tuning(backend, &tuning) {
+            return HeadlessExecutionResponse::execution_error(request, error, stderr);
+        }
+
+        let captured = match backend {
+            Backend::Jit => {
+                let mut runtime_args = Vec::with_capacity(request.args.len() + 1);
+                runtime_args.push(source_path.to_string_lossy().to_string());
+                runtime_args.extend(request.args.iter().cloned());
+                match run_with_jit_prelowered_captured(
+                    &runtime_args,
+                    mir,
+                    source_features,
+                    verbose,
+                    FeatureFlags::default(),
+                ) {
+                    Ok((exit_code, stdout)) => CapturedExecution {
+                        exit_code,
+                        stdout,
+                        stderr: String::new(),
+                    },
+                    Err(error) => {
+                        return HeadlessExecutionResponse::execution_error(request, error, stderr);
+                    }
+                }
+            }
+            Backend::C => match run_with_c_prelowered_captured(
+                &source_path,
+                &request.args,
+                request.opt_level,
+                &tuning,
+                mir,
+                source_features,
+                verbose,
+                FeatureFlags::default(),
+            ) {
+                Ok(captured) => captured,
+                Err(error) => {
+                    return HeadlessExecutionResponse::execution_error(request, error, stderr);
+                }
+            },
+            Backend::Llvm => match run_with_llvm_prelowered_captured(
+                &source_path,
+                &request.args,
+                request.opt_level,
+                &tuning,
+                mir,
+                source_features,
+                verbose,
+                FeatureFlags::default(),
+            ) {
+                Ok(captured) => captured,
+                Err(error) => {
+                    return HeadlessExecutionResponse::execution_error(request, error, stderr);
+                }
+            },
+            Backend::Auto => {
+                return HeadlessExecutionResponse::execution_error(
+                    request,
+                    "internal error: unresolved auto backend",
+                    stderr,
+                );
+            }
+        };
+
+        stderr.push_str(&captured.stderr);
+        HeadlessExecutionResponse::process_result(
+            request,
+            captured.exit_code,
+            captured.stdout,
+            stderr,
+        )
+    });
+
+    cleanup_headless_temp_dir(&temp_root, verbose);
+    response
+}
+
+fn should_execute_headless_request_in_process() -> bool {
+    std::env::var_os(HEADLESS_EXEC_WORKER_ENV).is_some() || cfg!(test)
+}
+
+fn execute_headless_request_in_worker(
+    request: &HeadlessExecutionRequest,
+    verbose: bool,
+) -> HeadlessExecutionResponse {
+    let sandbox_root = match create_headless_sandbox_root() {
+        Ok(path) => path,
+        Err(error) => {
+            return HeadlessExecutionResponse::execution_error(request, error, String::new());
+        }
+    };
+
+    let response = (|| {
+        let payload = serde_json::to_vec(request).map_err(|error| {
+            HeadlessExecutionResponse::execution_error(
+                request,
+                format!("failed to serialize headless worker request: {error}"),
+                String::new(),
+            )
+        })?;
+
+        let mut command = build_headless_worker_command(request, verbose, &sandbox_root)
+            .map_err(|error| {
+                HeadlessExecutionResponse::execution_error(request, error, String::new())
+            })?;
+
+        let mut child = command.spawn().map_err(|error| {
+            HeadlessExecutionResponse::execution_error(
+                request,
+                format!("failed to spawn isolated headless worker: {error}"),
+                String::new(),
+            )
+        })?;
+
+        #[cfg(windows)]
+        let _job = attach_headless_worker_job(&child, request, verbose);
+
+        let Some(mut stdin) = child.stdin.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(HeadlessExecutionResponse::execution_error(
+                request,
+                "isolated headless worker did not expose stdin",
+                String::new(),
+            ));
+        };
+        if let Err(error) = stdin.write_all(&payload) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(HeadlessExecutionResponse::execution_error(
+                request,
+                format!("failed to write isolated headless worker request: {error}"),
+                String::new(),
+            ));
+        }
+        drop(stdin);
+
+        let (output, timed_out) =
+            wait_for_headless_worker_output(child, request.policy.max_runtime_ms).map_err(
+                |error| HeadlessExecutionResponse::execution_error(request, error, String::new()),
+            )?;
+
+        if timed_out {
+            return Err(HeadlessExecutionResponse::execution_error(
+                request,
+                format!(
+                    "headless execution exceeded the wall-clock policy limit of {} ms",
+                    request.policy.max_runtime_ms
+                ),
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
+        }
+
+        serde_json::from_slice::<HeadlessExecutionResponse>(&output.stdout).map_err(|error| {
+            HeadlessExecutionResponse::execution_error(
+                request,
+                format!(
+                    "isolated headless worker returned invalid JSON: {error} (status: {:?}, stdout: {:?})",
+                    output.status.code(),
+                    String::from_utf8_lossy(&output.stdout)
+                ),
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            )
+        })
+    })()
+    .unwrap_or_else(|response| response);
+
+    cleanup_headless_temp_dir(&sandbox_root, verbose);
+    response
+}
+
+fn execute_headless_request(
+    request: &HeadlessExecutionRequest,
+    verbose: bool,
+) -> HeadlessExecutionResponse {
+    let request = match normalize_headless_request(request) {
+        Ok(request) => request,
+        Err(error) => {
+            return HeadlessExecutionResponse::execution_error(request, error, String::new());
+        }
+    };
+
+    if should_execute_headless_request_in_process() {
+        let backend = resolve_backend(headless_backend_to_backend(request.backend), true);
+        execute_headless_request_in_process(&request, backend, verbose)
+    } else {
+        execute_headless_request_in_worker(&request, verbose)
+    }
+}
+
+fn execute_repl_request(
+    request: &HeadlessExecutionRequest,
+    execution_cache: &mut ReplExecutionCache,
+    verbose: bool,
+) -> Result<i32, String> {
+    let request = normalize_headless_request(request)?;
+    let backend = resolve_backend(headless_backend_to_backend(request.backend), true);
+    let tuning = ReleaseTuning {
+        target: None,
+        native_cpu: request.fast,
+        lto: None,
+        pgo_generate: None,
+        pgo_use: None,
+    };
+    let features = FeatureFlags::default();
+    validate_release_tuning(backend, &tuning)?;
+    execution_cache.materialize_request(&request)?;
+    let source_path = execution_cache.source_path().clone();
+    let warm_state = execution_cache.ensure_materialized_warm_state(verbose)?;
+    run_source_file_with_optional_warm_state(
+        &source_path,
+        &request.args,
+        backend,
+        request.opt_level,
+        &tuning,
+        verbose,
+        features,
+        Some(warm_state),
+    )
+}
+
+fn build_headless_worker_command(
+    request: &HeadlessExecutionRequest,
+    verbose: bool,
+    sandbox_root: &Path,
+) -> Result<std::process::Command, String> {
+    let current_exe = std::env::current_exe()
+        .map_err(|error| format!("failed to resolve current `agamc` executable: {error}"))?;
+    let mut command = std::process::Command::new(current_exe);
+    if verbose {
+        command.arg("--verbose");
+    }
+    command.arg("exec").arg("--json");
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    command.current_dir(sandbox_root);
+    configure_headless_worker_environment(&mut command, sandbox_root, request);
+    configure_headless_worker_platform_before_spawn(&mut command, request)?;
+    Ok(command)
+}
+
+fn configure_headless_worker_environment(
+    command: &mut std::process::Command,
+    sandbox_root: &Path,
+    request: &HeadlessExecutionRequest,
+) {
+    if request.policy.inherit_environment {
+        command.env(HEADLESS_EXEC_WORKER_ENV, "1");
+        command.env(HEADLESS_SANDBOX_ROOT_ENV, sandbox_root);
+    } else {
+        command.env_clear();
+        for (key, value) in std::env::vars_os() {
+            if key
+                .to_str()
+                .is_some_and(should_forward_headless_worker_env_var)
+            {
+                command.env(&key, &value);
+            }
+        }
+        command.env(HEADLESS_EXEC_WORKER_ENV, "1");
+        command.env(HEADLESS_SANDBOX_ROOT_ENV, sandbox_root);
+    }
+    command.env_remove(NESTED_BUILD_REQUEST_ENV);
+    command.env_remove(NESTED_CHECK_REQUEST_ENV);
+}
+
+fn should_forward_headless_worker_env_var(key: &str) -> bool {
+    key.starts_with("AGAM_LLVM_")
+        || key == DEV_WSL_LLVM_ENV
+        || matches!(
+            key,
+            "PATH"
+                | "Path"
+                | "PATHEXT"
+                | "TEMP"
+                | "TMP"
+                | "TMPDIR"
+                | "HOME"
+                | "USERPROFILE"
+                | "LOCALAPPDATA"
+                | "APPDATA"
+                | "SystemRoot"
+                | "SYSTEMROOT"
+                | "SystemDrive"
+                | "WINDIR"
+                | "ComSpec"
+                | "COMSPEC"
+                | "ProgramFiles"
+                | "ProgramFiles(x86)"
+                | "ProgramW6432"
+                | "INCLUDE"
+                | "LIB"
+                | "LIBPATH"
+                | "VCINSTALLDIR"
+                | "VSINSTALLDIR"
+                | "WindowsSdkDir"
+                | "WindowsSDKDir"
+                | "WindowsSDKVersion"
+                | "UniversalCRTSdkDir"
+                | "UCRTVersion"
+                | "SDKROOT"
+                | "ANDROID_NDK_HOME"
+                | "ANDROID_NDK_ROOT"
+                | "LD_LIBRARY_PATH"
+                | "DYLD_LIBRARY_PATH"
+                | "DYLD_FALLBACK_LIBRARY_PATH"
+        )
+}
+
+#[cfg(unix)]
+fn configure_headless_worker_platform_before_spawn(
+    command: &mut std::process::Command,
+    request: &HeadlessExecutionRequest,
+) -> Result<(), String> {
+    use std::os::unix::process::CommandExt;
+
+    let max_memory_bytes = request.policy.max_memory_bytes;
+    unsafe {
+        command.pre_exec(move || {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            let core_limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::setrlimit(libc::RLIMIT_CORE, &core_limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            let memory_limit = libc::rlimit {
+                rlim_cur: max_memory_bytes as libc::rlim_t,
+                rlim_max: max_memory_bytes as libc::rlim_t,
+            };
+            if libc::setrlimit(libc::RLIMIT_AS, &memory_limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn configure_headless_worker_platform_before_spawn(
+    _command: &mut std::process::Command,
+    _request: &HeadlessExecutionRequest,
+) -> Result<(), String> {
+    Ok(())
+}
+
+fn wait_for_headless_worker_output(
+    child: std::process::Child,
+    timeout_ms: u64,
+) -> Result<(std::process::Output, bool), String> {
+    let pid = child.id();
+    let timeout = Duration::from_millis(timeout_ms.max(1));
+    let timed_out = Arc::new(AtomicBool::new(false));
+    let timed_out_flag = Arc::clone(&timed_out);
+    let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
+    let killer = std::thread::spawn(move || {
+        if cancel_rx.recv_timeout(timeout).is_err() {
+            timed_out_flag.store(true, Ordering::SeqCst);
+            let _ = terminate_headless_worker_process(pid);
+        }
+    });
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("failed while waiting for isolated headless worker: {error}"))?;
+    let _ = cancel_tx.send(());
+    let _ = killer.join();
+    Ok((output, timed_out.load(Ordering::SeqCst)))
+}
+
+#[cfg(unix)]
+fn terminate_headless_worker_process(pid: u32) -> Result<(), String> {
+    let result = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+    if result == 0 {
+        Ok(())
+    } else {
+        let error = std::io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(code) if code == libc::ESRCH => Ok(()),
+            _ => Err(format!(
+                "failed to terminate isolated headless worker: {error}"
+            )),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn terminate_headless_worker_process(pid: u32) -> Result<(), String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle.is_null() {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(87) {
+                return Ok(());
+            }
+            return Err(format!(
+                "failed to open isolated headless worker process: {error}"
+            ));
+        }
+
+        let status = TerminateProcess(handle, 1);
+        let terminate_error = std::io::Error::last_os_error();
+        CloseHandle(handle);
+        if status == 0 {
+            if terminate_error.raw_os_error() == Some(87) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "failed to terminate isolated headless worker: {terminate_error}"
+                ))
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn terminate_headless_worker_process(_pid: u32) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(windows)]
+struct HeadlessWindowsJob {
+    handle: *mut c_void,
+}
+
+#[cfg(windows)]
+impl Drop for HeadlessWindowsJob {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Foundation::CloseHandle;
+
+        unsafe {
+            if !self.handle.is_null() {
+                CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn attach_headless_worker_job(
+    child: &std::process::Child,
+    request: &HeadlessExecutionRequest,
+    verbose: bool,
+) -> Option<HeadlessWindowsJob> {
+    use std::mem;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+        JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+    };
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            if verbose {
+                eprintln!(
+                    "[agamc] warning: failed to create a Windows job object for isolated headless execution: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+            return None;
+        }
+
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = mem::zeroed();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+            | JOB_OBJECT_LIMIT_JOB_MEMORY
+            | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+        limits.ProcessMemoryLimit = request.policy.max_memory_bytes.min(usize::MAX as u64) as usize;
+        limits.JobMemoryLimit = request.policy.max_memory_bytes.min(usize::MAX as u64) as usize;
+        limits.BasicLimitInformation.ActiveProcessLimit =
+            if matches!(request.backend, HeadlessExecutionBackend::Jit) {
+                4
+            } else {
+                16
+            };
+
+        let set_status = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &limits as *const _ as *const c_void,
+            mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if set_status == 0 {
+            if verbose {
+                eprintln!(
+                    "[agamc] warning: failed to configure a Windows job object for isolated headless execution: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+            return Some(HeadlessWindowsJob { handle: job });
+        }
+
+        let assign_status = AssignProcessToJobObject(job, child.as_raw_handle() as *mut c_void);
+        if assign_status == 0 {
+            if verbose {
+                eprintln!(
+                    "[agamc] warning: failed to attach the isolated headless worker to a Windows job object: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
+        }
+
+        Some(HeadlessWindowsJob { handle: job })
+    }
+}
+
+fn normalize_headless_request(
+    request: &HeadlessExecutionRequest,
+) -> Result<HeadlessExecutionRequest, String> {
+    if request.source.trim().is_empty() {
+        return Err("headless execution request source cannot be empty".into());
+    }
+    if request.opt_level > 3 {
+        return Err(format!(
+            "headless execution opt_level `{}` must be 0..=3",
+            request.opt_level
+        ));
+    }
+    let source_bytes = request.source.as_bytes().len();
+    if source_bytes > request.policy.max_source_bytes {
+        return Err(format!(
+            "headless execution request source is {} bytes, exceeding the policy limit of {} bytes",
+            source_bytes, request.policy.max_source_bytes
+        ));
+    }
+    if request.args.len() > request.policy.max_arg_count {
+        return Err(format!(
+            "headless execution request includes {} arg(s), exceeding the policy limit of {}",
+            request.args.len(),
+            request.policy.max_arg_count
+        ));
+    }
+    let total_arg_bytes = request
+        .args
+        .iter()
+        .map(|arg| arg.as_bytes().len())
+        .fold(0usize, usize::saturating_add);
+    if total_arg_bytes > request.policy.max_total_arg_bytes {
+        return Err(format!(
+            "headless execution request arguments occupy {} bytes, exceeding the policy limit of {} bytes",
+            total_arg_bytes, request.policy.max_total_arg_bytes
+        ));
+    }
+    if request.policy.max_runtime_ms == 0 {
+        return Err("headless execution policy `max_runtime_ms` must be greater than zero".into());
+    }
+    if request.policy.max_memory_bytes == 0 {
+        return Err(
+            "headless execution policy `max_memory_bytes` must be greater than zero".into(),
+        );
+    }
+    if !request.policy.allow_native_backends
+        && !matches!(request.backend, HeadlessExecutionBackend::Jit)
+    {
+        return Err(format!(
+            "headless execution policy only allows the `jit` backend; `{}` requires `policy.allow_native_backends=true`",
+            render_headless_backend_label(request.backend)
+        ));
+    }
+
+    let mut normalized = request.clone();
+    normalized.filename = sanitize_headless_filename(&normalized.filename);
+    Ok(normalized)
+}
+
+fn sanitize_headless_filename(filename: &str) -> String {
+    let filename = filename.trim();
+    let candidate = Path::new(filename)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("snippet.agam");
+    let mut sanitized = String::new();
+    for ch in candidate.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('_');
+        }
+    }
+    if sanitized.is_empty() {
+        sanitized = "snippet.agam".into();
+    }
+    if !sanitized.ends_with(".agam") {
+        sanitized.push_str(".agam");
+    }
+    sanitized
+}
+
+fn create_unique_headless_dir(base: &Path, label: &str) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(base).map_err(|error| {
+        format!(
+            "failed to create headless sandbox root `{}`: {error}",
+            base.display()
+        )
+    })?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("failed to read system time for temp dir: {error}"))?
+        .as_nanos();
+    for attempt in 0..32u32 {
+        let path = base.join(format!(
+            "{label}_{}_{}_{}",
+            std::process::id(),
+            now,
+            attempt
+        ));
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "failed to create headless temp dir `{}`: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Err("failed to allocate a unique headless temp directory".into())
+}
+
+fn create_headless_sandbox_root() -> Result<PathBuf, String> {
+    create_unique_headless_dir(&std::env::temp_dir(), "agam_headless_sandbox")
+}
+
+fn create_headless_temp_dir() -> Result<PathBuf, String> {
+    let base = env_path(HEADLESS_SANDBOX_ROOT_ENV).unwrap_or_else(std::env::temp_dir);
+    create_unique_headless_dir(&base, "agam_headless_run")
+}
+
+fn cleanup_headless_temp_dir(path: &Path, verbose: bool) {
+    if let Err(error) = std::fs::remove_dir_all(path) {
+        if verbose {
+            eprintln!(
+                "[agamc] warning: failed to remove headless temp dir `{}`: {}",
+                path.display(),
+                error
+            );
+        }
+    }
+}
+
+fn headless_backend_to_backend(backend: HeadlessExecutionBackend) -> Backend {
+    match backend {
+        HeadlessExecutionBackend::Auto => Backend::Auto,
+        HeadlessExecutionBackend::C => Backend::C,
+        HeadlessExecutionBackend::Llvm => Backend::Llvm,
+        HeadlessExecutionBackend::Jit => Backend::Jit,
+    }
+}
+
+fn parse_headless_backend_label(value: &str) -> Result<HeadlessExecutionBackend, String> {
+    match value {
+        "auto" => Ok(HeadlessExecutionBackend::Auto),
+        "c" => Ok(HeadlessExecutionBackend::C),
+        "llvm" => Ok(HeadlessExecutionBackend::Llvm),
+        "jit" => Ok(HeadlessExecutionBackend::Jit),
+        _ => Err(format!(
+            "unknown backend `{value}`; expected auto, c, llvm, or jit"
+        )),
+    }
+}
+
+fn render_headless_backend_label(backend: HeadlessExecutionBackend) -> &'static str {
+    match backend {
+        HeadlessExecutionBackend::Auto => "auto",
+        HeadlessExecutionBackend::C => "c",
+        HeadlessExecutionBackend::Llvm => "llvm",
+        HeadlessExecutionBackend::Jit => "jit",
+    }
+}
+
 fn print_doctor_status(label: &str, status: &str, detail: &str) {
     println!("{label}: {status}");
     println!("  {detail}");
 }
 
-fn run_doctor(verbose: bool) -> Result<bool, String> {
+fn run_doctor(
+    environment: Option<&EnvironmentInspectReport>,
+    verbose: bool,
+) -> Result<bool, String> {
     let host = current_host_sdk_platform();
     let bundled_root = detect_packaged_llvm_bundle_root();
     let bundled_driver = discover_bundled_llvm_clang();
@@ -5381,7 +9612,7 @@ fn run_doctor(verbose: bool) -> Result<bool, String> {
     let vs_driver = discover_visual_studio_llvm_clang();
     let wsl_clang = wsl_command_exists("clang");
     let c_driver = command_exists(default_c_compiler());
-    let android_sysroot = resolve_android_ndk_sysroot();
+    let android_sysroot = resolve_android_sysroot_for_target(None);
 
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("failed to locate current compiler executable: {}", e))?;
@@ -5389,6 +9620,13 @@ fn run_doctor(verbose: bool) -> Result<bool, String> {
     println!("Agam Doctor");
     println!("host: {host}");
     println!("core compiler: {}", current_exe.display());
+    if let Some(environment) = environment {
+        println!("environment: {}", environment_selection_label(environment));
+        println!(
+            "environment manifest: {}",
+            environment.manifest_path.display()
+        );
+    }
 
     match native_driver.as_ref() {
         Some(driver) => {
@@ -5516,12 +9754,134 @@ fn run_doctor(verbose: bool) -> Result<bool, String> {
         ),
     }
 
+    let mut healthy = native_driver.is_some();
+    if let Some(environment) = environment {
+        let resolved = &environment.environment;
+        print_doctor_status(
+            "env compiler",
+            "selected",
+            &format!("compiler requirement `{}`", resolved.compiler),
+        );
+        if let Some(sdk) = resolved.sdk.as_deref() {
+            print_doctor_status("env sdk", "selected", &format!("sdk `{sdk}`"));
+        } else if verbose {
+            print_doctor_status("env sdk", "inherit", "no environment-specific SDK override");
+        }
+        if let Some(target) = resolved.target.as_deref() {
+            let sdk_root = env_path(LLVM_SDKROOT_ENV).or_else(|| env_path("SDKROOT"));
+            let (status, detail, target_ok) = match classify_llvm_target_platform(Some(target)) {
+                LlvmTargetPlatform::Android => match android_sysroot.as_ref() {
+                    Some(path) => (
+                        "ok",
+                        format!("target `{target}` via sysroot `{}`", path.display()),
+                        true,
+                    ),
+                    None => (
+                        "missing",
+                        format!(
+                            "target `{target}` needs `{LLVM_SYSROOT_ENV}` or `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT`"
+                        ),
+                        false,
+                    ),
+                },
+                LlvmTargetPlatform::Ios | LlvmTargetPlatform::MacOs => match sdk_root.as_ref() {
+                    Some(path) => (
+                        "ok",
+                        format!("target `{target}` via SDK root `{}`", path.display()),
+                        true,
+                    ),
+                    None => (
+                        "missing",
+                        format!("target `{target}` needs `{LLVM_SDKROOT_ENV}` or `SDKROOT`"),
+                        false,
+                    ),
+                },
+                _ => ("ok", format!("target `{target}`"), true),
+            };
+            print_doctor_status("env target", status, &detail);
+            healthy &= target_ok;
+        } else if verbose {
+            print_doctor_status("env target", "inherit", "host-native target");
+        }
+        if let Some(backend) = resolved.preferred_backend {
+            let (status, detail, backend_ok) = match backend {
+                agam_runtime::contract::RuntimeBackend::Llvm => (
+                    if native_driver.is_some() {
+                        "ok"
+                    } else {
+                        "missing"
+                    },
+                    if native_driver.is_some() {
+                        "environment can use the native LLVM backend".to_string()
+                    } else {
+                        "environment requests LLVM but no native LLVM toolchain was detected"
+                            .to_string()
+                    },
+                    native_driver.is_some(),
+                ),
+                agam_runtime::contract::RuntimeBackend::C => (
+                    if c_driver { "ok" } else { "missing" },
+                    if c_driver {
+                        format!("environment can use `{}`", default_c_compiler())
+                    } else {
+                        format!(
+                            "environment requests the C backend but `{}` was not detected",
+                            default_c_compiler()
+                        )
+                    },
+                    c_driver,
+                ),
+                agam_runtime::contract::RuntimeBackend::Jit => (
+                    "ok",
+                    "environment prefers the in-memory JIT backend".to_string(),
+                    true,
+                ),
+                agam_runtime::contract::RuntimeBackend::Auto => (
+                    "selected",
+                    "environment defers backend choice to normal auto-resolution".to_string(),
+                    true,
+                ),
+            };
+            print_doctor_status("env backend", status, &detail);
+            healthy &= backend_ok;
+        } else if verbose {
+            print_doctor_status(
+                "env backend",
+                "inherit",
+                "no environment-specific backend override",
+            );
+        }
+        if let Some(runtime_abi) = resolved.runtime_abi {
+            let abi_ok = runtime_abi == agam_runtime::contract::RUNTIME_ABI_VERSION;
+            print_doctor_status(
+                "env runtime abi",
+                if abi_ok { "ok" } else { "mismatch" },
+                &format!(
+                    "environment expects v{}; host runtime exports v{}",
+                    runtime_abi,
+                    agam_runtime::contract::RUNTIME_ABI_VERSION
+                ),
+            );
+            healthy &= abi_ok;
+        }
+        if !resolved.profiles.is_empty() {
+            print_doctor_status(
+                "env profiles",
+                "selected",
+                &format!("profiles `{}`", resolved.profiles.join(", ")),
+            );
+        }
+    }
+
     println!(
-        "recommended sdk command: agamc package sdk --output {}",
+        "recommended sdk command: agamc package sdk{} --output {}",
+        environment
+            .map(|report| format!(" --env {}", report.environment.name))
+            .unwrap_or_default(),
         default_sdk_distribution_output_dir().display()
     );
 
-    Ok(native_driver.is_some())
+    Ok(healthy)
 }
 
 #[derive(Debug)]
@@ -5530,6 +9890,7 @@ struct SdkDistributionOutcome {
     compiler_binary: PathBuf,
     manifest_path: PathBuf,
     llvm_bundle_root: Option<PathBuf>,
+    android_sysroot_root: Option<PathBuf>,
 }
 
 fn current_host_sdk_platform() -> String {
@@ -5568,13 +9929,17 @@ fn default_host_target_triple() -> String {
     }
 }
 
-fn sdk_supported_targets() -> Vec<agam_pkg::SdkTargetProfile> {
+fn sdk_supported_targets(
+    environment: Option<&EnvironmentInspectReport>,
+    packaged_android_sysroot: Option<&str>,
+) -> Vec<agam_pkg::SdkTargetProfile> {
     let mut targets = vec![agam_pkg::SdkTargetProfile {
         name: "host-native".into(),
         target_triple: default_host_target_triple(),
         backend: agam_runtime::contract::RuntimeBackend::Llvm,
         sysroot_env: None,
         sdk_env: None,
+        packaged_sysroot: None,
     }];
 
     if matches!(
@@ -5587,7 +9952,62 @@ fn sdk_supported_targets() -> Vec<agam_pkg::SdkTargetProfile> {
             backend: agam_runtime::contract::RuntimeBackend::Llvm,
             sysroot_env: Some(LLVM_SYSROOT_ENV.into()),
             sdk_env: None,
+            packaged_sysroot: packaged_android_sysroot.map(str::to_string),
         });
+    }
+
+    if let Some(environment) = environment {
+        if let Some(target) = environment.environment.target.as_deref() {
+            let platform = classify_llvm_target_platform(Some(target));
+            let sysroot_env = match platform {
+                LlvmTargetPlatform::Android => Some(LLVM_SYSROOT_ENV.into()),
+                _ => None,
+            };
+            let sdk_env = match platform {
+                LlvmTargetPlatform::Ios | LlvmTargetPlatform::MacOs => {
+                    Some(LLVM_SDKROOT_ENV.into())
+                }
+                _ => None,
+            };
+            let packaged_sysroot = match platform {
+                LlvmTargetPlatform::Android => packaged_android_sysroot.map(str::to_string),
+                _ => None,
+            };
+            let backend = match environment.environment.preferred_backend {
+                Some(agam_runtime::contract::RuntimeBackend::Auto) | None => {
+                    agam_runtime::contract::RuntimeBackend::Llvm
+                }
+                Some(backend) => backend,
+            };
+
+            if let Some(existing) = targets
+                .iter_mut()
+                .find(|profile| profile.target_triple == target)
+            {
+                existing.backend = backend;
+                if existing.sysroot_env.is_none() {
+                    existing.sysroot_env = sysroot_env;
+                }
+                if existing.sdk_env.is_none() {
+                    existing.sdk_env = sdk_env;
+                }
+                if existing.packaged_sysroot.is_none() {
+                    existing.packaged_sysroot = packaged_sysroot;
+                }
+            } else {
+                targets.insert(
+                    0,
+                    agam_pkg::SdkTargetProfile {
+                        name: environment.environment.name.clone(),
+                        target_triple: target.to_string(),
+                        backend,
+                        sysroot_env,
+                        sdk_env,
+                        packaged_sysroot,
+                    },
+                );
+            }
+        }
     }
 
     targets
@@ -5692,9 +10112,37 @@ fn stage_llvm_bundle_into_sdk(source: &Path, output_root: &Path) -> Result<PathB
     ))
 }
 
+fn validate_android_sysroot_layout(source: &Path) -> Result<(), String> {
+    if !source.is_dir() {
+        return Err(format!(
+            "Android sysroot source `{}` does not exist or is not a directory",
+            source.display()
+        ));
+    }
+    if !source.join("usr").is_dir() {
+        return Err(format!(
+            "Android sysroot `{}` must include a `usr/` directory",
+            source.display()
+        ));
+    }
+    Ok(())
+}
+
+fn stage_android_sysroot_into_sdk(source: &Path, output_root: &Path) -> Result<PathBuf, String> {
+    validate_android_sysroot_layout(source)?;
+    let destination = output_root
+        .join("target-packs")
+        .join("android-arm64")
+        .join("sysroot");
+    copy_directory_recursive(source, &destination)?;
+    Ok(destination)
+}
+
 fn package_sdk_distribution(
     output_root: &Path,
     llvm_bundle: Option<&PathBuf>,
+    android_sysroot: Option<&PathBuf>,
+    environment: Option<&EnvironmentInspectReport>,
     verbose: bool,
 ) -> Result<SdkDistributionOutcome, String> {
     let current_exe = std::env::current_exe()
@@ -5729,12 +10177,60 @@ fn package_sdk_distribution(
         }
         None => None,
     };
+    let staged_android_sysroot = match resolve_sdk_android_sysroot_source(android_sysroot) {
+        Some(source) => {
+            let staged = stage_android_sysroot_into_sdk(&source, output_root)?;
+            if verbose {
+                eprintln!(
+                    "[agamc] staged Android sysroot target pack from {}",
+                    source.display()
+                );
+            }
+            Some(staged)
+        }
+        None => None,
+    };
+    let android_sysroot_relative = staged_android_sysroot
+        .as_ref()
+        .map(|path| relative_path_string(output_root, path))
+        .transpose()?;
 
     let preferred_llvm_driver = llvm_bundle_root.as_ref().and_then(|root| {
         bundled_llvm_candidate_paths(root)
             .into_iter()
             .find(|path| path.is_file())
     });
+    let mut notes = vec![
+        "native llvm is the preferred production backend".into(),
+        "wsl remains a development-only fallback and is not part of the shipped sdk contract"
+            .into(),
+    ];
+    if let Some(environment) = environment {
+        let resolved = &environment.environment;
+        let mut note = format!(
+            "selected environment `{}` pins compiler `{}`",
+            resolved.name, resolved.compiler
+        );
+        if let Some(sdk) = resolved.sdk.as_deref() {
+            note.push_str(&format!(", sdk `{sdk}`"));
+        }
+        if let Some(target) = resolved.target.as_deref() {
+            note.push_str(&format!(", target `{target}`"));
+        }
+        if let Some(backend) = resolved.preferred_backend {
+            note.push_str(&format!(", backend `{}`", runtime_backend_label(backend)));
+        }
+        if !resolved.profiles.is_empty() {
+            note.push_str(&format!(", profiles `{}`", resolved.profiles.join(", ")));
+        }
+        notes.push(note);
+    }
+    if let Some(relative) = android_sysroot_relative.as_deref() {
+        notes.push(format!(
+            "bundled Android target pack `android-arm64` at `{relative}`"
+        ));
+    }
+
     let manifest = agam_pkg::SdkDistributionManifest {
         format_version: agam_pkg::SDK_DISTRIBUTION_FORMAT_VERSION,
         sdk_name: format!("agam-sdk-{}", current_host_sdk_platform()),
@@ -5748,12 +10244,8 @@ fn package_sdk_distribution(
             .as_ref()
             .map(|path| relative_path_string(output_root, path))
             .transpose()?,
-        supported_targets: sdk_supported_targets(),
-        notes: vec![
-            "native llvm is the preferred production backend".into(),
-            "wsl remains a development-only fallback and is not part of the shipped sdk contract"
-                .into(),
-        ],
+        supported_targets: sdk_supported_targets(environment, android_sysroot_relative.as_deref()),
+        notes,
     };
     let manifest_path = output_root.join("sdk-manifest.json");
     if let Some(parent) = manifest_path.parent() {
@@ -5767,6 +10259,7 @@ fn package_sdk_distribution(
         compiler_binary: compiler_destination,
         manifest_path,
         llvm_bundle_root,
+        android_sysroot_root: staged_android_sysroot,
     })
 }
 
@@ -6613,11 +11106,15 @@ fn build_file(
 
     // 2. Fallback: try the multi-file warm index for MIR
     if let Some(warm_state) = load_daemon_warm_state_for_file(path, verbose) {
-        if let Some(ref mir) = warm_state.mir {
-            let call_cache = match warm_state.source_features.as_ref() {
-                Some(sf) => effective_call_cache_selection(features, sf),
-                None => CallCacheSelection::default(),
-            };
+        if warm_state_supports_runnable_reuse(&warm_state) {
+            let mir = warm_state.mir.as_ref().expect("checked by helper");
+            let call_cache = effective_call_cache_selection(
+                features,
+                warm_state
+                    .source_features
+                    .as_ref()
+                    .expect("checked by helper"),
+            );
             return build_prelowered_file(
                 path,
                 output,
@@ -6629,6 +11126,12 @@ fn build_file(
                 &[],
                 false,
                 verbose,
+            );
+        }
+        if verbose && warm_state.mir.is_some() {
+            eprintln!(
+                "[agamc] warm state for `{}` is incomplete for build reuse; rebuilding locally",
+                path.display()
             );
         }
     }
@@ -7559,6 +12062,46 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    fn with_clean_agam_registry_env<R>(f: impl FnOnce() -> R) -> R {
+        let _guard = registry_env_lock()
+            .lock()
+            .expect("registry env lock should not be poisoned");
+        let default_key = "AGAM_REGISTRY_INDEX";
+        let agam_key = agam_pkg::registry_index_env_var("agam");
+        let default_restore = RegistryIndexEnvRestore::capture(default_key);
+        let agam_restore = RegistryIndexEnvRestore::capture(&agam_key);
+        unsafe {
+            std::env::remove_var(default_key);
+            std::env::remove_var(&agam_key);
+        }
+        let result = f();
+        drop(agam_restore);
+        drop(default_restore);
+        result
+    }
+
+    fn environment_report(
+        name: &str,
+        target: Option<&str>,
+        backend: Option<agam_runtime::contract::RuntimeBackend>,
+    ) -> EnvironmentInspectReport {
+        EnvironmentInspectReport {
+            workspace_root: PathBuf::from("C:/agam/workspace"),
+            manifest_path: PathBuf::from("C:/agam/workspace/agam.toml"),
+            selected_by_default: false,
+            environment: agam_pkg::ResolvedEnvironment {
+                name: name.into(),
+                compiler: "0.2.0".into(),
+                sdk: None,
+                target: target.map(str::to_string),
+                runtime_abi: Some(agam_runtime::contract::RUNTIME_ABI_VERSION),
+                preferred_backend: backend,
+                profiles: vec!["release".into()],
+                packages: vec!["json@1.4.0".into()],
+            },
+        }
     }
 
     fn build_request(file: impl Into<PathBuf>, output: impl Into<PathBuf>) -> BuildRequest {
@@ -8548,8 +13091,14 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
-            .expect("one-shot daemon run should succeed");
+        run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect("one-shot daemon run should succeed");
 
         let status = read_daemon_status(&root)
             .expect("read daemon status")
@@ -8610,7 +13159,10 @@ mod tests {
 
         let warm_index =
             agam_pkg::read_daemon_warm_index(&root).expect("reading warm index should succeed");
-        assert!(warm_index.is_some(), "warm index should exist after prewarm");
+        assert!(
+            warm_index.is_some(),
+            "warm index should exist after prewarm"
+        );
         let warm_index = warm_index.unwrap();
         assert_eq!(warm_index.files.len(), 1);
 
@@ -8623,11 +13175,7 @@ mod tests {
         assert!(
             prewarm_entries.iter().any(|e| {
                 e.as_ref()
-                    .map(|e| {
-                        e.file_name()
-                            .to_string_lossy()
-                            .contains("_mir_")
-                    })
+                    .map(|e| e.file_name().to_string_lossy().contains("_mir_"))
                     .unwrap_or(false)
             }),
             "prewarm directory should contain MIR artifact(s)"
@@ -8660,8 +13208,14 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
-            .expect("one-shot daemon run should succeed");
+        run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect("one-shot daemon run should succeed");
 
         let prewarmed =
             load_daemon_prewarmed_entry(&file, false).expect("prewarmed entry should load");
@@ -8677,14 +13231,53 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
-            .expect("one-shot daemon run should succeed");
+        run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect("one-shot daemon run should succeed");
 
         let warm_state =
             load_daemon_prewarmed_warm_state(&file, false).expect("warm state should load");
         assert!(warm_state.module.is_none());
         assert!(warm_state.hir.is_none());
         assert_eq!(warm_state.mir.as_ref().expect("mir").functions.len(), 1);
+        assert!(warm_state.source_features.is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_load_daemon_warm_state_for_file_reuses_disk_call_cache_metadata() {
+        let root = temp_dir("daemon_warm_disk_features");
+        let file = root.join("main.agam");
+        fs::write(
+            &file,
+            "@lang.advance\n@lang.feat.call_cache\nfn main() -> i32 { return 0; }\n",
+        )
+        .expect("write source");
+
+        run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect("one-shot daemon run should succeed");
+
+        let warm_state =
+            load_daemon_warm_state_for_file(&file, false).expect("warm state should load");
+        assert_eq!(warm_state.mir.as_ref().expect("mir").functions.len(), 1);
+        let source_features = warm_state
+            .source_features
+            .as_ref()
+            .expect("disk warm state should carry source features");
+        assert!(source_features.call_cache.enable_all);
+        assert!(!source_features.call_cache.disable_all);
 
         let _ = fs::remove_dir_all(root);
     }
@@ -8695,8 +13288,14 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
-            .expect("one-shot daemon run should succeed");
+        run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect("one-shot daemon run should succeed");
         fs::write(&file, "fn main() -> i32 { return 1; }\n").expect("rewrite source");
 
         assert!(load_daemon_prewarmed_entry(&file, false).is_none());
@@ -8710,8 +13309,14 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
-            .expect("one-shot daemon run should succeed");
+        run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect("one-shot daemon run should succeed");
 
         let warm =
             compile_dev_source_file(&file, true, false).expect("warm dev compile should work");
@@ -8719,6 +13324,62 @@ mod tests {
         assert!(warm.module.is_none());
         assert!(warm.hir.is_none());
         assert_eq!(warm.mir.as_ref().expect("mir").functions.len(), 1);
+        assert!(warm.source_features.is_some());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_compile_dev_source_file_rebuilds_when_disk_warm_state_lacks_source_features() {
+        let root = temp_dir("compile_dev_incomplete_disk_warm_state");
+        let file = root.join("main.agam");
+        fs::write(
+            &file,
+            "@lang.advance\n@lang.feat.call_cache\nfn main() -> i32 { return 0; }\n",
+        )
+        .expect("write source");
+
+        let warm_state =
+            compile_file_with_warm_state(&file, false).expect("warm compile should succeed");
+        let mir = warm_state.mir.as_ref().expect("mir should exist");
+        let content_hash = agam_runtime::cache::hash_bytes(
+            &fs::read(&file).expect("read source for content hash"),
+        );
+        let artifact_path =
+            daemon_prewarm_mir_artifact_path(&root, &file).expect("artifact path should resolve");
+        if let Some(parent) = artifact_path.parent() {
+            fs::create_dir_all(parent).expect("create artifact dir");
+        }
+        let raw_mir_json = serde_json::to_vec(mir).expect("serialize legacy raw MIR artifact");
+        fs::write(&artifact_path, raw_mir_json).expect("write legacy raw MIR artifact");
+        agam_pkg::write_daemon_warm_index(
+            &root,
+            &agam_pkg::DaemonWarmIndex {
+                format_version: agam_pkg::DAEMON_WARM_INDEX_FORMAT_VERSION,
+                files: BTreeMap::from([(
+                    file.display().to_string(),
+                    agam_pkg::DaemonWarmFileEntry {
+                        content_hash,
+                        mir_hash: Some(
+                            agam_runtime::cache::hash_serializable(mir)
+                                .expect("hash legacy raw MIR artifact"),
+                        ),
+                        artifact_path: Some(artifact_path.display().to_string()),
+                        warm_level: agam_pkg::DaemonWarmLevel::Lowered,
+                    },
+                )]),
+            },
+        )
+        .expect("write daemon warm index");
+
+        let warm = compile_dev_source_file(&file, true, false).expect("dev compile should succeed");
+        let warm = warm.expect("warm state should be rebuilt locally");
+        assert!(
+            warm.module.is_some(),
+            "incomplete disk warm state should not be reused for runnable dev flows"
+        );
+        assert!(warm.hir.is_some());
+        assert!(warm.source_features.is_some());
 
         let _ = fs::remove_dir_all(root);
     }
@@ -8729,8 +13390,14 @@ mod tests {
         let file = root.join("broken.agam");
         fs::write(&file, "fn main(): missing_name\n").expect("write invalid source");
 
-        let error = run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
-            .expect_err("one-shot daemon run should fail");
+        let error = run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect_err("one-shot daemon run should fail");
         assert!(error.contains("semantic error"));
 
         let status = read_daemon_status(&root)
@@ -8916,8 +13583,14 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
-            .expect("one-shot daemon run should succeed");
+        run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect("one-shot daemon run should succeed");
         assert!(daemon_status_path(&root).is_file());
 
         clear_daemon_status(Some(file), false).expect("clear daemon status should succeed");
@@ -8955,8 +13628,14 @@ mod tests {
         let file = root.join("main.agam");
         fs::write(&file, "fn main(): println(\"hi\")\n").expect("write source");
 
-        run_daemon_foreground(Some(file.clone()), true, DAEMON_DEFAULT_POLL_MS, false, false)
-            .expect("one-shot daemon run should succeed");
+        run_daemon_foreground(
+            Some(file.clone()),
+            true,
+            DAEMON_DEFAULT_POLL_MS,
+            false,
+            false,
+        )
+        .expect("one-shot daemon run should succeed");
         fs::remove_file(&file).expect("remove source");
 
         let daemon_target = resolve_daemon_workspace_target(Some(root.clone()))
@@ -9581,13 +14260,578 @@ fn hot(n: i64) -> i64 { return n + 1; }
 
     #[test]
     fn test_sdk_supported_targets_begin_with_host_native() {
-        let targets = sdk_supported_targets();
+        let targets = sdk_supported_targets(None, None);
         assert!(!targets.is_empty());
         assert_eq!(targets[0].name, "host-native");
         assert_eq!(
             targets[0].backend,
             agam_runtime::contract::RuntimeBackend::Llvm
         );
+    }
+
+    #[test]
+    fn test_sdk_supported_targets_record_packaged_android_sysroot() {
+        let targets = sdk_supported_targets(None, Some("target-packs/android-arm64/sysroot"));
+        let android = targets
+            .iter()
+            .find(|target| target.target_triple == "aarch64-linux-android21")
+            .expect("default SDK target list should include android");
+        assert_eq!(
+            android.packaged_sysroot.as_deref(),
+            Some("target-packs/android-arm64/sysroot")
+        );
+    }
+
+    #[test]
+    fn test_requested_backend_for_command_uses_llvm_when_target_is_selected() {
+        let requested = requested_backend_for_command(
+            Backend::Auto,
+            None,
+            false,
+            Some("aarch64-linux-android21"),
+        );
+        assert_eq!(requested, Backend::Llvm);
+    }
+
+    #[test]
+    fn test_requested_backend_from_environment_ignores_jit_for_build() {
+        let environment = environment_report(
+            "dev",
+            None,
+            Some(agam_runtime::contract::RuntimeBackend::Jit),
+        );
+        assert_eq!(
+            requested_backend_from_environment(&environment.environment, false),
+            None
+        );
+        assert_eq!(
+            requested_backend_from_environment(&environment.environment, true),
+            Some(Backend::Jit)
+        );
+    }
+
+    #[test]
+    fn test_sdk_supported_targets_include_selected_environment_target() {
+        let environment = environment_report(
+            "release-linux",
+            Some("x86_64-unknown-linux-musl"),
+            Some(agam_runtime::contract::RuntimeBackend::Llvm),
+        );
+
+        let targets = sdk_supported_targets(Some(&environment), None);
+        assert!(targets.iter().any(|target| {
+            target.name == "release-linux"
+                && target.target_triple == "x86_64-unknown-linux-musl"
+                && target.backend == agam_runtime::contract::RuntimeBackend::Llvm
+        }));
+    }
+
+    #[test]
+    fn test_package_sdk_distribution_records_selected_environment_metadata() {
+        let root = temp_dir("sdk_env_metadata");
+        let output = root.join("dist");
+        let environment = environment_report(
+            "release-linux",
+            Some("x86_64-unknown-linux-musl"),
+            Some(agam_runtime::contract::RuntimeBackend::Llvm),
+        );
+
+        let outcome = package_sdk_distribution(&output, None, None, Some(&environment), false)
+            .expect("package sdk should succeed");
+        let manifest = agam_pkg::read_sdk_distribution_manifest_from_path(&outcome.manifest_path)
+            .expect("read sdk manifest");
+
+        assert!(manifest.notes.iter().any(|note| {
+            note.contains("selected environment `release-linux`")
+                && note.contains("target `x86_64-unknown-linux-musl`")
+                && note.contains("backend `llvm`")
+        }));
+        assert!(manifest.supported_targets.iter().any(|target| {
+            target.name == "release-linux"
+                && target.target_triple == "x86_64-unknown-linux-musl"
+                && target.backend == agam_runtime::contract::RuntimeBackend::Llvm
+        }));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_package_sdk_distribution_stages_android_target_pack() {
+        let root = temp_dir("sdk_android_target_pack");
+        let output = root.join("dist");
+        let sysroot = root.join("android-sysroot");
+        fs::create_dir_all(sysroot.join("usr").join("include"))
+            .expect("create synthetic android sysroot");
+
+        let outcome = package_sdk_distribution(&output, None, Some(&sysroot), None, false)
+            .expect("package sdk should accept an explicit android sysroot");
+        let manifest = agam_pkg::read_sdk_distribution_manifest_from_path(&outcome.manifest_path)
+            .expect("read sdk manifest");
+        let expected_sysroot = output
+            .join("target-packs")
+            .join("android-arm64")
+            .join("sysroot");
+        let android = manifest
+            .supported_targets
+            .iter()
+            .find(|target| target.target_triple == "aarch64-linux-android21")
+            .expect("manifest should include android target support");
+        assert_eq!(
+            android.packaged_sysroot.as_deref(),
+            Some("target-packs/android-arm64/sysroot")
+        );
+        assert!(
+            expected_sysroot.join("usr").is_dir(),
+            "staged SDK should include the Android sysroot target pack"
+        );
+        assert_eq!(
+            outcome.android_sysroot_root.as_deref(),
+            Some(expected_sysroot.as_path())
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_sanitize_headless_filename_keeps_single_file_name() {
+        assert_eq!(
+            sanitize_headless_filename("../tmp\\demo script"),
+            "demo_script.agam"
+        );
+        assert_eq!(sanitize_headless_filename("session.agam"), "session.agam");
+    }
+
+    #[test]
+    fn test_repl_execution_cache_reuses_warm_state_for_unchanged_source() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            filename: "demo.agam".into(),
+            backend: HeadlessExecutionBackend::Jit,
+            ..HeadlessExecutionRequest::default()
+        };
+        let mut cache = ReplExecutionCache::new(&request.filename)
+            .expect("repl execution cache should initialize");
+
+        let first_ptr = {
+            cache
+                .materialize_request(&request)
+                .expect("request materialization should succeed");
+            let warm = cache
+                .ensure_materialized_warm_state(false)
+                .expect("first warm state build should succeed");
+            warm as *const WarmState as usize
+        };
+        let second_ptr = {
+            cache
+                .materialize_request(&request)
+                .expect("second request materialization should succeed");
+            let warm = cache
+                .ensure_materialized_warm_state(false)
+                .expect("second warm state lookup should succeed");
+            warm as *const WarmState as usize
+        };
+
+        assert_eq!(
+            first_ptr, second_ptr,
+            "unchanged REPL buffers should reuse the cached warm state"
+        );
+    }
+
+    #[test]
+    fn test_repl_execution_cache_invalidates_warm_state_when_source_changes() {
+        let mut request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            filename: "demo.agam".into(),
+            backend: HeadlessExecutionBackend::Jit,
+            ..HeadlessExecutionRequest::default()
+        };
+        let mut cache = ReplExecutionCache::new(&request.filename)
+            .expect("repl execution cache should initialize");
+
+        cache
+            .materialize_request(&request)
+            .expect("first request materialization should succeed");
+        let first_hash = cache
+            .source_hash
+            .clone()
+            .expect("materialized request should record a source hash");
+        cache
+            .ensure_materialized_warm_state(false)
+            .expect("first warm state build should succeed");
+        assert!(
+            cache
+                .daemon_session
+                .cache
+                .get(cache.source_path())
+                .expect("daemon cache for REPL entry")
+                .contains_key(&first_hash)
+        );
+
+        request.source = "fn main() -> i32 { return 1; }\n".into();
+
+        cache
+            .materialize_request(&request)
+            .expect("changed request materialization should succeed");
+        let second_hash = cache
+            .source_hash
+            .clone()
+            .expect("updated request should record a source hash");
+
+        assert_ne!(
+            first_hash, second_hash,
+            "changed REPL buffers should update the cached source hash"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cache.source_path()).expect("read materialized REPL source"),
+            request.source
+        );
+        cache
+            .ensure_materialized_warm_state(false)
+            .expect("changed warm state build should succeed");
+        let versions = cache
+            .daemon_session
+            .cache
+            .get(cache.source_path())
+            .expect("daemon cache for changed REPL entry");
+        assert!(
+            versions.contains_key(&second_hash),
+            "changed REPL buffers should warm the new source hash"
+        );
+        assert!(
+            !versions.contains_key(&first_hash),
+            "changed REPL buffers should invalidate the previous daemon warm state version"
+        );
+    }
+
+    #[test]
+    fn test_repl_execution_cache_updates_manifest_when_filename_changes() {
+        let mut cache =
+            ReplExecutionCache::new("demo.agam").expect("repl execution cache should initialize");
+        let previous_source_path = cache.source_path().clone();
+
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            filename: "renamed.agam".into(),
+            backend: HeadlessExecutionBackend::Jit,
+            ..HeadlessExecutionRequest::default()
+        };
+
+        cache
+            .materialize_request(&request)
+            .expect("renamed request materialization should succeed");
+
+        let manifest = agam_pkg::read_workspace_manifest_from_path(&cache.manifest_path)
+            .expect("read REPL workspace manifest");
+        assert_eq!(
+            manifest.project.entry.as_deref(),
+            Some("src/renamed.agam"),
+            "REPL manifest should track the current buffer filename"
+        );
+        assert_eq!(
+            cache.source_path(),
+            &cache.root.join("src").join("renamed.agam")
+        );
+        assert!(
+            !previous_source_path.exists(),
+            "renaming the REPL buffer should remove the stale source path"
+        );
+    }
+
+    #[test]
+    fn test_execute_repl_request_runs_in_process() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            filename: "demo.agam".into(),
+            backend: HeadlessExecutionBackend::Jit,
+            ..HeadlessExecutionRequest::default()
+        };
+        let mut cache = ReplExecutionCache::new(&request.filename)
+            .expect("repl execution cache should initialize");
+
+        let exit_code =
+            execute_repl_request(&request, &mut cache, false).expect("REPL request should run");
+        assert_eq!(exit_code, 0);
+    }
+
+    #[test]
+    fn test_execute_headless_request_runs_jit_in_process_and_captures_stdout() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main(): println(\"hi\")\n".into(),
+            filename: "snippet.agam".into(),
+            backend: HeadlessExecutionBackend::Jit,
+            ..HeadlessExecutionRequest::default()
+        };
+
+        let response = execute_headless_request(&request, false);
+        assert!(
+            response.success,
+            "expected successful headless response: {response:?}"
+        );
+        assert_eq!(response.exit_code, Some(0));
+        assert_eq!(response.stdout, "hi\n");
+        assert!(response.stderr.is_empty());
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn test_execute_headless_request_buffers_jit_parse_errors_into_stderr() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main(".into(),
+            filename: "broken.agam".into(),
+            backend: HeadlessExecutionBackend::Jit,
+            ..HeadlessExecutionRequest::default()
+        };
+
+        let response = execute_headless_request(&request, false);
+        assert!(!response.success);
+        assert!(response.exit_code.is_none());
+        assert!(response.stdout.is_empty());
+        assert!(
+            response.stderr.contains("error"),
+            "expected rendered parse diagnostics in stderr: {response:?}"
+        );
+        assert!(response.error.is_some());
+    }
+
+    #[test]
+    fn test_execute_headless_request_runs_available_non_jit_backend_in_process() {
+        let backend = if resolve_llvm_run_toolchain().is_some() {
+            HeadlessExecutionBackend::Llvm
+        } else if command_exists(default_c_compiler()) {
+            HeadlessExecutionBackend::C
+        } else {
+            return;
+        };
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            filename: "native.agam".into(),
+            backend,
+            policy: HeadlessExecutionPolicy {
+                allow_native_backends: true,
+                ..HeadlessExecutionPolicy::default()
+            },
+            ..HeadlessExecutionRequest::default()
+        };
+
+        let response = execute_headless_request(&request, false);
+        assert!(
+            response.success,
+            "expected successful non-JIT headless response: {response:?}"
+        );
+        assert_eq!(response.exit_code, Some(0));
+        assert!(response.stdout.is_empty());
+        assert!(response.stderr.is_empty());
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn test_build_exec_request_from_inline_source_uses_cli_options() {
+        let request = build_exec_request(
+            None,
+            Some("fn main() -> i32 { return 0; }\n".into()),
+            Some("agent.agam".into()),
+            Backend::Llvm,
+            3,
+            true,
+            vec!["hello".into(), "world".into()],
+            "process".into(),
+            false,
+            false,
+        )
+        .expect("inline exec request should build");
+
+        assert_eq!(request.filename, "agent.agam");
+        assert_eq!(request.source, "fn main() -> i32 { return 0; }\n");
+        assert_eq!(request.backend, HeadlessExecutionBackend::Llvm);
+        assert_eq!(request.opt_level, 3);
+        assert!(request.fast);
+        assert_eq!(request.args, vec!["hello".to_string(), "world".to_string()]);
+        assert!(request.policy.allow_native_backends);
+    }
+
+    #[test]
+    fn test_build_exec_request_from_file_reads_source_and_defaults_filename() {
+        let root = temp_dir("exec_request_file");
+        let file = root.join("demo.agam");
+        fs::write(&file, "fn main() -> i32 { return 0; }\n").expect("write source file");
+
+        let request = build_exec_request(
+            Some(file.clone()),
+            None,
+            None,
+            Backend::Jit,
+            2,
+            false,
+            Vec::new(),
+            "process".into(),
+            false,
+            false,
+        )
+        .expect("file exec request should build");
+
+        assert_eq!(request.filename, "demo.agam");
+        assert_eq!(request.source, "fn main() -> i32 { return 0; }\n");
+        assert_eq!(request.backend, HeadlessExecutionBackend::Jit);
+        assert!(!request.policy.allow_native_backends);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_normalize_headless_request_rejects_source_over_policy_limit() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            policy: HeadlessExecutionPolicy {
+                max_source_bytes: 8,
+                ..HeadlessExecutionPolicy::default()
+            },
+            ..HeadlessExecutionRequest::default()
+        };
+
+        let error =
+            normalize_headless_request(&request).expect_err("oversized source should be rejected");
+        assert!(error.contains("exceeding the policy limit"));
+    }
+
+    #[test]
+    fn test_normalize_headless_request_rejects_too_many_args() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            args: vec!["alpha".into(), "beta".into()],
+            policy: HeadlessExecutionPolicy {
+                max_arg_count: 1,
+                ..HeadlessExecutionPolicy::default()
+            },
+            ..HeadlessExecutionRequest::default()
+        };
+
+        let error = normalize_headless_request(&request)
+            .expect_err("requests exceeding the arg-count policy should be rejected");
+        assert!(error.contains("exceeding the policy limit"));
+    }
+
+    #[test]
+    fn test_normalize_headless_request_rejects_native_backend_without_policy_opt_in() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            backend: HeadlessExecutionBackend::Llvm,
+            ..HeadlessExecutionRequest::default()
+        };
+
+        let error = normalize_headless_request(&request)
+            .expect_err("native backend should require explicit policy opt-in");
+        assert!(error.contains("policy.allow_native_backends=true"));
+    }
+
+    #[test]
+    fn test_normalize_headless_request_rejects_zero_runtime_limit() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            policy: HeadlessExecutionPolicy {
+                max_runtime_ms: 0,
+                ..HeadlessExecutionPolicy::default()
+            },
+            ..HeadlessExecutionRequest::default()
+        };
+
+        let error = normalize_headless_request(&request)
+            .expect_err("zero runtime limit should be rejected");
+        assert!(error.contains("max_runtime_ms"));
+    }
+
+    #[test]
+    fn test_normalize_headless_request_rejects_zero_memory_limit() {
+        let request = HeadlessExecutionRequest {
+            source: "fn main() -> i32 { return 0; }\n".into(),
+            policy: HeadlessExecutionPolicy {
+                max_memory_bytes: 0,
+                ..HeadlessExecutionPolicy::default()
+            },
+            ..HeadlessExecutionRequest::default()
+        };
+
+        let error =
+            normalize_headless_request(&request).expect_err("zero memory limit should be rejected");
+        assert!(error.contains("max_memory_bytes"));
+    }
+
+    #[test]
+    fn test_cli_parses_exec_command_with_inline_source() {
+        let cli = Cli::try_parse_from([
+            "agamc",
+            "exec",
+            "--source",
+            "fn main() -> i32 { return 0; }",
+            "--backend",
+            "jit",
+            "--arg",
+            "alpha",
+        ])
+        .expect("exec command should parse");
+
+        match cli.command {
+            Command::Exec {
+                json,
+                pretty,
+                source,
+                backend,
+                args,
+                ..
+            } => {
+                assert!(!json);
+                assert!(!pretty);
+                assert_eq!(source.as_deref(), Some("fn main() -> i32 { return 0; }"));
+                assert_eq!(backend, Backend::Jit);
+                assert_eq!(args, vec!["alpha".to_string()]);
+            }
+            other => panic!("expected exec command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_repl_command_understands_backend_and_fast_commands() {
+        assert_eq!(
+            parse_repl_command(":backend llvm").expect("parse backend"),
+            Some(ReplCommandKind::Backend(HeadlessExecutionBackend::Llvm))
+        );
+        assert_eq!(
+            parse_repl_command(":fast on").expect("parse fast"),
+            Some(ReplCommandKind::Fast(true))
+        );
+        assert_eq!(
+            parse_repl_command(":opt 2").expect("parse opt"),
+            Some(ReplCommandKind::Opt(2))
+        );
+    }
+
+    #[test]
+    fn test_parse_repl_command_rejects_unknown_commands() {
+        let error = parse_repl_command(":wat").expect_err("unknown repl commands should fail");
+        assert!(error.contains("unknown repl command"));
+    }
+
+    #[test]
+    fn test_optional_workspace_environment_allows_missing_path_without_env() {
+        let resolved = maybe_resolve_optional_workspace_environment(None, None)
+            .expect("missing workspace path should be allowed when no env was requested");
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn test_optional_workspace_environment_allows_non_workspace_path_without_env() {
+        let root = temp_dir("sdk_optional_env_free");
+        let resolved = maybe_resolve_optional_workspace_environment(Some(root.clone()), None)
+            .expect("non-workspace path should be allowed when no env was requested");
+        assert!(resolved.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_optional_workspace_environment_requires_workspace_when_env_is_requested() {
+        let error = maybe_resolve_optional_workspace_environment(None, Some("release"))
+            .expect_err("selecting an environment should require a workspace");
+        assert!(error.contains("`--env` requires a workspace"));
     }
 
     #[test]
@@ -9774,5 +15018,773 @@ fn hot(n: i64) -> i64 { return n + 1; }
         let error = validate_release_tuning(Backend::Llvm, &tuning)
             .expect_err("cross target should reject native cpu");
         assert!(error.contains("--fast"));
+    }
+
+    #[test]
+    fn test_publish_workspace_to_registry_writes_local_index_entry() {
+        let root = temp_dir("publish_workspace");
+        let workspace = root.join("workspace");
+        let src = workspace.join("src");
+        let entry = src.join("main.agam");
+        fs::create_dir_all(&src).expect("create source directory");
+        fs::write(&entry, render_project_entry("publish-demo")).expect("write entry source");
+
+        let mut manifest = agam_pkg::scaffold_workspace_manifest("publish-demo");
+        manifest.project.keywords = vec!["math".into(), "ml".into()];
+        manifest.dependencies.insert(
+            "core".into(),
+            agam_pkg::DependencySpec {
+                version: Some("^1.0".into()),
+                optional: true,
+                features: vec!["simd".into()],
+                ..agam_pkg::DependencySpec::default()
+            },
+        );
+        agam_pkg::write_workspace_manifest_to_path(
+            &agam_pkg::default_manifest_path(&workspace),
+            &manifest,
+        )
+        .expect("write manifest");
+
+        let index_root = root.join("registry-index");
+        let report = publish_workspace_to_registry(
+            Some(workspace.clone()),
+            &index_root,
+            &["alice".into(), " bob ".into(), "alice".into()],
+            Some(&"Sample package".to_string()),
+            Some(&"https://example.com/publish-demo".to_string()),
+            Some(&"https://github.com/agam-lang/publish-demo".to_string()),
+            Some(&"https://cdn.example.com/publish-demo-0.1.0.agam-src.tar.gz".to_string()),
+            false,
+            false,
+            false,
+        )
+        .expect("publish should succeed");
+
+        assert!(!report.dry_run);
+        assert!(!report.official);
+        assert!(report.bootstrapped_config);
+        assert_eq!(report.owners, vec!["alice".to_string(), "bob".to_string()]);
+        assert!(report.receipt.is_some());
+        assert!(index_root.join("config.json").is_file());
+
+        let config = agam_pkg::read_registry_config(&index_root).expect("read registry config");
+        assert_eq!(
+            config.format_version,
+            agam_pkg::REGISTRY_INDEX_FORMAT_VERSION
+        );
+
+        let entry =
+            agam_pkg::read_registry_package_entry(&index_root, "publish-demo").expect("read entry");
+        assert_eq!(entry.owners, vec!["alice".to_string(), "bob".to_string()]);
+        assert_eq!(entry.description.as_deref(), Some("Sample package"));
+        assert_eq!(
+            entry.homepage.as_deref(),
+            Some("https://example.com/publish-demo")
+        );
+        assert_eq!(
+            entry.repository.as_deref(),
+            Some("https://github.com/agam-lang/publish-demo")
+        );
+        assert_eq!(entry.keywords, vec!["math".to_string(), "ml".to_string()]);
+        assert_eq!(entry.releases.len(), 1);
+        assert_eq!(entry.releases[0].dependencies.len(), 1);
+        assert_eq!(entry.releases[0].dependencies[0].name, "core");
+        assert_eq!(entry.releases[0].dependencies[0].version_req, "^1.0");
+        assert!(entry.releases[0].dependencies[0].optional);
+        assert_eq!(
+            entry.releases[0].dependencies[0].features,
+            vec!["simd".to_string()]
+        );
+        assert_eq!(
+            entry.releases[0].download_url.as_deref(),
+            Some("https://cdn.example.com/publish-demo-0.1.0.agam-src.tar.gz")
+        );
+        let provenance = entry.releases[0]
+            .provenance
+            .as_ref()
+            .expect("publish should record provenance");
+        assert_eq!(provenance.published_by.as_deref(), Some("alice"));
+        assert_eq!(
+            provenance.source_repository.as_deref(),
+            Some("https://github.com/agam-lang/publish-demo")
+        );
+        assert_eq!(provenance.source_checksum, report.manifest.checksum);
+        assert_eq!(
+            provenance.manifest_checksum,
+            report.manifest.manifest_checksum
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_publish_workspace_to_registry_dry_run_keeps_index_clean() {
+        let root = temp_dir("publish_dry_run");
+        let workspace = root.join("workspace");
+        let src = workspace.join("src");
+        let entry = src.join("main.agam");
+        fs::create_dir_all(&src).expect("create source directory");
+        fs::write(&entry, render_project_entry("dry-run-demo")).expect("write entry source");
+        agam_pkg::write_workspace_manifest_to_path(
+            &agam_pkg::default_manifest_path(&workspace),
+            &agam_pkg::scaffold_workspace_manifest("dry-run-demo"),
+        )
+        .expect("write manifest");
+
+        let index_root = root.join("registry-index");
+        let report = publish_workspace_to_registry(
+            Some(workspace.clone()),
+            &index_root,
+            &[],
+            None,
+            None,
+            None,
+            None,
+            false,
+            true,
+            false,
+        )
+        .expect("dry run should succeed");
+
+        assert!(report.dry_run);
+        assert!(report.receipt.is_none());
+        assert!(!report.bootstrapped_config);
+        assert_eq!(
+            report.index_path,
+            agam_pkg::registry_index_path(&report.manifest.name)
+        );
+        assert!(!index_root.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_publish_workspace_to_registry_supports_official_packages() {
+        let root = temp_dir("publish_official_workspace");
+        let workspace = root.join("workspace");
+        let src = workspace.join("src");
+        let entry = src.join("main.agam");
+        fs::create_dir_all(&src).expect("create source directory");
+        fs::write(&entry, render_project_entry("official-demo")).expect("write entry source");
+
+        let mut manifest = agam_pkg::scaffold_workspace_manifest("official-demo");
+        manifest.project.name = "agam-std".into();
+        agam_pkg::write_workspace_manifest_to_path(
+            &agam_pkg::default_manifest_path(&workspace),
+            &manifest,
+        )
+        .expect("write manifest");
+
+        let index_root = root.join("registry-index");
+        agam_pkg::write_registry_config(
+            &index_root,
+            &agam_pkg::RegistryConfig {
+                format_version: agam_pkg::REGISTRY_INDEX_FORMAT_VERSION,
+                api_url: None,
+                download_url: None,
+                name: Some("agam".into()),
+            },
+        )
+        .expect("write registry config");
+
+        let report = publish_workspace_to_registry(
+            Some(workspace.clone()),
+            &index_root,
+            &["agam-lang".into()],
+            None,
+            None,
+            Some(&"https://github.com/agam-lang/agam-std".to_string()),
+            None,
+            true,
+            false,
+            false,
+        )
+        .expect("official publish should succeed");
+
+        assert!(report.official);
+        let entry =
+            agam_pkg::read_registry_package_entry(&index_root, "agam-std").expect("read entry");
+        assert_eq!(entry.owners, vec!["agam-lang".to_string()]);
+        assert_eq!(entry.releases.len(), 1);
+        assert_eq!(entry.releases[0].version, manifest.project.version);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_inspect_registry_package_reads_entry_metadata() {
+        let root = temp_dir("registry_inspect");
+        let index_root = root.join("registry-index");
+        agam_pkg::write_registry_config(
+            &index_root,
+            &agam_pkg::RegistryConfig {
+                format_version: agam_pkg::REGISTRY_INDEX_FORMAT_VERSION,
+                api_url: None,
+                download_url: None,
+                name: Some("agam".into()),
+            },
+        )
+        .expect("write registry config");
+
+        agam_pkg::publish_to_registry_index(
+            &index_root,
+            &agam_pkg::PublishManifest {
+                name: "json".into(),
+                version: "1.2.0".into(),
+                agam_version: "0.1".into(),
+                checksum: "sha256-json".into(),
+                manifest_checksum: "manifest-json".into(),
+                description: Some("JSON support".into()),
+                keywords: vec!["json".into(), "parser".into()],
+                homepage: Some("https://example.com/json".into()),
+                repository: Some("https://github.com/agam-lang/json".into()),
+                download_url: None,
+                dependencies: vec![agam_pkg::RegistryReleaseDependency {
+                    name: "core".into(),
+                    version_req: "^1.0".into(),
+                    registry: None,
+                    optional: false,
+                    features: vec![],
+                }],
+                features: vec!["simd".into()],
+            },
+            &["alice".into()],
+            "2026-04-10T12:00:00Z",
+        )
+        .expect("publish package");
+
+        let report = inspect_registry_package(&index_root, "json").expect("inspect package");
+        assert_eq!(report.index_name, "agam");
+        assert_eq!(report.index_path, "js/on/json");
+        assert_eq!(report.entry.name, "json");
+        assert_eq!(report.entry.owners, vec!["alice".to_string()]);
+        assert_eq!(report.entry.description.as_deref(), Some("JSON support"));
+        assert_eq!(
+            report.entry.repository.as_deref(),
+            Some("https://github.com/agam-lang/json")
+        );
+        assert_eq!(report.entry.releases.len(), 1);
+        assert_eq!(report.entry.releases[0].version, "1.2.0");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_audit_registry_index_package_reports_release_history() {
+        let root = temp_dir("registry_audit");
+        let index_root = root.join("registry-index");
+        agam_pkg::write_registry_config(
+            &index_root,
+            &agam_pkg::RegistryConfig {
+                format_version: agam_pkg::REGISTRY_INDEX_FORMAT_VERSION,
+                api_url: None,
+                download_url: None,
+                name: Some("agam".into()),
+            },
+        )
+        .expect("write registry config");
+
+        agam_pkg::append_release_to_index(
+            &index_root,
+            "tensor",
+            &agam_pkg::RegistryRelease {
+                version: "0.3.0".into(),
+                checksum: "sha256-tensor".into(),
+                agam_version: "0.1".into(),
+                dependencies: vec![agam_pkg::RegistryReleaseDependency {
+                    name: "core".into(),
+                    version_req: "^1.0".into(),
+                    registry: None,
+                    optional: false,
+                    features: vec!["simd".into()],
+                }],
+                features: vec!["cuda".into()],
+                download_url: None,
+                provenance: None,
+                published_at: "2026-04-10T12:30:00Z".into(),
+                yanked: false,
+            },
+        )
+        .expect("append release");
+
+        let report =
+            audit_registry_index_package(&index_root, "tensor").expect("audit package history");
+        assert_eq!(report.index_name, "agam");
+        assert_eq!(report.index_path, "te/ns/tensor");
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|line| line.contains("package: tensor"))
+        );
+        assert!(report.lines.iter().any(|line| line.contains("releases: 1")));
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|line| line.contains("sha256-tensor"))
+        );
+        assert!(
+            report
+                .lines
+                .iter()
+                .any(|line| line.contains("dep: core ^1.0"))
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_install_registry_dependency_pins_latest_release_and_refreshes_lockfile() {
+        let root = temp_dir("registry_install");
+        let workspace = root.join("workspace");
+        let src = workspace.join("src");
+        let entry = src.join("main.agam");
+        fs::create_dir_all(&src).expect("create source directory");
+        fs::write(&entry, render_project_entry("install-demo")).expect("write entry source");
+        agam_pkg::write_workspace_manifest_to_path(
+            &agam_pkg::default_manifest_path(&workspace),
+            &agam_pkg::scaffold_workspace_manifest("install-demo"),
+        )
+        .expect("write manifest");
+
+        let index_root = root.join("mirror-index");
+        agam_pkg::write_registry_config(
+            &index_root,
+            &agam_pkg::RegistryConfig {
+                format_version: agam_pkg::REGISTRY_INDEX_FORMAT_VERSION,
+                api_url: None,
+                download_url: None,
+                name: Some("mirror".into()),
+            },
+        )
+        .expect("write registry config");
+        agam_pkg::append_release_to_index(
+            &index_root,
+            "json",
+            &agam_pkg::RegistryRelease {
+                version: "1.0.0".into(),
+                checksum: "sha256-json-100".into(),
+                agam_version: "0.1".into(),
+                dependencies: vec![],
+                features: vec![],
+                download_url: None,
+                provenance: None,
+                published_at: "2026-04-10T10:00:00Z".into(),
+                yanked: false,
+            },
+        )
+        .expect("append 1.0.0");
+        agam_pkg::append_release_to_index(
+            &index_root,
+            "json",
+            &agam_pkg::RegistryRelease {
+                version: "1.2.0".into(),
+                checksum: "sha256-json-120".into(),
+                agam_version: "0.1".into(),
+                dependencies: vec![],
+                features: vec![],
+                download_url: None,
+                provenance: None,
+                published_at: "2026-04-10T11:00:00Z".into(),
+                yanked: false,
+            },
+        )
+        .expect("append 1.2.0");
+
+        let report = install_registry_dependency(
+            Some(workspace.clone()),
+            &index_root,
+            DependencyTable::Main,
+            "json",
+            None,
+            false,
+        )
+        .expect("install dependency");
+
+        assert_eq!(report.index_name, "mirror");
+        assert_eq!(report.selected_version, "1.2.0");
+        assert!(report.added_new_entry);
+        assert!(report.changed_manifest);
+
+        let manifest = agam_pkg::read_workspace_manifest_from_path(&workspace.join("agam.toml"))
+            .expect("read updated manifest");
+        let spec = manifest.dependencies.get("json").expect("json dependency");
+        assert_eq!(spec.version.as_deref(), Some("1.2.0"));
+        assert_eq!(spec.registry.as_deref(), Some("mirror"));
+
+        let lockfile = agam_pkg::read_lockfile_from_path(&workspace.join("agam.lock"))
+            .expect("read refreshed lockfile");
+        assert_eq!(lockfile.packages.len(), 1);
+        assert_eq!(lockfile.packages[0].name, "json");
+        assert_eq!(lockfile.packages[0].version, "1.2.0");
+        assert_eq!(lockfile.packages[0].content_hash, "sha256-json-120");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_install_registry_profile_pins_curated_packages_and_refreshes_lockfile() {
+        let root = temp_dir("registry_profile_install");
+        let workspace = root.join("workspace");
+        let src = workspace.join("src");
+        let entry = src.join("main.agam");
+        fs::create_dir_all(&src).expect("create source directory");
+        fs::write(&entry, render_project_entry("profile-demo")).expect("write entry source");
+        agam_pkg::write_workspace_manifest_to_path(
+            &agam_pkg::default_manifest_path(&workspace),
+            &agam_pkg::scaffold_workspace_manifest("profile-demo"),
+        )
+        .expect("write manifest");
+
+        let index_root = root.join("registry-index");
+        agam_pkg::write_registry_config(
+            &index_root,
+            &agam_pkg::RegistryConfig {
+                format_version: agam_pkg::REGISTRY_INDEX_FORMAT_VERSION,
+                api_url: None,
+                download_url: None,
+                name: Some("agam".into()),
+            },
+        )
+        .expect("write registry config");
+        agam_pkg::append_release_to_index(
+            &index_root,
+            "agam-std",
+            &agam_pkg::RegistryRelease {
+                version: "0.1.0".into(),
+                checksum: "sha256-agam-std-010".into(),
+                agam_version: "0.1".into(),
+                dependencies: vec![],
+                features: vec![],
+                download_url: None,
+                provenance: None,
+                published_at: "2026-04-10T10:00:00Z".into(),
+                yanked: false,
+            },
+        )
+        .expect("append agam-std");
+        agam_pkg::append_release_to_index(
+            &index_root,
+            "agam-test",
+            &agam_pkg::RegistryRelease {
+                version: "0.1.3".into(),
+                checksum: "sha256-agam-test-013".into(),
+                agam_version: "0.1".into(),
+                dependencies: vec![],
+                features: vec![],
+                download_url: None,
+                provenance: None,
+                published_at: "2026-04-10T11:00:00Z".into(),
+                yanked: false,
+            },
+        )
+        .expect("append agam-test");
+
+        let report = install_registry_profile(
+            Some(workspace.clone()),
+            &index_root,
+            DependencyTable::Main,
+            "base",
+            false,
+        )
+        .expect("install curated profile");
+
+        assert_eq!(report.profile.name, "base");
+        assert_eq!(report.items.len(), 2);
+        assert!(report.items.iter().all(|item| item.added_new_entry));
+
+        let manifest = agam_pkg::read_workspace_manifest_from_path(&workspace.join("agam.toml"))
+            .expect("read updated manifest");
+        assert_eq!(
+            manifest
+                .dependencies
+                .get("agam-std")
+                .and_then(|spec| spec.version.as_deref()),
+            Some("0.1.0")
+        );
+        assert_eq!(
+            manifest
+                .dependencies
+                .get("agam-test")
+                .and_then(|spec| spec.version.as_deref()),
+            Some("0.1.3")
+        );
+
+        let lockfile = agam_pkg::read_lockfile_from_path(&workspace.join("agam.lock"))
+            .expect("read refreshed lockfile");
+        assert_eq!(lockfile.packages.len(), 2);
+        assert!(
+            lockfile
+                .packages
+                .iter()
+                .any(|package| package.name == "agam-std")
+        );
+        assert!(
+            lockfile
+                .packages
+                .iter()
+                .any(|package| package.name == "agam-test")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_update_registry_dependencies_advances_matching_manifest_entries() {
+        let root = temp_dir("registry_update");
+        let workspace = root.join("workspace");
+        let src = workspace.join("src");
+        let entry = src.join("main.agam");
+        fs::create_dir_all(&src).expect("create source directory");
+        fs::write(&entry, render_project_entry("update-demo")).expect("write entry source");
+
+        let mut manifest = agam_pkg::scaffold_workspace_manifest("update-demo");
+        manifest.dependencies.insert(
+            "json".into(),
+            agam_pkg::DependencySpec {
+                version: Some("1.0.0".into()),
+                features: vec!["simd".into()],
+                optional: true,
+                ..agam_pkg::DependencySpec::default()
+            },
+        );
+        agam_pkg::write_workspace_manifest_to_path(&workspace.join("agam.toml"), &manifest)
+            .expect("write manifest");
+
+        let index_root = root.join("registry-index");
+        agam_pkg::write_registry_config(
+            &index_root,
+            &agam_pkg::RegistryConfig {
+                format_version: agam_pkg::REGISTRY_INDEX_FORMAT_VERSION,
+                api_url: None,
+                download_url: None,
+                name: Some("agam".into()),
+            },
+        )
+        .expect("write registry config");
+        agam_pkg::append_release_to_index(
+            &index_root,
+            "json",
+            &agam_pkg::RegistryRelease {
+                version: "1.0.0".into(),
+                checksum: "sha256-json-100".into(),
+                agam_version: "0.1".into(),
+                dependencies: vec![],
+                features: vec![],
+                download_url: None,
+                provenance: None,
+                published_at: "2026-04-10T10:00:00Z".into(),
+                yanked: false,
+            },
+        )
+        .expect("append 1.0.0");
+        agam_pkg::append_release_to_index(
+            &index_root,
+            "json",
+            &agam_pkg::RegistryRelease {
+                version: "1.4.0".into(),
+                checksum: "sha256-json-140".into(),
+                agam_version: "0.1".into(),
+                dependencies: vec![],
+                features: vec![],
+                download_url: None,
+                provenance: None,
+                published_at: "2026-04-10T12:00:00Z".into(),
+                yanked: false,
+            },
+        )
+        .expect("append 1.4.0");
+
+        let report = update_registry_dependencies(
+            Some(workspace.clone()),
+            &index_root,
+            DependencyTable::Main,
+            &[],
+            false,
+        )
+        .expect("update dependency");
+
+        assert_eq!(report.index_name, "agam");
+        assert_eq!(report.items.len(), 1);
+        assert!(report.items[0].updated);
+        assert_eq!(report.items[0].previous_version.as_deref(), Some("1.0.0"));
+        assert_eq!(report.items[0].selected_version, "1.4.0");
+
+        let manifest = agam_pkg::read_workspace_manifest_from_path(&workspace.join("agam.toml"))
+            .expect("read updated manifest");
+        let spec = manifest.dependencies.get("json").expect("json dependency");
+        assert_eq!(spec.version.as_deref(), Some("1.4.0"));
+        assert_eq!(spec.registry, None);
+        assert_eq!(spec.features, vec!["simd".to_string()]);
+        assert!(spec.optional);
+
+        let lockfile = agam_pkg::read_lockfile_from_path(&workspace.join("agam.lock"))
+            .expect("read refreshed lockfile");
+        assert_eq!(lockfile.packages.len(), 1);
+        assert_eq!(lockfile.packages[0].name, "json");
+        assert_eq!(lockfile.packages[0].version, "1.4.0");
+        assert_eq!(lockfile.packages[0].content_hash, "sha256-json-140");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_yank_registry_release_marks_release_unavailable() {
+        let root = temp_dir("registry_yank");
+        let index_root = root.join("registry-index");
+        agam_pkg::write_registry_config(
+            &index_root,
+            &agam_pkg::RegistryConfig {
+                format_version: agam_pkg::REGISTRY_INDEX_FORMAT_VERSION,
+                api_url: None,
+                download_url: Some("https://registry.example.com/dl".into()),
+                name: Some("agam".into()),
+            },
+        )
+        .expect("write registry config");
+        agam_pkg::append_release_to_index(
+            &index_root,
+            "json",
+            &agam_pkg::RegistryRelease {
+                version: "1.0.0".into(),
+                checksum: "sha256-json-100".into(),
+                agam_version: "0.1".into(),
+                dependencies: vec![],
+                features: vec![],
+                download_url: Some(
+                    "https://registry.example.com/dl/json/1.0.0/json-1.0.0.agam-src.tar.gz".into(),
+                ),
+                provenance: Some(agam_pkg::RegistryReleaseProvenance {
+                    source_checksum: "sha256-json-100".into(),
+                    manifest_checksum: "manifest-json-100".into(),
+                    published_by: Some("alice".into()),
+                    source_repository: Some("https://github.com/agam-lang/json".into()),
+                }),
+                published_at: "2026-04-10T12:00:00Z".into(),
+                yanked: false,
+            },
+        )
+        .expect("append release");
+
+        let report =
+            yank_registry_release(&index_root, "json", "1.0.0", false).expect("yank release");
+        assert_eq!(report.index_name, "agam");
+        assert!(report.yanked);
+
+        let entry =
+            agam_pkg::read_registry_package_entry(&index_root, "json").expect("read package");
+        assert!(entry.releases[0].yanked);
+
+        let unyank =
+            yank_registry_release(&index_root, "json", "1.0.0", true).expect("unyank release");
+        assert!(!unyank.yanked);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_list_workspace_environments_reports_default_dev_environment() {
+        let root = temp_dir("env_list");
+        let workspace = root.join("workspace");
+        let src = workspace.join("src");
+        let entry = src.join("main.agam");
+        fs::create_dir_all(&src).expect("create source directory");
+        fs::write(&entry, render_project_entry("env-list-demo")).expect("write entry source");
+
+        let mut manifest = agam_pkg::scaffold_workspace_manifest("env-list-demo");
+        manifest.toolchain = Some(agam_pkg::ToolchainRequirement {
+            agam: "0.2.0".into(),
+            sdk: Some("host-native".into()),
+            target: Some("x86_64-pc-windows-msvc".into()),
+            runtime_abi: Some(agam_runtime::contract::RUNTIME_ABI_VERSION),
+            preferred_backend: Some(agam_runtime::contract::RuntimeBackend::Llvm),
+        });
+        manifest.environments.insert(
+            "dev".into(),
+            agam_pkg::EnvironmentSpec {
+                preferred_backend: Some(agam_runtime::contract::RuntimeBackend::Jit),
+                profiles: vec!["debug".into()],
+                ..agam_pkg::EnvironmentSpec::default()
+            },
+        );
+        manifest.environments.insert(
+            "release".into(),
+            agam_pkg::EnvironmentSpec {
+                target: Some("x86_64-unknown-linux-gnu".into()),
+                profiles: vec!["release".into()],
+                ..agam_pkg::EnvironmentSpec::default()
+            },
+        );
+        agam_pkg::write_workspace_manifest_to_path(&workspace.join("agam.toml"), &manifest)
+            .expect("write manifest");
+
+        let report =
+            list_workspace_environments(Some(workspace.clone())).expect("list environments");
+        assert_eq!(report.default_environment.as_deref(), Some("dev"));
+        assert_eq!(report.environments.len(), 2);
+        assert!(report.environments.iter().any(|env| env.name == "dev"));
+        assert!(report.environments.iter().any(|env| env.name == "release"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn test_inspect_workspace_environment_uses_selection_rules() {
+        with_clean_agam_registry_env(|| {
+            let root = temp_dir("env_inspect");
+            let workspace = root.join("workspace");
+            let src = workspace.join("src");
+            let entry = src.join("main.agam");
+            fs::create_dir_all(&src).expect("create source directory");
+            fs::write(&entry, render_project_entry("env-inspect-demo"))
+                .expect("write entry source");
+
+            let mut manifest = agam_pkg::scaffold_workspace_manifest("env-inspect-demo");
+            manifest.toolchain = Some(agam_pkg::ToolchainRequirement {
+                agam: "0.2.0".into(),
+                sdk: Some("host-native".into()),
+                target: Some("x86_64-pc-windows-msvc".into()),
+                runtime_abi: Some(agam_runtime::contract::RUNTIME_ABI_VERSION),
+                preferred_backend: Some(agam_runtime::contract::RuntimeBackend::Llvm),
+            });
+            manifest.dependencies.insert(
+                "json".into(),
+                agam_pkg::DependencySpec {
+                    version: Some("1.4.0".into()),
+                    ..agam_pkg::DependencySpec::default()
+                },
+            );
+            manifest.environments.insert(
+                "dev".into(),
+                agam_pkg::EnvironmentSpec {
+                    preferred_backend: Some(agam_runtime::contract::RuntimeBackend::Jit),
+                    profiles: vec!["debug".into()],
+                    ..agam_pkg::EnvironmentSpec::default()
+                },
+            );
+            agam_pkg::write_workspace_manifest_to_path(&workspace.join("agam.toml"), &manifest)
+                .expect("write manifest");
+
+            let report =
+                inspect_workspace_environment(Some(workspace.clone()), None).expect("inspect env");
+            assert!(report.selected_by_default);
+            assert_eq!(report.environment.name, "dev");
+            assert_eq!(report.environment.compiler, "0.2.0");
+            assert_eq!(report.environment.sdk.as_deref(), Some("host-native"));
+            assert_eq!(
+                report.environment.target.as_deref(),
+                Some("x86_64-pc-windows-msvc")
+            );
+            assert_eq!(
+                report.environment.preferred_backend,
+                Some(agam_runtime::contract::RuntimeBackend::Jit)
+            );
+            assert_eq!(report.environment.profiles, vec!["debug".to_string()]);
+            assert_eq!(report.environment.packages, vec!["json@1.4.0".to_string()]);
+
+            let _ = fs::remove_dir_all(root);
+        });
     }
 }

@@ -124,6 +124,8 @@ fn seed_from_terminator(terminator: &Terminator) -> HashSet<ValueId> {
 fn is_side_effectful(instr: &Instruction, live_locals: &HashSet<String>) -> bool {
     match &instr.op {
         Op::Call { .. } => true,
+        Op::EffectPerform { .. } => true,
+        Op::HandleWith { .. } => true,
         Op::StoreLocal { name, .. } | Op::Alloca { name, .. } => live_locals.contains(name),
         _ => false,
     }
@@ -160,6 +162,10 @@ fn mark_used_values(instr: &Instruction, used_values: &mut HashSet<ValueId>) {
         Op::Cast { value, .. } => {
             used_values.insert(*value);
         }
+        Op::EffectPerform { args, .. } => {
+            used_values.extend(args.iter().copied());
+        }
+        Op::HandleWith { .. } => {}
         Op::ConstInt(_)
         | Op::ConstFloat(_)
         | Op::ConstBool(_)

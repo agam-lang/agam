@@ -9,6 +9,9 @@
 *.swo
 __pycache__/
 *.pyc
+crates/agam_ffi/python/dist/
+crates/agam_ffi/python/build/
+crates/agam_ffi/python/*.egg-info/
 
 # OS
 .DS_Store

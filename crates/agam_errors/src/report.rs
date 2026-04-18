@@ -14,6 +14,10 @@ pub struct DiagnosticEmitter {
     diagnostics: Vec<Diagnostic>,
     /// Source files for rendering snippets.
     sources: HashMap<SourceId, SourceFile>,
+    /// Buffered rendered output for callers that need to capture diagnostics.
+    rendered_output: String,
+    /// Whether rendered diagnostics should also be mirrored to stderr.
+    render_to_stderr: bool,
     /// Number of errors emitted.
     error_count: usize,
     /// Number of warnings emitted.
@@ -26,8 +30,19 @@ impl DiagnosticEmitter {
         Self {
             diagnostics: Vec::new(),
             sources: HashMap::new(),
+            rendered_output: String::new(),
+            render_to_stderr: true,
             error_count: 0,
             warning_count: 0,
+        }
+    }
+
+    /// Create an emitter that buffers rendered diagnostics instead of writing
+    /// them directly to stderr.
+    pub fn buffered() -> Self {
+        Self {
+            render_to_stderr: false,
+            ..Self::new()
         }
     }
 
@@ -48,7 +63,7 @@ impl DiagnosticEmitter {
     }
 
     /// Render a diagnostic to stderr.
-    fn render(&self, diag: &Diagnostic) {
+    fn render(&mut self, diag: &Diagnostic) {
         // Level prefix with color
         let level_str = match diag.level {
             DiagnosticLevel::Error => "\x1b[1;31merror",
@@ -64,10 +79,10 @@ impl DiagnosticEmitter {
             .map(|c| format!("[{}]", c))
             .unwrap_or_default();
 
-        eprintln!(
+        self.render_line(&format!(
             "{}{}\x1b[1;37m: {}\x1b[0m",
             level_str, code_str, diag.message
-        );
+        ));
 
         // Render each label
         for label in &diag.labels {
@@ -77,27 +92,28 @@ impl DiagnosticEmitter {
 
             if let Some(source) = self.sources.get(&label.span.source_id) {
                 let (line, col) = source.offset_to_line_col(label.span.start as usize);
-                let line_text = source.line_text(line);
+                let source_path = source.path.clone();
+                let line_text = source.line_text(line).to_string();
                 let line_num = line + 1;
                 let col_num = col + 1;
 
                 // File location
-                eprintln!(
+                self.render_line(&format!(
                     " \x1b[1;34m-->\x1b[0m {}:{}:{}",
-                    source.path, line_num, col_num
-                );
+                    source_path, line_num, col_num
+                ));
 
                 // Line number gutter width
                 let gutter_width = format!("{}", line_num).len();
 
                 // Empty gutter line
-                eprintln!(" {:>gutter_width$} \x1b[1;34m|\x1b[0m", "");
+                self.render_line(&format!(" {:>gutter_width$} \x1b[1;34m|\x1b[0m", ""));
 
                 // Source line
-                eprintln!(
+                self.render_line(&format!(
                     " \x1b[1;34m{:>gutter_width$}\x1b[0m \x1b[1;34m|\x1b[0m {}",
                     line_num, line_text
-                );
+                ));
 
                 // Underline
                 let span_len = (label.span.end - label.span.start).max(1) as usize;
@@ -112,24 +128,42 @@ impl DiagnosticEmitter {
                     .take(span_len.min(line_text.len().saturating_sub(col)))
                     .collect::<String>();
 
-                eprintln!(
+                self.render_line(&format!(
                     " {:>gutter_width$} \x1b[1;34m|\x1b[0m {}{}{} {}\x1b[0m",
                     "", padding, color, underline, label.message
-                );
+                ));
             }
         }
 
         // Help text
         if let Some(help) = &diag.help {
-            eprintln!(" \x1b[1;36mhelp\x1b[0m: {}", help);
+            self.render_line(&format!(" \x1b[1;36mhelp\x1b[0m: {}", help));
         }
 
         // Note text
         if let Some(note) = &diag.note {
-            eprintln!(" \x1b[1;36mnote\x1b[0m: {}", note);
+            self.render_line(&format!(" \x1b[1;36mnote\x1b[0m: {}", note));
         }
 
-        eprintln!();
+        self.render_line("");
+    }
+
+    fn render_line(&mut self, line: &str) {
+        self.rendered_output.push_str(line);
+        self.rendered_output.push('\n');
+        if self.render_to_stderr {
+            eprintln!("{line}");
+        }
+    }
+
+    /// Return the currently buffered rendered output.
+    pub fn rendered_output(&self) -> &str {
+        &self.rendered_output
+    }
+
+    /// Take the buffered rendered output, leaving the emitter empty.
+    pub fn take_rendered_output(&mut self) -> String {
+        std::mem::take(&mut self.rendered_output)
     }
 
     /// Whether any errors were emitted.
@@ -226,5 +260,25 @@ mod tests {
 
         emitter.emit(diag);
         assert!(emitter.has_errors());
+    }
+
+    #[test]
+    fn test_buffered_emitter_captures_rendered_output() {
+        let mut emitter = DiagnosticEmitter::buffered();
+        emitter.add_source(SourceFile::new(
+            SourceId(0),
+            "test.agam".into(),
+            "let x = y\n".into(),
+        ));
+
+        emitter.emit(
+            Diagnostic::error("E0001", "unknown name")
+                .with_label(Label::primary(Span::new(SourceId(0), 8, 9), "not found")),
+        );
+
+        let rendered = emitter.take_rendered_output();
+        assert!(rendered.contains("unknown name"));
+        assert!(rendered.contains("test.agam:1:9"));
+        assert!(rendered.contains("not found"));
     }
 }

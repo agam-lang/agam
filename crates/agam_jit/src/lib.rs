@@ -631,6 +631,7 @@ struct CallCacheKey {
 thread_local! {
     static JIT_RUNTIME_ARGS: RefCell<RuntimeArgs> = RefCell::new(RuntimeArgs::default());
     static JIT_CALL_CACHE: RefCell<CallCacheThreadState> = RefCell::new(CallCacheThreadState::default());
+    static JIT_OUTPUT_CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 static START_TIME: OnceLock<Instant> = OnceLock::new();
@@ -686,6 +687,15 @@ pub fn run_main_with_options(
 ) -> Result<i32, String> {
     let value = run_function_with_options(module, "main", args, options)?;
     jit_value_to_exit_code(value)
+}
+
+pub fn run_main_with_options_captured(
+    module: &MirModule,
+    args: &[String],
+    options: JitOptions,
+) -> Result<(i32, String), String> {
+    let (result, stdout) = with_captured_output(|| run_main_with_options(module, args, options));
+    result.map(|exit_code| (exit_code, stdout))
 }
 
 struct AgamJit {
@@ -1090,6 +1100,12 @@ impl AgamJit {
                     mem_flags,
                     pointer_type,
                 )
+            }
+            Op::EffectPerform { .. } => {
+                Err("MIR effect perform is not yet supported by the Cranelift JIT slice".into())
+            }
+            Op::HandleWith { .. } => {
+                Err("MIR handle-with is not yet supported by the Cranelift JIT slice".into())
             }
         }
     }
@@ -2184,6 +2200,10 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     }),
                 Op::Cast { target_ty, value } => infer_jit_type_from_type_id(*target_ty)
                     .unwrap_or_else(|| value_type(&layout, *value)),
+                Op::EffectPerform { .. } | Op::HandleWith { .. } => JitType::Int {
+                    bits: 32,
+                    signed: true,
+                },
             };
             layout.value_types.insert(instr.result, ty);
         }
@@ -2777,6 +2797,15 @@ fn with_runtime_args<T>(args: &[String], f: impl FnOnce() -> T) -> T {
     })
 }
 
+fn with_captured_output<T>(f: impl FnOnce() -> T) -> (T, String) {
+    JIT_OUTPUT_CAPTURE.with(|cell| {
+        let previous = cell.replace(Some(String::new()));
+        let result = f();
+        let captured = cell.replace(previous).unwrap_or_default();
+        (result, captured)
+    })
+}
+
 fn with_call_cache<T>(
     plan: &CallCachePlan,
     specializations: &SpecializationRegistry,
@@ -3162,32 +3191,47 @@ impl CallCacheKey {
 }
 
 extern "C" fn rt_print_i64(value: i64) {
-    print!("{value}");
+    emit_runtime_output(&value.to_string());
 }
 
 extern "C" fn rt_print_u64(value: u64) {
-    print!("{value}");
+    emit_runtime_output(&value.to_string());
 }
 
 extern "C" fn rt_print_f64(value: f64) {
-    print!("{value:.17}");
+    emit_runtime_output(&format!("{value:.17}"));
 }
 
 extern "C" fn rt_print_str(value: *const c_char) {
     if value.is_null() {
-        print!("null");
+        emit_runtime_output("null");
     } else {
         let rendered = unsafe { CStr::from_ptr(value) }.to_string_lossy();
-        print!("{rendered}");
+        emit_runtime_output(rendered.as_ref());
     }
 }
 
 extern "C" fn rt_print_bool(value: u8) {
-    print!("{}", if value == 0 { "false" } else { "true" });
+    emit_runtime_output(if value == 0 { "false" } else { "true" });
 }
 
 extern "C" fn rt_print_newline() {
-    println!();
+    emit_runtime_output("\n");
+}
+
+fn emit_runtime_output(fragment: &str) {
+    let captured = JIT_OUTPUT_CAPTURE.with(|cell| {
+        let mut state = cell.borrow_mut();
+        if let Some(buffer) = state.as_mut() {
+            buffer.push_str(fragment);
+            true
+        } else {
+            false
+        }
+    });
+    if !captured {
+        print!("{fragment}");
+    }
 }
 
 extern "C" fn rt_argc() -> i32 {
@@ -3337,6 +3381,23 @@ mod tests {
             .collect();
         let result = run_main_with_options(&mir, &runtime_args, options).expect("jit run failed");
         (result, take_last_call_cache_stats())
+    }
+
+    #[test]
+    fn test_run_main_with_options_captured_returns_program_stdout() {
+        let mir = lower_source_to_mir(
+            r#"
+fn main() -> i32:
+    println("hi")
+    return 0
+"#,
+        );
+
+        let (exit_code, stdout) = run_main_with_options_captured(&mir, &[], JitOptions::default())
+            .expect("captured jit run should succeed");
+
+        assert_eq!(exit_code, 0);
+        assert_eq!(stdout, "hi\n");
     }
 
     fn run_named_source(source: &str, function_name: &str) -> JitValue {

@@ -110,6 +110,8 @@ pub enum TokenKind {
     Handle,
     /// `resume` — resume from effect
     Resume,
+    /// `perform` — perform an effect operation
+    Perform,
 
     // ── Operators ────────────────────────────────────────
     /// `+`
@@ -272,6 +274,10 @@ impl TokenKind {
                 | TokenKind::Dyn
                 | TokenKind::Static
                 | TokenKind::Var
+                | TokenKind::Effect
+                | TokenKind::Handle
+                | TokenKind::Resume
+                | TokenKind::Perform
                 | TokenKind::True
                 | TokenKind::False
         )
@@ -369,6 +375,7 @@ pub fn lookup_keyword(ident: &str) -> Option<TokenKind> {
         "effect" => Some(TokenKind::Effect),
         "handle" => Some(TokenKind::Handle),
         "resume" => Some(TokenKind::Resume),
+        "perform" => Some(TokenKind::Perform),
         "true" => Some(TokenKind::True),
         "false" => Some(TokenKind::False),
         _ => None,

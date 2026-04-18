@@ -116,7 +116,9 @@ pub fn run(module: &mut MirModule) -> bool {
                     | Op::Alloca { .. }
                     | Op::GetField { .. }
                     | Op::GetIndex { .. }
-                    | Op::Phi(_) => {
+                    | Op::Phi(_)
+                    | Op::EffectPerform { .. }
+                    | Op::HandleWith { .. } => {
                         value_consts.remove(&instr.result);
                     }
                 }

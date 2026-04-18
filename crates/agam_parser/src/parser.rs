@@ -140,6 +140,8 @@ impl Parser {
             TokenKind::Impl => DeclKind::Impl(self.parse_impl_decl()?),
             TokenKind::Mod => DeclKind::Module(self.parse_module_decl(vis)?),
             TokenKind::Use | TokenKind::Import => DeclKind::Use(self.parse_use_decl(vis)?),
+            TokenKind::Effect => DeclKind::Effect(self.parse_effect_decl(vis)?),
+            TokenKind::Handle => DeclKind::Handler(self.parse_handler_decl()?),
             _ => {
                 let stmt = self.parse_statement()?;
                 return Ok(Decl {
@@ -465,6 +467,110 @@ impl Parser {
             alias,
             items: None,
             visibility: vis,
+            span: start,
+        })
+    }
+
+    /// Parse `effect Name { fn op1(params) -> RetType; fn op2(...); }`
+    fn parse_effect_decl(&mut self, vis: Visibility) -> Result<EffectDecl, ParseError> {
+        let start = self.advance().span; // effect
+        let name_tok = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(&name_tok.lexeme, name_tok.span);
+        self.eat(TokenKind::Colon);
+        self.skip_newlines();
+        self.expect(TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        let mut operations = Vec::new();
+        while self.peek_kind() == TokenKind::Fn {
+            self.advance(); // fn
+            let op_name_tok = self.expect(TokenKind::Identifier)?;
+            let op_name = Ident::new(&op_name_tok.lexeme, op_name_tok.span);
+            self.expect(TokenKind::LParen)?;
+            let mut params = Vec::new();
+            while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                let pname_tok = self.expect(TokenKind::Identifier)?;
+                let pname = Ident::new(&pname_tok.lexeme, pname_tok.span);
+                self.expect(TokenKind::Colon)?;
+                let pty = self.parse_type_expr()?;
+                params.push((pname, pty));
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen)?;
+            let return_type = if self.eat(TokenKind::Arrow) {
+                Some(self.parse_type_expr()?)
+            } else {
+                None
+            };
+            self.eat(TokenKind::Semicolon);
+            self.skip_newlines();
+            operations.push(EffectOp {
+                name: op_name,
+                params,
+                return_type,
+                span: op_name_tok.span,
+            });
+        }
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(EffectDecl {
+            name,
+            operations,
+            visibility: vis,
+            span: start,
+        })
+    }
+
+    /// Parse `handle handler_name for EffectName { fn op(params): body }`
+    fn parse_handler_decl(&mut self) -> Result<HandlerDecl, ParseError> {
+        let start = self.advance().span; // handle
+        let name_tok = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(&name_tok.lexeme, name_tok.span);
+
+        // expect `for` keyword
+        self.expect(TokenKind::For)?;
+
+        let effect_name_tok = self.expect(TokenKind::Identifier)?;
+        let effect_name = Ident::new(&effect_name_tok.lexeme, effect_name_tok.span);
+        self.eat(TokenKind::Colon);
+        self.skip_newlines();
+        self.expect(TokenKind::LBrace)?;
+        self.skip_newlines();
+
+        let mut clauses = Vec::new();
+        while self.peek_kind() == TokenKind::Fn {
+            self.advance(); // fn
+            let op_name_tok = self.expect(TokenKind::Identifier)?;
+            let op_name = Ident::new(&op_name_tok.lexeme, op_name_tok.span);
+            self.expect(TokenKind::LParen)?;
+            let mut params = Vec::new();
+            while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                let pname_tok = self.expect(TokenKind::Identifier)?;
+                params.push(Ident::new(&pname_tok.lexeme, pname_tok.span));
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RParen)?;
+            self.eat(TokenKind::Colon);
+            let body = self.parse_expression(0)?;
+            self.eat(TokenKind::Semicolon);
+            self.skip_newlines();
+            clauses.push(HandlerClause {
+                op_name,
+                params,
+                body,
+                span: op_name_tok.span,
+            });
+        }
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(HandlerDecl {
+            name,
+            effect_name,
+            clauses,
             span: start,
         })
     }
@@ -900,6 +1006,67 @@ impl Parser {
                     id,
                     span: tok.span,
                     kind: ExprKind::Await(Box::new(operand)),
+                })
+            }
+            TokenKind::Resume => {
+                self.advance();
+                self.expect(TokenKind::LParen)?;
+                let value = self.parse_expression(0)?;
+                self.expect(TokenKind::RParen)?;
+                Ok(Expr {
+                    id,
+                    span: tok.span,
+                    kind: ExprKind::Resume(Box::new(value)),
+                })
+            }
+            TokenKind::Perform => {
+                // perform Effect.operation(args)
+                self.advance();
+                let effect_tok = self.expect(TokenKind::Identifier)?;
+                let effect = Ident::new(&effect_tok.lexeme, effect_tok.span);
+                self.expect(TokenKind::Dot)?;
+                let op_tok = self.expect(TokenKind::Identifier)?;
+                let operation = Ident::new(&op_tok.lexeme, op_tok.span);
+                self.expect(TokenKind::LParen)?;
+                let mut args = Vec::new();
+                while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                    args.push(self.parse_expression(0)?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+                Ok(Expr {
+                    id,
+                    span: tok.span,
+                    kind: ExprKind::Perform {
+                        effect,
+                        operation,
+                        args,
+                    },
+                })
+            }
+            TokenKind::Handle => {
+                // handle <expr> with <handler_name>
+                self.advance();
+                let body = self.parse_expression(0)?;
+                // expect contextual "with"
+                let with_tok = self.expect(TokenKind::Identifier)?;
+                if with_tok.lexeme != "with" {
+                    return Err(self.error(format!(
+                        "expected `with` in handle expression, found `{}`",
+                        with_tok.lexeme
+                    )));
+                }
+                let handler_tok = self.expect(TokenKind::Identifier)?;
+                let handler = Ident::new(&handler_tok.lexeme, handler_tok.span);
+                Ok(Expr {
+                    id,
+                    span: tok.span,
+                    kind: ExprKind::HandleWith {
+                        body: Box::new(body),
+                        handler,
+                    },
                 })
             }
             _ => Err(self.error(format!("expected expression, found {:?}", tok.kind))),
@@ -1606,5 +1773,59 @@ mod tests {
     fn test_try_operator() {
         let expr = parse_expr("result?");
         assert!(matches!(expr.kind, ExprKind::Try(_)));
+    }
+
+    #[test]
+    fn test_parse_effect_decl() {
+        let module = parse_src("effect IO { fn read() -> String; fn write(s: String); }");
+        if let DeclKind::Effect(e) = &module.declarations[0].kind {
+            assert_eq!(e.name.name, "IO");
+            assert_eq!(e.operations.len(), 2);
+            assert_eq!(e.operations[0].name.name, "read");
+            assert!(e.operations[0].params.is_empty());
+            assert!(e.operations[0].return_type.is_some());
+            assert_eq!(e.operations[1].name.name, "write");
+            assert_eq!(e.operations[1].params.len(), 1);
+        } else {
+            panic!("not effect");
+        }
+    }
+
+    #[test]
+    fn test_parse_handler_decl() {
+        let module = parse_src(
+            "handle console_io for IO { fn read(): resume(\"hello\"); fn write(s): resume(s); }",
+        );
+        if let DeclKind::Handler(h) = &module.declarations[0].kind {
+            assert_eq!(h.name.name, "console_io");
+            assert_eq!(h.effect_name.name, "IO");
+            assert_eq!(h.clauses.len(), 2);
+            assert_eq!(h.clauses[0].op_name.name, "read");
+            assert_eq!(h.clauses[1].op_name.name, "write");
+        } else {
+            panic!("not handler");
+        }
+    }
+
+    #[test]
+    fn test_parse_perform_expr() {
+        let expr = parse_expr("perform IO.read()");
+        if let ExprKind::Perform { effect, operation, args } = &expr.kind {
+            assert_eq!(effect.name, "IO");
+            assert_eq!(operation.name, "read");
+            assert!(args.is_empty());
+        } else {
+            panic!("not perform");
+        }
+    }
+
+    #[test]
+    fn test_parse_handle_with_expr() {
+        let expr = parse_expr("handle x with console_io");
+        if let ExprKind::HandleWith { handler, .. } = &expr.kind {
+            assert_eq!(handler.name, "console_io");
+        } else {
+            panic!("not handle..with");
+        }
     }
 }

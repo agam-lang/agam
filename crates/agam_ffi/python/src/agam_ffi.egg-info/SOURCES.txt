@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+src/agam_ffi/__init__.py
+src/agam_ffi/tool.py
+src/agam_ffi.egg-info/PKG-INFO
+src/agam_ffi.egg-info/SOURCES.txt
+src/agam_ffi.egg-info/dependency_links.txt
+src/agam_ffi.egg-info/requires.txt
+src/agam_ffi.egg-info/top_level.txt
+tests/test_tool.py

@@ -32,25 +32,25 @@ This is the compact whole-program catalog for Agam's roadmap.
 17. `Phase 12`: complete
 18. `Phase 13`: complete
 19. `Phase 14`: complete
-20. `Phase 15`: complete
+20. `Phase 15`: partial
 21. `Phase 15A`: complete
 22. `Phase 15B`: complete
 23. `Phase 15C`: complete
 24. `Phase 15D`: complete
 25. `Phase 15E`: complete
-26. `Phase 15F`: open
-27. `Phase 15G`: partial
+26. `Phase 15F`: complete
+27. `Phase 15G`: complete
 28. `Phase 15H`: partial
-29. `Phase 16`: open
+29. `Phase 16`: complete
 30. `Phase 17`: partial
-31. `Phase 17A`: partial
-32. `Phase 17B`: open
-33. `Phase 17C`: open
-34. `Phase 17D`: open
-35. `Phase 17E`: open
-36. `Phase 17F`: open
-37. `Phase 18`: open
-38. `Phase 19`: open
+31. `Phase 17A`: complete
+32. `Phase 17B`: complete
+33. `Phase 17C`: complete
+34. `Phase 17D`: complete
+35. `Phase 17E`: complete
+36. `Phase 17F`: partial
+37. `Phase 18`: partial
+38. `Phase 19`: partial
 39. `Phase 20`: open
 40. `Phase 21`: open
 41. `Phase 22`: open
@@ -64,7 +64,7 @@ This is the compact whole-program catalog for Agam's roadmap.
 ## Where To Dive Deeper
 
 - Completed foundation phases: `details/foundation-00-05.md`, `details/language-and-runtime-06-10d.md`, `details/optimization-and-tooling-11-15c.md`
-- Active follow-on phases: `details/15F.md`, `details/15G.md`, `details/15H.md`
+- Current next-sequence detail files: `details/15F.md`, `details/15G.md`, `details/15H.md`, `details/16.md`, `details/17A.md`, `details/17B.md`
 - Immediate platform/runtime follow-on detail: `details/15A.md`, `details/15B.md`, `details/15C.md`
-- Open future phases: `details/16.md`, `details/17.md`, `details/17A.md` through `details/17F.md`, and `details/18.md` through `details/28.md`
+- Additional roadmap detail files: `details/17.md`, `details/17C.md` through `details/17F.md`, and `details/18.md` through `details/28.md`
 - Strategic priority summary: `info.md`

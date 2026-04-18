@@ -59,6 +59,7 @@ dependencies = [
  "agam_lexer",
  "agam_lsp",
  "agam_mir",
+ "agam_notebook",
  "agam_parser",
  "agam_pkg",
  "agam_profile",
@@ -66,9 +67,11 @@ dependencies = [
  "agam_sema",
  "agam_test",
  "clap",
+ "libc",
  "miette",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -83,6 +86,10 @@ dependencies = [
 [[package]]
 name = "agam_ffi"
 version = "0.1.0"
+dependencies = [
+ "agam_notebook",
+ "serde_json",
+]
 
 [[package]]
 name = "agam_fmt"
@@ -164,6 +171,10 @@ dependencies = [
 [[package]]
 name = "agam_notebook"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "agam_parser"
@@ -201,8 +212,10 @@ dependencies = [
 name = "agam_runtime"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

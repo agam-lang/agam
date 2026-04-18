@@ -336,6 +336,39 @@ impl MirLowering {
                     },
                 )
             }
+
+            HirExprKind::Perform {
+                effect,
+                operation,
+                args,
+            } => {
+                let arg_vals: Vec<ValueId> = args.iter().map(|a| self.lower_expr(a)).collect();
+                self.emit(
+                    ty,
+                    Op::EffectPerform {
+                        effect: effect.clone(),
+                        operation: operation.clone(),
+                        args: arg_vals,
+                    },
+                )
+            }
+
+            HirExprKind::HandleWith {
+                effect,
+                handler,
+                body,
+            } => {
+                let body_block = self.fresh_block();
+                self.emit(
+                    ty,
+                    Op::HandleWith {
+                        effect: effect.clone(),
+                        handler: handler.clone(),
+                        body: body_block,
+                    },
+                );
+                self.lower_expr(body)
+            }
         }
     }
 }

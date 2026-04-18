@@ -53,6 +53,60 @@ pub struct HandlerClauseDef {
     pub param_names: Vec<String>,
 }
 
+/// Builtin filesystem effect aligned with the first `agam_std::io` surface.
+pub fn std_filesystem_effect() -> EffectDef {
+    EffectDef {
+        name: "FileSystem".to_string(),
+        operations: vec![
+            EffectOpDef {
+                name: "exists".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "is_file".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "is_dir".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "create_dir_all".to_string(),
+                param_count: 1,
+                has_return: false,
+            },
+            EffectOpDef {
+                name: "read_to_string".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "read_lines".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "write_string".to_string(),
+                param_count: 2,
+                has_return: false,
+            },
+            EffectOpDef {
+                name: "append_string".to_string(),
+                param_count: 2,
+                has_return: false,
+            },
+            EffectOpDef {
+                name: "list_dir".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+        ],
+    }
+}
+
 /// Effect registry: tracks all declared effects and their handlers.
 pub struct EffectRegistry {
     effects: HashMap<String, EffectDef>,
@@ -65,6 +119,11 @@ impl EffectRegistry {
             effects: HashMap::new(),
             handlers: HashMap::new(),
         }
+    }
+
+    /// Register the current first-party stdlib effects.
+    pub fn register_std_effects(&mut self) {
+        self.register_effect(std_filesystem_effect());
     }
 
     /// Register a new effect.
@@ -219,7 +278,7 @@ impl CpsNode {
 mod tests {
     use super::*;
 
-    fn make_io_effect() -> EffectDef {
+    fn make_console_effect() -> EffectDef {
         EffectDef {
             name: "IO".to_string(),
             operations: vec![
@@ -258,7 +317,7 @@ mod tests {
     #[test]
     fn test_register_effect() {
         let mut reg = EffectRegistry::new();
-        reg.register_effect(make_io_effect());
+        reg.register_effect(make_console_effect());
         assert!(reg.get_effect("IO").is_some());
         assert!(reg.get_effect("State").is_none());
     }
@@ -266,7 +325,7 @@ mod tests {
     #[test]
     fn test_register_handler() {
         let mut reg = EffectRegistry::new();
-        reg.register_effect(make_io_effect());
+        reg.register_effect(make_console_effect());
         reg.register_handler(HandlerDef {
             name: "stdio".to_string(),
             effect_name: "IO".to_string(),
@@ -289,7 +348,7 @@ mod tests {
     #[test]
     fn test_find_operation() {
         let mut reg = EffectRegistry::new();
-        reg.register_effect(make_io_effect());
+        reg.register_effect(make_console_effect());
         let (eff, op) = reg.find_operation("print").unwrap();
         assert_eq!(eff.name, "IO");
         assert_eq!(op.param_count, 1);
@@ -298,7 +357,7 @@ mod tests {
     #[test]
     fn test_validate_handler_complete() {
         let mut reg = EffectRegistry::new();
-        reg.register_effect(make_io_effect());
+        reg.register_effect(make_console_effect());
         let handler = HandlerDef {
             name: "stdio".to_string(),
             effect_name: "IO".to_string(),
@@ -320,7 +379,7 @@ mod tests {
     #[test]
     fn test_validate_handler_incomplete() {
         let mut reg = EffectRegistry::new();
-        reg.register_effect(make_io_effect());
+        reg.register_effect(make_console_effect());
         let handler = HandlerDef {
             name: "partial".to_string(),
             effect_name: "IO".to_string(),
@@ -353,12 +412,54 @@ mod tests {
     #[test]
     fn test_multiple_effects() {
         let mut reg = EffectRegistry::new();
-        reg.register_effect(make_io_effect());
+        reg.register_effect(make_console_effect());
         reg.register_effect(make_state_effect());
         assert!(reg.get_effect("IO").is_some());
         assert!(reg.get_effect("State").is_some());
         let (eff, _) = reg.find_operation("get").unwrap();
         assert_eq!(eff.name, "State");
+    }
+
+    #[test]
+    fn test_register_std_effects() {
+        let mut reg = EffectRegistry::new();
+        reg.register_std_effects();
+
+        let effect = reg
+            .get_effect("FileSystem")
+            .expect("std filesystem effect should be registered");
+        let op_names = effect
+            .operations
+            .iter()
+            .map(|op| op.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            op_names,
+            vec![
+                "exists",
+                "is_file",
+                "is_dir",
+                "create_dir_all",
+                "read_to_string",
+                "read_lines",
+                "write_string",
+                "append_string",
+                "list_dir",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_find_std_filesystem_operation() {
+        let mut reg = EffectRegistry::new();
+        reg.register_std_effects();
+
+        let (effect, op) = reg
+            .find_operation("write_string")
+            .expect("write_string should resolve inside std effects");
+        assert_eq!(effect.name, "FileSystem");
+        assert_eq!(op.param_count, 2);
+        assert!(!op.has_return);
     }
 
     #[test]

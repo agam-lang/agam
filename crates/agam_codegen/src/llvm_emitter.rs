@@ -434,6 +434,7 @@ fn analyze_function(
                     .unwrap_or_else(LlvmType::default_int),
                 Op::Cast { target_ty, value } => infer_llvm_type_from_type_id(*target_ty)
                     .unwrap_or_else(|| value_type(&layout, *value)),
+                Op::EffectPerform { .. } | Op::HandleWith { .. } => LlvmType::default_int(),
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -579,6 +580,9 @@ fn analyze_function(
                                 default_sign_for_type(value_type(&layout, *value))
                             }),
                         ),
+                        Op::EffectPerform { .. } | Op::HandleWith { .. } => {
+                            default_sign_for_type(result_ty)
+                        }
                     };
 
                 if value_signs.get(&instr.result).copied() != Some(inferred_sign) {
@@ -2223,6 +2227,12 @@ impl LlvmEmitter {
             }
             Op::Phi(_) => {
                 return Err("LLVM backend does not yet support MIR phi nodes".into());
+            }
+            Op::EffectPerform { .. } => {
+                return Err("LLVM backend does not yet support MIR effect perform".into());
+            }
+            Op::HandleWith { .. } => {
+                return Err("LLVM backend does not yet support MIR handle-with".into());
             }
         }
 

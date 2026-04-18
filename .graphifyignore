@@ -1,0 +1,12 @@
+.git/
+.idea/
+.vscode/
+.venv/
+node_modules/
+target/
+out/
+coverage/
+.cache/
+__pycache__/
+graphify-out/
+*.log
