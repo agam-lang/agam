@@ -40,7 +40,7 @@ This is the compact whole-program catalog for Agam's roadmap.
 25. `Phase 15E`: complete
 26. `Phase 15F`: complete
 27. `Phase 15G`: complete
-28. `Phase 15H`: partial
+28. `Phase 15H`: complete
 29. `Phase 16`: complete
 30. `Phase 17`: partial
 31. `Phase 17A`: complete
@@ -48,11 +48,11 @@ This is the compact whole-program catalog for Agam's roadmap.
 33. `Phase 17C`: complete
 34. `Phase 17D`: complete
 35. `Phase 17E`: complete
-36. `Phase 17F`: partial
-37. `Phase 18`: partial
-38. `Phase 19`: partial
-39. `Phase 20`: open
-40. `Phase 21`: open
+36. `Phase 17F`: complete
+37. `Phase 18`: complete
+38. `Phase 19`: complete
+39. `Phase 20`: complete
+40. `Phase 21`: complete
 41. `Phase 22`: open
 42. `Phase 23`: open
 43. `Phase 24`: open

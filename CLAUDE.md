@@ -129,9 +129,25 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 
 **Detail:** `.agent/phases/details/15G.md`
 
+### Phase 20: Language Surface Expansion (completed)
+
+**Goal:** Expand parser and syntax to support effects natively.
+
+**Done:** `perform`, `handle`, and `effect` keywords, native parsing, and integration with semantic checker and resolver.
+
+**Detail:** `.agent/phases/details/20.md`
+
+### Phase 21: Runtime Hardening (completed)
+
+**Goal:** Implement OS-level sandboxing for headless execution.
+
+**Done:** Windows `JobObject` enforcement (memory/process limits), Linux `prctl` + `setrlimit` enforcement.
+
+**Detail:** `.agent/phases/details/21.md`
+
 ### Build Priority Order
 
-18 (sandbox hardening) → 19 (framework adapters) → 17F (stdlib/I/O)
+22 (broader stdlib) → 23 (agent capability expansion) → 24 (ecosystem integration)
 
 ---
 

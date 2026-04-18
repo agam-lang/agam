@@ -332,17 +332,17 @@ Agam is still under active compiler development. Important incomplete areas incl
 
 These are the active next phases from the repo's current program board:
 
-1. Phase 15H: Native LLVM SDK Distribution and Toolchain Bundles
-   - exercise the hosted-runner Windows/Linux SDK flow end to end
-   - confirm packaged Android target packs and post-download archive validation on GitHub infrastructure
-2. Phase 18: agent-facing execution tool hardening
-   - extend execution policy beyond request-size limits and native-backend gating
-3. Phase 19: LangChain and LlamaIndex wrappers
-   - validate and publish the packaged adapter hooks against live framework releases
-4. Phase 17F: standard library and native I/O expansion
-   - build on the new `agam_std::io` file/path helpers and keep pushing toward an effects-native I/O/networking story
+1. Phase 22: Broader Stdlib Growth
+   - expand `agam_std` beyond filesystem I/O to include networking, crypto, and async primitives
+   - keep new modules aligned with the effects model and distribution governance
+2. Phase 23: Agent Capability Expansion
+   - continue expanding the agent execution environment based on concrete sandbox enforcement
+3. Phase 24+: Ecosystem & Model Integration
+   - move into language server and ML-native capabilities
 
-Later anti-hallucination, model, and broader ecosystem phases resume after that sequence, starting with Phases 20 through 28.
+*Note: Phases 15H, 17F, 18, 19, 20 (Language Surface Expansion), and 21 (Runtime Hardening) are completed.*
+
+Later anti-hallucination, model, and broader ecosystem phases resume after that sequence, starting with Phase 25.
 
 ## Repository Layout
 

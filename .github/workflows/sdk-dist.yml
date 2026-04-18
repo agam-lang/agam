@@ -16,9 +16,6 @@ jobs:
   build-sdk:
     name: Build SDK (${{ matrix.host_platform }})
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        working-directory: agam
     strategy:
       fail-fast: false
       matrix:
@@ -138,7 +135,6 @@ jobs:
 
       - name: Export SDK manifest summary
         shell: python
-        working-directory: agam
         run: |
           from pathlib import Path
           import json
@@ -169,9 +165,9 @@ jobs:
           name: sdk-${{ matrix.host_platform }}
           if-no-files-found: error
           path: |
-            agam/dist/sdk/agam-sdk-${{ matrix.host_platform }}.${{ matrix.archive_ext }}
-            agam/dist/sdk/agam-sdk-${{ matrix.host_platform }}.${{ matrix.archive_ext }}.sha256
-            agam/dist/sdk/sdk-manifest-${{ matrix.host_platform }}.json
+            dist/sdk/agam-sdk-${{ matrix.host_platform }}.${{ matrix.archive_ext }}
+            dist/sdk/agam-sdk-${{ matrix.host_platform }}.${{ matrix.archive_ext }}.sha256
+            dist/sdk/sdk-manifest-${{ matrix.host_platform }}.json
 
   verify-artifacts:
     name: Verify archived SDK artifacts
