@@ -1,0 +1,9 @@
+   Compiling agam_driver v0.1.0 (C:\Users\ksvik\IdeaProjects\Agam-Lang\agam\crates\agam_driver)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.98s
+     Running unittests src\main.rs (agam\target\debug\deps\agamc-af71dce9c18a2f52.exe)
+
+running 1 test
+test tests::test_prewarm_daemon_entry_artifacts_populates_cache ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 82 filtered out; finished in 7.62s
+

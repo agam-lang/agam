@@ -1,0 +1,3 @@
+    Checking agam_driver v0.1.0 (C:\Users\ksvik\IdeaProjects\Agam-Lang\agam\crates\agam_driver)
+crates\agam_driver\src\main.rs:4408:1: error: unexpected closing delimiter: `}`: unexpected closing delimiter
+error: could not compile `agam_driver` (bin "agamc") due to 1 previous error

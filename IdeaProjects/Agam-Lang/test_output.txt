@@ -1,0 +1,185 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s
+     Running unittests src\main.rs (agam\target\debug\deps\agamc-af71dce9c18a2f52.exe)
+
+running 83 tests
+test tests::test_auto_build_backend_does_not_treat_wsl_llvm_as_native_aot_toolchain ... ok
+test tests::test_auto_run_backend_accepts_wsl_llvm_with_dev_opt_in ... ok
+test tests::test_auto_run_backend_falls_back_to_jit_without_external_toolchains ... ok
+test tests::test_bundled_llvm_candidate_paths_include_packaged_toolchain_layout ... ok
+test tests::test_auto_build_backend_keeps_aot_fallback_without_external_toolchains ... ok
+test tests::test_bundled_llvm_candidate_paths_support_bundle_root_override_layout ... ok
+test tests::test_auto_run_backend_ignores_wsl_llvm_without_dev_opt_in ... ok
+test tests::test_default_sdk_distribution_output_dir_uses_host_platform ... ok
+test tests::test_default_native_binary_output_path_uses_target_platform_extension ... ok
+test tests::test_daemon_prewarm_status_message_reports_missing_package_artifact ... ok
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_clear_status_12080_1775397081264725500
+project: agam_driver_daemon_clear_status_12080_1775397081264725500
+manifest: none
+mode: one-shot warm refresh
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_compile_dev_daemon_prewarm_12080_1775397081264863100
+error[E3001]: undeclared identifier 'y'
+project: agam_driver_compile_dev_daemon_prewarm_12080_1775397081264863100
+manifest: none
+mode: one-shot warm refresh
+ --> C:\Users\ksvik\AppData\Local\Temp\agam_driver_compile_semantic_error_12080_1775397081265137600\broken.agam:1:12
+   |
+test tests::test_ensure_build_output_parent_dir_creates_missing_directory ... ok
+ 1 | fn main(): y
+   |            ^ undeclared identifier 'y'
+
+test tests::test_daemon_refresh_snapshot_hint_uses_entry_file_for_single_file_workspace ... ok
+test tests::test_compile_file_rejects_undeclared_identifier ... ok
+test tests::test_compile_dev_source_file_keeps_warm_state_for_run ... ok
+test tests::test_compile_file_accepts_builtin_println ... ok
+test tests::test_compile_dev_source_file_skips_warm_state_when_not_running ... ok
+test tests::test_compile_file_with_warm_state_captures_mir_and_source_features ... ok
+test tests::test_active_daemon_status_ignores_error_status ... ok
+test tests::test_active_daemon_status_ignores_one_shot_snapshots ... ok
+test tests::test_dev_daemon_status_message_reports_snapshot_separately ... ok
+test tests::test_dev_daemon_status_message_reports_failure ... ok
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_prewarm_hash_mismatch_12080_1775397081293904100
+project: agam_driver_daemon_prewarm_hash_mismatch_12080_1775397081293904100
+manifest: none
+mode: one-shot warm refresh
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_prewarm_reuse_12080_1775397081293378300
+project: agam_driver_daemon_prewarm_reuse_12080_1775397081293378300
+manifest: none
+mode: one-shot warm refresh
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_prewarm_warm_state_12080_1775397081296981500
+project: agam_driver_daemon_prewarm_warm_state_12080_1775397081296981500
+manifest: none
+mode: one-shot warm refresh
+test tests::test_incremental_pipeline_clears_all_warm_state_when_manifest_changes ... ok
+test tests::test_incremental_pipeline_clears_all_warm_state_when_member_manifest_changes ... ok
+test tests::test_native_llvm_clang_args_include_cross_target_and_sysroot ... ok
+test tests::test_native_llvm_clang_args_omit_math_library_on_windows ... ok
+test tests::test_parse_llvm_call_cache_run_profile ... ok
+test tests::test_lower_to_optimized_mir_accepts_valid_source ... ok
+test tests::test_persisted_profile_builds_specialization_plans_for_cache_enabled_functions ... ok
+test tests::test_parse_llvm_call_cache_run_profile_v4_compatibility ... ok
+test tests::test_persisted_profile_builds_specialization_plans_for_explicit_basic_selection ... ok
+test tests::test_active_daemon_status_requires_fresh_heartbeat ... ok
+test tests::test_execute_check_requests_with_runner_preserves_request_order ... ok
+test tests::test_execute_test_requests_with_runner_preserves_request_order ... ok
+test tests::test_execute_build_requests_with_runner_respects_parallelism_limit ... ok
+test tests::test_execute_check_requests_with_runner_respects_parallelism_limit ... ok
+test tests::test_execute_test_requests_with_runner_respects_parallelism_limit ... ok
+test tests::test_persisted_profile_does_not_prepromote_unfavorable_specialization_only_signal ... ok
+test tests::test_execute_build_requests_with_runner_preserves_request_order ... ok
+test tests::test_persisted_profile_prepromotes_selectable_hot_functions ... ok
+test tests::test_persisted_profile_respects_disabled_automatic_service_and_exclusions ... ok
+test tests::test_persisted_profile_retains_specialization_from_favorable_feedback ... ok
+test tests::test_persisted_profile_skips_specialization_plans_when_cache_disabled ... ok
+test tests::test_persisted_profile_skips_unfavorable_specialization_feedback ... ok
+test tests::test_resolve_build_requests_rejects_explicit_output_for_multiple_inputs ... ok
+error[E3002]: type mismatch: cannot unify Bool with Int(I32)
+
+test tests::test_resolve_build_requests_keeps_explicit_output_for_single_input ... ok
+test tests::test_resolve_daemon_workspace_target_allows_existing_directory_without_workspace_layout ... ok
+test tests::test_resolve_build_requests_uses_default_output_per_file ... ok
+test tests::test_lower_to_optimized_mir_rejects_type_errors ... ok
+test tests::test_resolve_build_requests_resolves_workspace_root_before_explicit_output ... ok
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_root_status_hint_12080_1775397081335846800
+project: agam_driver_daemon_root_status_hint_12080_1775397081335846800
+manifest: none
+mode: one-shot warm refresh
+test tests::test_resolve_build_requests_uses_workspace_manifest_entry_output ... ok
+test tests::test_resolve_workspace_layout_rejects_manifest_entry_outside_workspace ... ok
+test tests::test_resolve_entry_source_path_uses_workspace_root_entry_file ... ok
+test tests::test_resolve_workspace_layout_supports_single_source_file_without_manifest ... ok
+test tests::test_resolve_build_requests_deduplicates_overlapping_workspace_inputs ... ok
+test tests::test_resolve_daemon_workspace_target_allows_missing_source_hint ... ok
+test tests::test_read_daemon_status_accepts_legacy_status_without_new_fields ... ok
+test tests::test_sanitize_project_name_collapses_non_identifier_runs ... ok
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_once_status_12080_1775397081358467300
+project: agam_driver_daemon_once_status_12080_1775397081358467300
+manifest: none
+mode: one-shot warm refresh
+test tests::test_resolve_workspace_layout_uses_manifest_root_entry_and_tests ... ok
+test tests::test_sdk_supported_targets_begin_with_host_native ... ok
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_once_error_12080_1775397081355032500
+project: agam_driver_daemon_once_error_12080_1775397081355032500
+manifest: none
+mode: one-shot warm refresh
+test tests::test_source_call_cache_can_enable_whole_module_and_opt_out_function ... ok
+test tests::test_source_call_cache_can_target_specific_function_without_global_enable ... ok
+test tests::test_resolve_workspace_layout_uses_manifest_declared_entry_path ... ok
+error[E3001]: undeclared identifier 'missing_name'
+test tests::test_source_no_call_cache_disables_automatic_service ... ok
+test tests::test_source_call_cache_optimize_marks_experimental_usage ... ok
+ --> C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_once_error_12080_1775397081355032500\broken.agam:1:12
+   |
+ 1 | fn main(): missing_name
+test tests::test_standalone_windows_llvm_candidate_paths_include_program_files_layout ... ok
+   |            ^^^^^^^^^^^^ undeclared identifier 'missing_name'
+
+test tests::test_validate_release_tuning_rejects_native_cpu_for_cross_target ... ok
+test tests::test_scaffold_project_layout_creates_first_party_files ... ok
+test tests::test_validate_release_tuning_rejects_target_for_non_llvm_backend ... ok
+test tests::test_visual_studio_llvm_candidate_paths_include_expected_clang_locations ... ok
+test tests::test_refresh_daemon_session_reuses_unchanged_files_and_rewarms_changed_ones ... ok
+test tests::test_stage_llvm_bundle_into_sdk_accepts_bundle_root_layout ... ok
+[agamc] daemon refresh failed: 1 semantic error(s)
+test tests::test_run_daemon_foreground_once_persists_error_status_on_failure ... ok
+test tests::test_build_feature_signature_includes_cache_generation ... ok
+warm: 1 file(s), 1 version(s), AST 1, HIR 1, MIR 1
+invalidate: +1 ~0 -0 =0
+prewarm: package ready, build ready via llvm (native-binary), warm files 1/1
+Agam Daemon
+workspace: C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_clear_status_12080_1775397081264725500
+status: cleared
+test tests::test_clear_daemon_status_removes_persisted_status_file ... ok
+warm: 1 file(s), 1 version(s), AST 1, HIR 1, MIR 1
+invalidate: +1 ~0 -0 =0
+prewarm: package ready, build ready via llvm (native-binary), warm files 1/1
+test tests::test_compile_dev_source_file_prefers_daemon_prewarm_for_run ... ok
+warm: 1 file(s), 1 version(s), AST 1, HIR 1, MIR 1
+invalidate: +1 ~0 -0 =0
+prewarm: package ready, build ready via llvm (native-binary), warm files 1/1
+warm: 1 file(s), 1 version(s), AST 1, HIR 1, MIR 1
+invalidate: +1 ~0 -0 =0
+prewarm: package ready, build ready via llvm (native-binary), warm files 1/1
+test tests::test_load_daemon_prewarmed_warm_state_reuses_matching_snapshot ... ok
+test tests::test_load_daemon_prewarmed_entry_rejects_hash_mismatch ... ok
+warm: 1 file(s), 1 version(s), AST 1, HIR 1, MIR 1
+invalidate: +1 ~0 -0 =0
+prewarm: package ready, build ready via llvm (native-binary), warm files 1/1
+error[E3001]: undeclared identifier 'missing_name'
+ --> C:\Users\ksvik\AppData\Local\Temp\agam_driver_daemon_cycle_recovery_12080_1775397081354719500\main.agam:1:12
+   |
+ 1 | fn main(): missing_name
+   |            ^^^^^^^^^^^^ undeclared identifier 'missing_name'
+
+test tests::test_load_daemon_prewarmed_entry_reuses_matching_snapshot ... ok
+warm: 1 file(s), 1 version(s), AST 1, HIR 1, MIR 1
+invalidate: +1 ~0 -0 =0
+prewarm: package ready, build ready via llvm (native-binary), warm files 1/1
+warm: 1 file(s), 1 version(s), AST 1, HIR 1, MIR 1
+invalidate: +1 ~0 -0 =0
+prewarm: package ready, build ready via llvm (native-binary), warm files 1/1
+test tests::test_resolve_daemon_workspace_target_allows_root_dir_with_status_but_no_entry ... ok
+test tests::test_run_daemon_foreground_once_persists_status_file ... ok
+
+thread 'tests::test_prewarm_daemon_entry_artifacts_populates_cache' (28240) panicked at crates\agam_driver\src\main.rs:8022:13:
+assertion failed: fs::read_dir(&prewarm_dir).expect("read prewarm dir").next().is_none()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::test_prewarm_daemon_entry_artifacts_populates_cache ... FAILED
+test tests::test_run_daemon_cycle_rewarms_missing_package_artifact ... ok
+test tests::test_run_daemon_cycle_recovers_after_transient_semantic_error ... ok
+
+failures:
+
+failures:
+    tests::test_prewarm_daemon_entry_artifacts_populates_cache
+
+test result: FAILED. 82 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.54s
+
+error: test failed, to rerun pass `-p agam_driver --bin agamc`
