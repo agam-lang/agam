@@ -1,6 +1,8 @@
 //! MIR node definitions — SSA-based, CFG-structured IR.
 
+use agam_sema::gpu::GpuKernelConfig;
 use agam_sema::symbol::TypeId;
+use agam_sema::target::TargetProfile;
 use serde::{Deserialize, Serialize};
 
 /// A unique identifier for an SSA value (virtual register).
@@ -20,6 +22,12 @@ pub struct MirFunction {
     pub blocks: Vec<BasicBlock>,
     /// The entry block.
     pub entry: BlockId,
+    /// Target deployment profile from `@target.*` annotations.
+    #[serde(default)]
+    pub target: TargetProfile,
+    /// GPU kernel configuration from `@gpu(...)` annotations.
+    #[serde(default)]
+    pub gpu_config: Option<GpuKernelConfig>,
 }
 
 /// A function parameter.
@@ -117,6 +125,52 @@ pub enum Op {
         handler: String,
         body: BlockId,
     },
+
+    /// Launch a GPU kernel from host code.
+    ///
+    /// The grid and block arguments specify the launch dimensions.
+    /// The kernel function lives in the separate GPU NVPTX module.
+    GpuKernelLaunch {
+        kernel_name: String,
+        grid: ValueId,
+        block: ValueId,
+        args: Vec<ValueId>,
+    },
+
+    /// Hardware-accelerated GPU or NPU intrinsic.
+    GpuIntrinsic {
+        kind: GpuIntrinsicKind,
+        args: Vec<ValueId>,
+    },
+
+    /// Inline PTX or assembly.
+    InlineAsm {
+        asm_string: String,
+        constraints: String,
+        args: Vec<ValueId>,
+    },
+}
+
+/// Specialized hardware intrinsics for the GPU.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GpuIntrinsicKind {
+    ThreadIdX,
+    ThreadIdY,
+    ThreadIdZ,
+    BlockIdX,
+    BlockIdY,
+    BlockIdZ,
+    BlockDimX,
+    BlockDimY,
+    BlockDimZ,
+    Barrier,
+    WarpShuffleDown,
+    WarpReduceAdd,
+    BallotSync,
+    NvvmSin,
+    NvvmCos,
+    NvvmSqrt,
+    NvvmExp,
 }
 
 /// MIR binary operations.

@@ -24,8 +24,8 @@
 //! ```
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Declarative sandbox constraints derived from the execution policy.
@@ -151,9 +151,7 @@ impl Drop for PlatformSandboxState {
         {
             if let Some(handle) = self._job_handle.take() {
                 unsafe {
-                    windows_sys::Win32::Foundation::CloseHandle(
-                        handle as *mut std::ffi::c_void,
-                    );
+                    windows_sys::Win32::Foundation::CloseHandle(handle as *mut std::ffi::c_void);
                 }
             }
         }
@@ -247,9 +245,7 @@ fn watchdog_loop(timeout: Duration, cancel: Arc<AtomicBool>) {
     }
 }
 
-fn activate_platform_sandbox(
-    policy: &SandboxPolicy,
-) -> Result<PlatformSandboxState, SandboxError> {
+fn activate_platform_sandbox(policy: &SandboxPolicy) -> Result<PlatformSandboxState, SandboxError> {
     // Set working directory restriction if requested.
     if let Some(root) = policy.filesystem_root.as_ref() {
         if root.is_dir() {
@@ -278,9 +274,7 @@ fn activate_platform_sandbox(
 }
 
 #[cfg(target_os = "windows")]
-fn activate_windows_sandbox(
-    policy: &SandboxPolicy,
-) -> Result<PlatformSandboxState, SandboxError> {
+fn activate_windows_sandbox(policy: &SandboxPolicy) -> Result<PlatformSandboxState, SandboxError> {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::JobObjects::*;
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
@@ -294,8 +288,7 @@ fn activate_windows_sandbox(
     }
 
     // 2. Configure extended limit information.
-    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
-        unsafe { std::mem::zeroed() };
+    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
 
     let mut limit_flags: u32 = 0;
 
@@ -311,8 +304,7 @@ fn activate_windows_sandbox(
         info.BasicLimitInformation.ActiveProcessLimit = 1;
         limit_flags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
     } else if policy.max_active_processes > 0 {
-        info.BasicLimitInformation.ActiveProcessLimit =
-            policy.max_active_processes;
+        info.BasicLimitInformation.ActiveProcessLimit = policy.max_active_processes;
         limit_flags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
     }
 
@@ -336,8 +328,7 @@ fn activate_windows_sandbox(
     }
 
     // 3. Configure UI restrictions (deny clipboard, desktop switch, etc.).
-    let mut ui_info: JOBOBJECT_BASIC_UI_RESTRICTIONS =
-        unsafe { std::mem::zeroed() };
+    let mut ui_info: JOBOBJECT_BASIC_UI_RESTRICTIONS = unsafe { std::mem::zeroed() };
     ui_info.UIRestrictionsClass = JOB_OBJECT_UILIMIT_DESKTOP
         | JOB_OBJECT_UILIMIT_DISPLAYSETTINGS
         | JOB_OBJECT_UILIMIT_EXITWINDOWS
@@ -361,8 +352,7 @@ fn activate_windows_sandbox(
     }
 
     // 4. Assign the current process to the Job Object.
-    let assign_ok =
-        unsafe { AssignProcessToJobObject(job, GetCurrentProcess()) };
+    let assign_ok = unsafe { AssignProcessToJobObject(job, GetCurrentProcess()) };
     if assign_ok == 0 {
         // On some Windows versions a process already in a job cannot be
         // reassigned. Treat as non-fatal — the watchdog timeout still
@@ -375,9 +365,7 @@ fn activate_windows_sandbox(
 }
 
 #[cfg(target_os = "linux")]
-fn activate_linux_sandbox(
-    policy: &SandboxPolicy,
-) -> Result<PlatformSandboxState, SandboxError> {
+fn activate_linux_sandbox(policy: &SandboxPolicy) -> Result<PlatformSandboxState, SandboxError> {
     // 1. Prevent privilege escalation via PR_SET_NO_NEW_PRIVS.
     //    This is a prerequisite for seccomp-bpf and ensures the sandboxed
     //    process cannot gain new capabilities via execve().
@@ -397,10 +385,7 @@ fn activate_linux_sandbox(
         let ret = unsafe { libc::setrlimit(libc::RLIMIT_AS, &rlim) };
         if ret != 0 {
             return Err(SandboxError {
-                message: format!(
-                    "setrlimit(RLIMIT_AS, {}) failed",
-                    policy.max_memory_bytes
-                ),
+                message: format!("setrlimit(RLIMIT_AS, {}) failed", policy.max_memory_bytes),
             });
         }
     }

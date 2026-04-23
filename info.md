@@ -141,11 +141,13 @@ flowchart TD
 1. **Phase 22: Broader Stdlib Growth**
    - Expand `agam_std` beyond filesystem I/O to include networking, crypto, and async primitives.
    - Keep new modules aligned with the effects model and distribution governance.
-2. **Phase 23: Agent Capability Expansion**
-   - Continue expanding the agent execution environment based on concrete sandbox enforcement.
+2. **Phase 23: GPU and NPU Integration (Advanced)**
+   - Agam provides first-class, bleeding-edge GPU acceleration natively in the compiler.
+   - Features include dynamic kernel auto-tuning (`@gpu.autotune`), inline PTX assembly (`agam::gpu::asm!`), warp-synchronous primitives, and **Device-Local Algebraic Effects** mapped to shared memory.
+   - Host-side CUDA Graph capture (`@gpu.graph`) for ultra-low latency kernel fusion.
 3. **Phase 24+: Ecosystem & Model Integration**
    - Move into language server and ML-native capabilities.
 
-*Note: Phases 15H, 17F, 18, 19, 20 (Language Surface Expansion), and 21 (Runtime Hardening) are completed.*
+*Note: Phases 15H, 17F, 18, 19, 20, 21, and 22 are completed.*
 
 Later anti-hallucination, model, and broader ecosystem follow-ons resume after that sequence, with the restored Phase 22 through Phase 28 detail files available under `.agent/phases/details/`.

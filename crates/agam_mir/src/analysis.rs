@@ -274,6 +274,8 @@ mod tests {
                     return_ty: TypeId(0),
                     blocks: Vec::new(),
                     entry: BlockId(index as u32),
+                    target: Default::default(),
+                    gpu_config: None,
                 })
                 .collect(),
         }
@@ -301,6 +303,8 @@ mod tests {
                 terminator: Terminator::ReturnVoid,
             }],
             entry: BlockId(0),
+            target: Default::default(),
+            gpu_config: None,
         }
     }
 

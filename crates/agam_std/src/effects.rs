@@ -19,9 +19,19 @@ pub fn register_filesystem_handlers(table: &mut EffectHandlerTable) {
     table.register("FileSystem", "list_dir", fs_list_dir);
 }
 
+/// Register all builtin `Console` effect handlers for stdin/stdout/stderr.
+pub fn register_console_handlers(table: &mut EffectHandlerTable) {
+    table.register("Console", "print", console_print);
+    table.register("Console", "println", console_println);
+    table.register("Console", "read_line", console_read_line);
+    table.register("Console", "eprint", console_eprint);
+    table.register("Console", "eprintln", console_eprintln);
+}
+
 /// Register all builtin effect handlers for all `agam_std` modules.
 pub fn register_all_builtin_handlers(table: &mut EffectHandlerTable) {
     register_filesystem_handlers(table);
+    register_console_handlers(table);
 }
 
 /// Create an `EffectHandlerTable` pre-populated with all builtin handlers.
@@ -133,6 +143,49 @@ fn fs_list_dir(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
     ))
 }
 
+fn console_print(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let msg = require_string_arg("Console", "print", args, 0)?;
+    print!("{}", msg);
+    Ok(EffectValue::Unit)
+}
+
+fn console_println(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let msg = require_string_arg("Console", "println", args, 0)?;
+    println!("{}", msg);
+    Ok(EffectValue::Unit)
+}
+
+fn console_read_line(_args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| EffectError {
+            effect: "Console".into(),
+            operation: "read_line".into(),
+            message: e.to_string(),
+        })?;
+    // Strip trailing newline
+    if line.ends_with('\n') {
+        line.pop();
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+    Ok(EffectValue::String(line))
+}
+
+fn console_eprint(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let msg = require_string_arg("Console", "eprint", args, 0)?;
+    eprint!("{}", msg);
+    Ok(EffectValue::Unit)
+}
+
+fn console_eprintln(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let msg = require_string_arg("Console", "eprintln", args, 0)?;
+    eprintln!("{}", msg);
+    Ok(EffectValue::Unit)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,13 +202,18 @@ mod tests {
     }
 
     #[test]
-    fn builtin_table_has_all_filesystem_ops() {
+    fn builtin_table_has_all_ops() {
         let table = builtin_handler_table();
-        assert_eq!(table.len(), 9);
+        assert_eq!(table.len(), 14); // 9 FileSystem + 5 Console
         assert!(table.get("FileSystem", "exists").is_some());
         assert!(table.get("FileSystem", "read_to_string").is_some());
         assert!(table.get("FileSystem", "write_string").is_some());
         assert!(table.get("FileSystem", "list_dir").is_some());
+        assert!(table.get("Console", "print").is_some());
+        assert!(table.get("Console", "println").is_some());
+        assert!(table.get("Console", "read_line").is_some());
+        assert!(table.get("Console", "eprint").is_some());
+        assert!(table.get("Console", "eprintln").is_some());
     }
 
     #[test]

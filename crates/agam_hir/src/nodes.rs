@@ -5,7 +5,9 @@
 //! - Desugared control flow.
 //! - Unique IDs for every node.
 
+use agam_sema::gpu::GpuKernelConfig;
 use agam_sema::symbol::TypeId;
+use agam_sema::target::TargetProfile;
 
 /// Unique HIR node identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -26,6 +28,10 @@ pub struct HirFunction {
     pub return_ty: TypeId,
     pub body: HirBlock,
     pub is_async: bool,
+    /// Target deployment profile from `@target.*` annotations.
+    pub target: TargetProfile,
+    /// GPU kernel configuration from `@gpu(...)` annotations.
+    pub gpu_config: Option<GpuKernelConfig>,
 }
 
 /// A function parameter in HIR.

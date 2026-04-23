@@ -63,6 +63,8 @@ mod tests {
                 return_ty: TypeId(0),
                 blocks: Vec::new(),
                 entry: BlockId(0),
+                target: Default::default(),
+                gpu_config: None,
             }],
         };
 

@@ -335,6 +335,39 @@ fn remap_op(
             handler: handler.clone(),
             body: *body,
         },
+        Op::GpuKernelLaunch {
+            kernel_name,
+            grid,
+            block,
+            args,
+        } => Op::GpuKernelLaunch {
+            kernel_name: kernel_name.clone(),
+            grid: remap_value(*grid, value_map),
+            block: remap_value(*block, value_map),
+            args: args
+                .iter()
+                .map(|arg| remap_value(*arg, value_map))
+                .collect(),
+        },
+        Op::GpuIntrinsic { kind, args } => Op::GpuIntrinsic {
+            kind: *kind,
+            args: args
+                .iter()
+                .map(|arg| remap_value(*arg, value_map))
+                .collect(),
+        },
+        Op::InlineAsm {
+            asm_string,
+            constraints,
+            args,
+        } => Op::InlineAsm {
+            asm_string: asm_string.clone(),
+            constraints: constraints.clone(),
+            args: args
+                .iter()
+                .map(|arg| remap_value(*arg, value_map))
+                .collect(),
+        },
     }
 }
 

@@ -15,6 +15,8 @@ use agam_ast::types::TypeExpr;
 use agam_ast::*;
 use agam_sema::types::{TypeStore, builtin_type_id_for_name};
 
+use agam_sema::target::TargetProfile;
+
 use crate::nodes::*;
 
 /// The HIR lowering context.
@@ -22,6 +24,10 @@ pub struct HirLowering {
     next_id: u32,
     types: TypeStore,
     scopes: Vec<HashMap<String, agam_sema::symbol::TypeId>>,
+    /// The target profile of the function currently being lowered.
+    current_target: TargetProfile,
+    /// Diagnostic messages collected during lowering.
+    pub diagnostics: Vec<String>,
 }
 
 impl HirLowering {
@@ -30,6 +36,8 @@ impl HirLowering {
             next_id: 0,
             types: TypeStore::new(),
             scopes: Vec::new(),
+            current_target: TargetProfile::Default,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -79,6 +87,20 @@ impl HirLowering {
 
     fn lower_function(&mut self, f: &FunctionDecl) -> HirFunction {
         self.push_scope();
+
+        let target = agam_sema::target::resolve_target_profile(&f.annotations)
+            .unwrap_or(TargetProfile::Default);
+        self.current_target = target;
+
+        // Resolve GPU kernel config
+        let gpu_config = match agam_sema::gpu::resolve_gpu_config(&f.annotations) {
+            Ok(config) => config,
+            Err(e) => {
+                self.diagnostics.push(format!("error: {e}"));
+                None
+            }
+        };
+
         let params: Vec<HirParam> = f
             .params
             .iter()
@@ -114,6 +136,8 @@ impl HirLowering {
                 .unwrap_or_else(|| self.types.unit()),
             body,
             is_async: f.is_async,
+            target,
+            gpu_config,
         };
         self.pop_scope();
         lowered
@@ -476,6 +500,38 @@ impl HirLowering {
                 )
             }
 
+            ExprKind::Perform {
+                effect,
+                operation,
+                args,
+            } => {
+                // Validate: IoT target forbids effects
+                if self.current_target == TargetProfile::Iot {
+                    self.diagnostics.push(format!(
+                        "error: `perform {}.{}` is not allowed under @target.iot: \
+                         effects require runtime support not available on IoT targets",
+                        effect.name, operation.name
+                    ));
+                }
+                (
+                    self.types.fresh_var(),
+                    HirExprKind::Perform {
+                        effect: effect.name.clone(),
+                        operation: operation.name.clone(),
+                        args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                    },
+                )
+            }
+
+            ExprKind::HandleWith { body, handler } => (
+                self.types.fresh_var(),
+                HirExprKind::HandleWith {
+                    effect: handler.name.clone(),
+                    handler: handler.name.clone(),
+                    body: Box::new(self.lower_expr(body)),
+                },
+            ),
+
             // Fallback for unhandled expressions
             _ => (self.types.unit(), HirExprKind::Tuple(vec![])), // Unit value
         };
@@ -745,5 +801,63 @@ mod tests {
             },
             _ => panic!("expected return"),
         }
+    }
+
+    fn lower_source_with_diagnostics(source: &str) -> (HirModule, Vec<String>) {
+        let source_id = SourceId(0);
+        let mut lexer = Lexer::new(source, source_id);
+        let mut tokens = Vec::new();
+        loop {
+            let tok = lexer.next_token();
+            let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
+            tokens.push(tok);
+            if is_eof {
+                break;
+            }
+        }
+        let mut parser = agam_parser::Parser::new(tokens);
+        let module = parser.parse_module(source_id).expect("parse failed");
+
+        let mut lowering = HirLowering::new();
+        let hir = lowering.lower_module(&module);
+        (hir, lowering.diagnostics)
+    }
+
+    #[test]
+    fn test_target_iot_propagates_to_hir_function() {
+        let hir = lower_source("@target.iot\nfn main(): return 0");
+        let f = &hir.functions[0];
+        assert_eq!(f.target, TargetProfile::Iot);
+    }
+
+    #[test]
+    fn test_target_hpc_propagates_to_hir_function() {
+        let hir = lower_source("@target.hpc\nfn main(): return 0");
+        let f = &hir.functions[0];
+        assert_eq!(f.target, TargetProfile::Hpc);
+    }
+
+    #[test]
+    fn test_default_target_when_no_annotation() {
+        let hir = lower_source("fn main(): return 0");
+        let f = &hir.functions[0];
+        assert_eq!(f.target, TargetProfile::Default);
+    }
+
+    #[test]
+    fn test_iot_rejects_perform_at_compile_time() {
+        let (_, diagnostics) = lower_source_with_diagnostics(
+            "@target.iot\nfn main(): perform Console.println(\"hello\")",
+        );
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].contains("not allowed under @target.iot"));
+        assert!(diagnostics[0].contains("Console.println"));
+    }
+
+    #[test]
+    fn test_default_target_allows_perform() {
+        let (_, diagnostics) =
+            lower_source_with_diagnostics("fn main(): perform Console.println(\"hello\")");
+        assert!(diagnostics.is_empty());
     }
 }

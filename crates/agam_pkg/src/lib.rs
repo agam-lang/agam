@@ -54,15 +54,13 @@ pub struct StdlibRegistry {
 pub fn builtin_stdlib_registry() -> StdlibRegistry {
     StdlibRegistry {
         format_version: STDLIB_METADATA_FORMAT_VERSION,
-        modules: vec![
-            StdlibModuleMetadata {
-                name: "io".into(),
-                version: "0.1.0".into(),
-                min_compiler_version: "0.1".into(),
-                effects: vec!["FileSystem".into()],
-                distribution_eligible: true,
-            },
-        ],
+        modules: vec![StdlibModuleMetadata {
+            name: "io".into(),
+            version: "0.1.0".into(),
+            min_compiler_version: "0.1".into(),
+            effects: vec!["FileSystem".into()],
+            distribution_eligible: true,
+        }],
     }
 }
 

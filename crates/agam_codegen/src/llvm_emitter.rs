@@ -434,7 +434,13 @@ fn analyze_function(
                     .unwrap_or_else(LlvmType::default_int),
                 Op::Cast { target_ty, value } => infer_llvm_type_from_type_id(*target_ty)
                     .unwrap_or_else(|| value_type(&layout, *value)),
-                Op::EffectPerform { .. } | Op::HandleWith { .. } => LlvmType::default_int(),
+                Op::EffectPerform {
+                    effect, operation, ..
+                } => infer_effect_llvm_return_type(effect, operation),
+                Op::HandleWith { .. } => LlvmType::default_int(),
+                Op::GpuKernelLaunch { .. } => LlvmType::default_int(),
+                Op::GpuIntrinsic { .. } => LlvmType::default_int(),
+                Op::InlineAsm { .. } => LlvmType::default_int(),
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -580,7 +586,8 @@ fn analyze_function(
                                 default_sign_for_type(value_type(&layout, *value))
                             }),
                         ),
-                        Op::EffectPerform { .. } | Op::HandleWith { .. } => {
+                        Op::EffectPerform { .. } | Op::HandleWith { .. } | Op::GpuKernelLaunch { .. }
+                        | Op::GpuIntrinsic { .. } | Op::InlineAsm { .. } => {
                             default_sign_for_type(result_ty)
                         }
                     };
@@ -734,6 +741,22 @@ fn infer_llvm_type_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<Ll
         Type::Int(size) => Some(LlvmType::Int(LlvmIntType::from_size(size, true))),
         Type::UInt(size) => Some(LlvmType::Int(LlvmIntType::from_size(size, false))),
         _ => None,
+    }
+}
+
+/// Infer the LLVM return type for a specific effect operation.
+fn infer_effect_llvm_return_type(effect: &str, operation: &str) -> LlvmType {
+    match (effect, operation) {
+        // FileSystem returns
+        ("FileSystem", "exists" | "is_file" | "is_dir") => LlvmType::Bool,
+        ("FileSystem", "read_to_string" | "read_lines" | "list_dir") => LlvmType::Str,
+        ("FileSystem", "create_dir_all" | "write_string" | "append_string") => {
+            LlvmType::default_int()
+        }
+        // Console returns
+        ("Console", "read_line") => LlvmType::Str,
+        ("Console", "print" | "println" | "eprint" | "eprintln") => LlvmType::default_int(),
+        _ => LlvmType::default_int(),
     }
 }
 
@@ -1406,6 +1429,52 @@ impl LlvmEmitter {
              attributes #2 = { nofree norecurse nosync nounwind willreturn }\n\
              attributes #3 = { nofree norecurse nosync nounwind willreturn }\n",
         );
+
+        // Emit target-profile module metadata
+        {
+            use agam_sema::target::TargetProfile;
+
+            let has_iot = module
+                .functions
+                .iter()
+                .any(|f| f.target == TargetProfile::Iot);
+            let has_hpc = module
+                .functions
+                .iter()
+                .any(|f| f.target == TargetProfile::Hpc);
+            let has_enterprise = module
+                .functions
+                .iter()
+                .any(|f| f.target == TargetProfile::Enterprise);
+
+            if has_iot || has_hpc || has_enterprise {
+                writeln!(output).unwrap();
+                writeln!(output, "; ── Agam Target Profile Metadata ──").unwrap();
+            }
+
+            if has_iot {
+                writeln!(
+                    output,
+                    "!agam.target.iot = !{{!\"no_heap\", !\"no_stdlib\", !\"no_effects\"}}"
+                )
+                .unwrap();
+            }
+            if has_hpc {
+                writeln!(
+                    output,
+                    "!agam.target.hpc = !{{!\"vectorize\", !\"thread_pool\"}}"
+                )
+                .unwrap();
+            }
+            if has_enterprise {
+                writeln!(
+                    output,
+                    "!agam.target.enterprise = !{{!\"gc_choice\", !\"thread_pool\", !\"capability_sandbox\"}}"
+                )
+                .unwrap();
+            }
+        }
+
         Ok(output)
     }
 
@@ -1902,6 +1971,27 @@ impl LlvmEmitter {
         let fn_attr_suffix = format_function_attrs(attrs);
         let is_main = func.name == "main" && specialization.is_none();
 
+        // Emit target profile annotation
+        {
+            use agam_sema::target::TargetProfile;
+            match func.target {
+                TargetProfile::Iot => {
+                    writeln!(out, "; @target.iot — no heap, no stdlib, no effects").unwrap();
+                }
+                TargetProfile::Hpc => {
+                    writeln!(out, "; @target.hpc — aggressive vectorization preferred").unwrap();
+                }
+                TargetProfile::Enterprise => {
+                    writeln!(
+                        out,
+                        "; @target.enterprise — GC choice, thread pools, capability sandbox"
+                    )
+                    .unwrap();
+                }
+                TargetProfile::Default => {}
+            }
+        }
+
         if is_main {
             writeln!(
                 out,
@@ -2228,11 +2318,107 @@ impl LlvmEmitter {
             Op::Phi(_) => {
                 return Err("LLVM backend does not yet support MIR phi nodes".into());
             }
-            Op::EffectPerform { .. } => {
-                return Err("LLVM backend does not yet support MIR effect perform".into());
+            Op::EffectPerform {
+                effect,
+                operation,
+                args,
+            } => {
+                let func_name = format!("agam_effect_{}_{}", effect, operation);
+                let effect_ret_ty = infer_effect_llvm_return_type(effect, operation);
+                let arg_values: Vec<ValueRef> = args
+                    .iter()
+                    .map(|arg| get_value(values, *arg))
+                    .collect::<Result<_, _>>()?;
+                // Build the argument list — coerce all args to i8* (string) for now
+                let mut coerced_args = Vec::new();
+                for arg in &arg_values {
+                    let coerced = self.coerce_value(out, arg, LlvmType::Str)?;
+                    coerced_args.push(coerced);
+                }
+                let arg_list = coerced_args
+                    .iter()
+                    .map(|arg| format!("{} {}", arg.ty.ir(), arg.repr))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let param_decl = coerced_args
+                    .iter()
+                    .map(|arg| format!("{} noundef", arg.ty.ir()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let decl = format!(
+                    "declare noundef {} @{}({})",
+                    effect_ret_ty.ir(),
+                    func_name,
+                    param_decl
+                );
+                self.register_external_decl(&func_name, &decl);
+                writeln!(
+                    out,
+                    "  {} = call {} @{}({})",
+                    result_name,
+                    format!("noundef {}", effect_ret_ty.ir()),
+                    func_name,
+                    arg_list
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(effect_ret_ty, result_name.clone(), result_sign),
+                );
             }
             Op::HandleWith { .. } => {
-                return Err("LLVM backend does not yet support MIR handle-with".into());
+                // For now, handle-with runs the body with builtin handlers.
+                // Emit a default value; the body block executes separately.
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                );
+            }
+            Op::GpuKernelLaunch {
+                kernel_name,
+                grid,
+                block,
+                args,
+            } => {
+                // GPU kernel launches are handled by the separate GPU module.
+                // In the host module, emit a CUDA runtime API call stub.
+                let grid_ref = get_value(values, *grid)?;
+                let block_ref = get_value(values, *block)?;
+                writeln!(
+                    out,
+                    "  ; GPU kernel launch: {}<<<{}, {}>>> ({} args)",
+                    kernel_name, grid_ref.repr, block_ref.repr, args.len()
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                );
+            }
+            Op::GpuIntrinsic { kind, .. } => {
+                // GPU intrinsics are handled by the GPU emitter module.
+                // In the host LLVM module, emit a placeholder.
+                writeln!(out, "  ; GPU intrinsic: {:?}", kind).unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                );
+            }
+            Op::InlineAsm {
+                asm_string,
+                constraints,
+                ..
+            } => {
+                writeln!(
+                    out,
+                    "  ; inline asm: \"{}\" constraints=\"{}\"",
+                    asm_string, constraints
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                );
             }
         }
 

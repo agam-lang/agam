@@ -335,8 +335,10 @@ These are the active next phases from the repo's current program board:
 1. Phase 22: Broader Stdlib Growth
    - expand `agam_std` beyond filesystem I/O to include networking, crypto, and async primitives
    - keep new modules aligned with the effects model and distribution governance
-2. Phase 23: Agent Capability Expansion
-   - continue expanding the agent execution environment based on concrete sandbox enforcement
+2. Phase 23: GPU and NPU Integration (Advanced)
+   - Agam provides **first-class, bleeding-edge GPU acceleration directly in the compiler**. 
+   - No external wrapper libraries needed. Features include `@gpu.autotune` for dynamic hardware profiling, inline PTX assembly (`agam::gpu::asm!`), warp-synchronous generic primitives (`warp_shuffle`, `ballot_sync`), and **Device-Local Algebraic Effects** enabling zero-cost divergence handling via shared memory state machines.
+   - Host-side CUDA Graph capture (`@gpu.graph`) for ultra-low latency kernel fusion.
 3. Phase 24+: Ecosystem & Model Integration
    - move into language server and ML-native capabilities
 

@@ -90,12 +90,7 @@ impl EffectHandlerTable {
     }
 
     /// Register a handler function for a specific effect operation.
-    pub fn register(
-        &mut self,
-        effect: &str,
-        operation: &str,
-        handler: EffectHandlerFn,
-    ) {
+    pub fn register(&mut self, effect: &str, operation: &str, handler: EffectHandlerFn) {
         self.handlers.insert(
             HandlerKey {
                 effect: effect.to_string(),
@@ -177,11 +172,7 @@ mod tests {
         assert!(!table.is_empty());
 
         let result = table
-            .dispatch(
-                "TestEffect",
-                "echo",
-                &[EffectValue::String("hello".into())],
-            )
+            .dispatch("TestEffect", "echo", &[EffectValue::String("hello".into())])
             .expect("echo handler should succeed");
         assert_eq!(result, EffectValue::String("hello".into()));
     }

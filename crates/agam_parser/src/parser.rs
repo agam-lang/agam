@@ -1810,7 +1810,12 @@ mod tests {
     #[test]
     fn test_parse_perform_expr() {
         let expr = parse_expr("perform IO.read()");
-        if let ExprKind::Perform { effect, operation, args } = &expr.kind {
+        if let ExprKind::Perform {
+            effect,
+            operation,
+            args,
+        } = &expr.kind
+        {
             assert_eq!(effect.name, "IO");
             assert_eq!(operation.name, "read");
             assert!(args.is_empty());

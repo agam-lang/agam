@@ -106,6 +106,8 @@ impl MirLowering {
             return_ty: func.return_ty,
             blocks: std::mem::take(&mut self.blocks),
             entry,
+            target: func.target,
+            gpu_config: func.gpu_config.clone(),
         }
     }
 
@@ -491,5 +493,27 @@ mod tests {
         let f = &mir.functions[0];
         let entry = &f.blocks[0];
         assert!(matches!(&entry.terminator, Terminator::Return(_)));
+    }
+
+    #[test]
+    fn test_mir_effect_perform() {
+        let mir = lower_to_mir("fn main(): perform FileSystem.exists(\".\")");
+        let f = &mir.functions[0];
+        let has_perform = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::EffectPerform {
+                        effect,
+                        operation,
+                        ..
+                    } if effect == "FileSystem" && operation == "exists"
+                )
+            })
+        });
+        assert!(
+            has_perform,
+            "expected EffectPerform for FileSystem.exists in MIR"
+        );
     }
 }

@@ -148,10 +148,7 @@ pub enum ExprKind {
     },
 
     /// Handle an expression with an effect handler: `handle expr with handler_name`
-    HandleWith {
-        body: Box<Expr>,
-        handler: Ident,
-    },
+    HandleWith { body: Box<Expr>, handler: Ident },
 }
 
 /// A part of an f-string.

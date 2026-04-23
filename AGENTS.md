@@ -9,7 +9,7 @@
 
 - **What:** Agam is a next-generation compiled language (Rust workspace, 26 crates)
 - **Goal:** Native LLVM as first-class production backend for Windows, Linux, Android
-- **Active work:** Phase 15H (hosted-runner SDK validation), 18 (execution sandbox hardening), 19 (agent-framework adapter validation)
+- **Active work:** Phase 23 (Elite GPU/NPU Capabilities: Auto-tuning, Inline PTX, Warp Primitives, Device-Local Effects)
 - **Build next:** See `.agent/phases/next.md`
 - **CLI:** `agamc {build,run,check,lock,new,dev,daemon,fmt,test,lsp,repl,exec,doctor,env,publish,registry,cache status,package {pack,inspect,run,sdk}}`
 
@@ -27,7 +27,7 @@ Key crates: `agam_driver` (CLI, daemon, REPL/headless execution, `exec` tool), `
 - Work in the smallest responsible crate. Preserve spans and diagnostics.
 - Route failures through `agam_errors`; no `.unwrap()` in compiler passes.
 - Optimization requires measured benchmarks, not intuition.
-- After each slice, update `.agent/phases/` and commit only that slice's files.
+- After major changes, commit locally. After a final milestone or substantial batch of changes, commit and push to GitHub.
 
 ## Repo Map
 

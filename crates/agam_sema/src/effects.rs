@@ -107,6 +107,40 @@ pub fn std_filesystem_effect() -> EffectDef {
     }
 }
 
+/// Builtin console I/O effect for stdin/stdout/stderr operations.
+pub fn std_console_effect() -> EffectDef {
+    EffectDef {
+        name: "Console".to_string(),
+        operations: vec![
+            EffectOpDef {
+                name: "print".to_string(),
+                param_count: 1,
+                has_return: false,
+            },
+            EffectOpDef {
+                name: "println".to_string(),
+                param_count: 1,
+                has_return: false,
+            },
+            EffectOpDef {
+                name: "read_line".to_string(),
+                param_count: 0,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "eprint".to_string(),
+                param_count: 1,
+                has_return: false,
+            },
+            EffectOpDef {
+                name: "eprintln".to_string(),
+                param_count: 1,
+                has_return: false,
+            },
+        ],
+    }
+}
+
 /// Effect registry: tracks all declared effects and their handlers.
 pub struct EffectRegistry {
     effects: HashMap<String, EffectDef>,
@@ -124,6 +158,7 @@ impl EffectRegistry {
     /// Register the current first-party stdlib effects.
     pub fn register_std_effects(&mut self) {
         self.register_effect(std_filesystem_effect());
+        self.register_effect(std_console_effect());
     }
 
     /// Register a new effect.

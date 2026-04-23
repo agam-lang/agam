@@ -126,7 +126,10 @@ fn is_side_effectful(instr: &Instruction, live_locals: &HashSet<String>) -> bool
         Op::Call { .. } => true,
         Op::EffectPerform { .. } => true,
         Op::HandleWith { .. } => true,
+        Op::GpuKernelLaunch { .. } => true,
         Op::StoreLocal { name, .. } | Op::Alloca { name, .. } => live_locals.contains(name),
+        Op::GpuIntrinsic { .. } => true, // Conservatively mark as having side effects (like barriers)
+        Op::InlineAsm { .. } => true, // Inline ASM might have side effects
         _ => false,
     }
 }
@@ -166,6 +169,19 @@ fn mark_used_values(instr: &Instruction, used_values: &mut HashSet<ValueId>) {
             used_values.extend(args.iter().copied());
         }
         Op::HandleWith { .. } => {}
+        Op::GpuKernelLaunch {
+            grid, block, args, ..
+        } => {
+            used_values.insert(*grid);
+            used_values.insert(*block);
+            used_values.extend(args.iter().copied());
+        }
+        Op::GpuIntrinsic { args, .. } => {
+            used_values.extend(args.iter().copied());
+        }
+        Op::InlineAsm { args, .. } => {
+            used_values.extend(args.iter().copied());
+        }
         Op::ConstInt(_)
         | Op::ConstFloat(_)
         | Op::ConstBool(_)

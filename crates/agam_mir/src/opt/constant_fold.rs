@@ -118,7 +118,10 @@ pub fn run(module: &mut MirModule) -> bool {
                     | Op::GetIndex { .. }
                     | Op::Phi(_)
                     | Op::EffectPerform { .. }
-                    | Op::HandleWith { .. } => {
+                    | Op::HandleWith { .. }
+                    | Op::GpuKernelLaunch { .. }
+                    | Op::GpuIntrinsic { .. }
+                    | Op::InlineAsm { .. } => {
                         value_consts.remove(&instr.result);
                     }
                 }

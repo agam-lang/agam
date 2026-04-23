@@ -1107,6 +1107,15 @@ impl AgamJit {
             Op::HandleWith { .. } => {
                 Err("MIR handle-with is not yet supported by the Cranelift JIT slice".into())
             }
+            Op::GpuKernelLaunch { .. } => {
+                Err("GPU kernel launch is not supported by the Cranelift JIT slice".into())
+            }
+            Op::GpuIntrinsic { .. } => {
+                Err("GPU intrinsics are not supported by the Cranelift JIT slice".into())
+            }
+            Op::InlineAsm { .. } => {
+                Err("Inline assembly is not supported by the Cranelift JIT slice".into())
+            }
         }
     }
 
@@ -2200,7 +2209,8 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     }),
                 Op::Cast { target_ty, value } => infer_jit_type_from_type_id(*target_ty)
                     .unwrap_or_else(|| value_type(&layout, *value)),
-                Op::EffectPerform { .. } | Op::HandleWith { .. } => JitType::Int {
+                Op::EffectPerform { .. } | Op::HandleWith { .. } | Op::GpuKernelLaunch { .. }
+                | Op::GpuIntrinsic { .. } | Op::InlineAsm { .. } => JitType::Int {
                     bits: 32,
                     signed: true,
                 },

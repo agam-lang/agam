@@ -147,7 +147,7 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 
 ### Build Priority Order
 
-22 (broader stdlib) → 23 (agent capability expansion) → 24 (ecosystem integration)
+22 (broader stdlib) → 23 (elite GPU/NPU integration: auto-tuning, inline PTX, warp primitives) → 24 (ecosystem integration)
 
 ---
 
@@ -188,7 +188,7 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 - New language features must strengthen simplicity, safety, performance, portability, or AI/ML usability.
 
 ### Process
-- After completing a slice, update the relevant `.agent/phases/` record.
+- After major changes, commit locally. After a final milestone or substantial batch of changes, commit and push to GitHub.
 - If CLI, packaging, or platform support changes, update `README.md`, `info.md`, and `.agent/`.
 - Keep agent guidance in `.agent/`; root entrypoints (`CLAUDE.md`, `AGENTS.md`) are pointers, not competing sources.
 

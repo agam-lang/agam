@@ -4,7 +4,13 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Finish Phase 15H**
+1. **Phase 23: GPU and NPU Integration (Advanced)**
+   - Add Thread and Grid Intrinsics (`thread_id_x`, `barrier`, etc.)
+   - Support Rich Memory Types (arrays/buffers/pointers in kernels)
+   - Map standard math functions to NVVM fast-math intrinsics
+   - Implement Host-Device memory transfer APIs
+   - Detail file: `details/23.md`
+2. **Finish Phase 15H**
    - Exercise the hosted-runner Windows/Linux SDK flow on GitHub with bundled LLVM and the new post-download archive validation
    - Confirm one end-to-end release publication and Android target-pack packaging path on hosted infrastructure
    - Detail file: `details/15H.md`

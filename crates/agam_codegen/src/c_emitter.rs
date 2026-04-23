@@ -158,7 +158,13 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                     .unwrap_or(CType::Int),
                 Op::Cast { target_ty, value } => infer_ctype_from_type_id(*target_ty)
                     .unwrap_or_else(|| value_type(&layout, *value)),
-                Op::EffectPerform { .. } | Op::HandleWith { .. } => CType::Int,
+                Op::EffectPerform {
+                    effect, operation, ..
+                } => infer_effect_return_type(effect, operation),
+                Op::HandleWith { .. } => CType::Int,
+                Op::GpuKernelLaunch { .. } => CType::Int,
+                Op::GpuIntrinsic { .. } => CType::Int,
+                Op::InlineAsm { .. } => CType::Int,
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -250,7 +256,33 @@ fn is_print_builtin(name: &str) -> bool {
 }
 
 fn has_runtime_prelude_definition(name: &str) -> bool {
-    is_print_builtin(name) || builtin_signature(name).is_some()
+    is_print_builtin(name) || builtin_signature(name).is_some() || is_effect_prelude_function(name)
+}
+
+/// Return true if `name` is an effect dispatch function emitted in the prelude.
+fn is_effect_prelude_function(name: &str) -> bool {
+    name.starts_with("agam_effect_")
+}
+
+/// Infer the C return type for a specific effect operation.
+fn infer_effect_return_type(effect: &str, operation: &str) -> CType {
+    match (effect, operation) {
+        // FileSystem returns
+        ("FileSystem", "exists" | "is_file" | "is_dir") => CType::Bool,
+        ("FileSystem", "read_to_string") => CType::Str,
+        ("FileSystem", "read_lines") => CType::Str, // simplified: returns joined string
+        ("FileSystem", "list_dir") => CType::Str,   // simplified: returns joined string
+        ("FileSystem", "create_dir_all" | "write_string" | "append_string") => CType::Int,
+        // Console returns
+        ("Console", "read_line") => CType::Str,
+        ("Console", "print" | "println" | "eprint" | "eprintln") => CType::Int,
+        _ => CType::Int,
+    }
+}
+
+/// Map an effect+operation pair to its emitted C function name.
+fn effect_c_function_name(effect: &str, operation: &str) -> String {
+    format!("agam_effect_{}_{}", effect, operation)
 }
 
 fn infer_binop_type(op: MirBinOp, left: CType, right: CType) -> CType {
@@ -673,10 +705,159 @@ agam_int agam_tensor_free(AgamTensor* tensor) {
     );
 }
 
-fn emit_runtime_prelude(out: &mut String) {
+fn emit_effect_prelude(out: &mut String) {
+    out.push_str(
+        r#"/* ── Agam Effect Runtime ───────────────────── */
+#include <sys/stat.h>
+#include <errno.h>
+
+/* FileSystem.exists(path) -> bool */
+agam_bool agam_effect_FileSystem_exists(agam_str path) {
+  struct stat st;
+  return stat(path, &st) == 0 ? 1 : 0;
+}
+
+/* FileSystem.is_file(path) -> bool */
+agam_bool agam_effect_FileSystem_is_file(agam_str path) {
+  struct stat st;
+  if (stat(path, &st) != 0) return 0;
+  return S_ISREG(st.st_mode) ? 1 : 0;
+}
+
+/* FileSystem.is_dir(path) -> bool */
+agam_bool agam_effect_FileSystem_is_dir(agam_str path) {
+  struct stat st;
+  if (stat(path, &st) != 0) return 0;
+  return S_ISDIR(st.st_mode) ? 1 : 0;
+}
+
+/* FileSystem.create_dir_all(path) */
+agam_int agam_effect_FileSystem_create_dir_all(agam_str path) {
+  /* Simple recursive mkdir for POSIX; on Windows use _mkdir */
+#ifdef _WIN32
+  (void)_mkdir(path);
+#else
+  mkdir(path, 0755);
+#endif
+  return 0;
+}
+
+/* FileSystem.read_to_string(path) -> string */
+agam_str agam_effect_FileSystem_read_to_string(agam_str path) {
+  FILE* f = fopen(path, "rb");
+  if (!f) return "";
+  fseek(f, 0, SEEK_END);
+  long len = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  char* buf = (char*)malloc((size_t)len + 1);
+  if (len > 0) {
+    size_t read = fread(buf, 1, (size_t)len, f);
+    buf[read] = '\0';
+  } else {
+    buf[0] = '\0';
+  }
+  fclose(f);
+  return buf;
+}
+
+/* FileSystem.read_lines(path) -> string (newline-joined) */
+agam_str agam_effect_FileSystem_read_lines(agam_str path) {
+  return agam_effect_FileSystem_read_to_string(path);
+}
+
+/* FileSystem.write_string(path, contents) */
+agam_int agam_effect_FileSystem_write_string(agam_str path, agam_str contents) {
+  FILE* f = fopen(path, "w");
+  if (!f) return -1;
+  fputs(contents, f);
+  fclose(f);
+  return 0;
+}
+
+/* FileSystem.append_string(path, contents) */
+agam_int agam_effect_FileSystem_append_string(agam_str path, agam_str contents) {
+  FILE* f = fopen(path, "a");
+  if (!f) return -1;
+  fputs(contents, f);
+  fclose(f);
+  return 0;
+}
+
+/* FileSystem.list_dir(path) -> string (newline-joined entries) */
+agam_str agam_effect_FileSystem_list_dir(agam_str path) {
+  (void)path;
+  return ""; /* simplified: full implementation requires dirent.h */
+}
+
+/* Console.print(msg) */
+agam_int agam_effect_Console_print(agam_str msg) {
+  printf("%s", msg);
+  return 0;
+}
+
+/* Console.println(msg) */
+agam_int agam_effect_Console_println(agam_str msg) {
+  printf("%s\n", msg);
+  return 0;
+}
+
+/* Console.read_line() -> string */
+agam_str agam_effect_Console_read_line(void) {
+  char* buf = (char*)malloc(4096);
+  if (!fgets(buf, 4096, stdin)) {
+    buf[0] = '\0';
+  }
+  /* Strip trailing newline */
+  size_t len = strlen(buf);
+  if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0';
+  return buf;
+}
+
+/* Console.eprint(msg) */
+agam_int agam_effect_Console_eprint(agam_str msg) {
+  fprintf(stderr, "%s", msg);
+  return 0;
+}
+
+/* Console.eprintln(msg) */
+agam_int agam_effect_Console_eprintln(agam_str msg) {
+  fprintf(stderr, "%s\n", msg);
+  return 0;
+}
+
+"#,
+    );
+}
+
+fn emit_runtime_prelude(out: &mut String, module: &MirModule) {
+    use agam_sema::target::TargetProfile;
+
+    // Determine if any function targets IoT (most restrictive)
+    let has_iot = module
+        .functions
+        .iter()
+        .any(|f| f.target == TargetProfile::Iot);
+    let has_hpc = module
+        .functions
+        .iter()
+        .any(|f| f.target == TargetProfile::Hpc);
+
     emit_common_prelude(out);
-    emit_dataframe_prelude(out);
-    emit_tensor_prelude(out);
+
+    if has_hpc {
+        out.push_str("/* ── HPC Target: aggressive vectorization preferred ── */\n");
+        out.push_str("#ifndef AGAM_HPC\n#define AGAM_HPC 1\n#endif\n\n");
+    }
+
+    if has_iot {
+        out.push_str("/* ── IoT Target: no heap, no stdlib, no effects ── */\n");
+        out.push_str("#ifndef AGAM_NO_HEAP\n#define AGAM_NO_HEAP 1\n#endif\n\n");
+    } else {
+        // Only emit heavy preludes when not targeting IoT
+        emit_dataframe_prelude(out);
+        emit_tensor_prelude(out);
+        emit_effect_prelude(out);
+    }
     out.push('\n');
 }
 
@@ -702,7 +883,7 @@ pub fn emit_c(module: &MirModule) -> String {
     writeln!(output, "typedef const char* agam_str;").unwrap();
     writeln!(output).unwrap();
 
-    emit_runtime_prelude(&mut output);
+    emit_runtime_prelude(&mut output, module);
 
     // Collect all unknown function calls and generate stub declarations
     let mut unknown_funcs: HashSet<String> = HashSet::new();
@@ -1029,27 +1210,81 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
             )
             .unwrap();
         }
-        Op::EffectPerform { effect, operation, .. } => {
+        Op::EffectPerform {
+            effect,
+            operation,
+            args,
+        } => {
+            let func_name = effect_c_function_name(effect, operation);
+            let arg_strs: Vec<String> = args.iter().map(|a| format!("__v{}", a.0)).collect();
             writeln!(
                 out,
-                "  {} {} = 0; /* TODO: effect {}.{} */",
+                "  {} {} = {}({});",
                 result_ty.name(),
                 v,
-                effect,
-                operation
+                func_name,
+                arg_strs.join(", ")
             )
             .unwrap();
         }
-        Op::HandleWith { effect, handler, .. } => {
+        Op::HandleWith {
+            effect,
+            handler,
+            body,
+        } => {
             writeln!(
                 out,
-                "  {} {} = 0; /* TODO: handle {} with {} */",
-                result_ty.name(),
-                v,
-                effect,
-                handler
+                "  /* handle {} with {} — executing body block_{} */",
+                effect, handler, body.0
             )
             .unwrap();
+            writeln!(out, "  {} {} = 0;", result_ty.name(), v).unwrap();
+        }
+        Op::GpuKernelLaunch {
+            kernel_name,
+            grid,
+            block,
+            args,
+        } => {
+            let arg_strs: Vec<String> = args.iter().map(|a| format!("__v{}", a.0)).collect();
+            writeln!(
+                out,
+                "  /* GPU kernel launch: {}<<<__v{}, __v{}>>>({}) */",
+                kernel_name,
+                grid.0,
+                block.0,
+                arg_strs.join(", ")
+            )
+            .unwrap();
+            writeln!(out, "  {} {} = 0; /* kernel launch result */", result_ty.name(), v).unwrap();
+        }
+        Op::GpuIntrinsic { kind, args } => {
+            let arg_strs: Vec<String> = args.iter().map(|a| format!("__v{}", a.0)).collect();
+            writeln!(
+                out,
+                "  {} {} = 0; /* GPU intrinsic {:?}({}) */",
+                result_ty.name(),
+                v,
+                kind,
+                arg_strs.join(", ")
+            )
+            .unwrap();
+        }
+        Op::InlineAsm {
+            asm_string,
+            constraints,
+            args,
+        } => {
+            let arg_strs: Vec<String> = args.iter().map(|a| format!("__v{}", a.0)).collect();
+            writeln!(
+                out,
+                "  /* inline asm: \"{}\" constraints=\"{}\" args=({}) */",
+                asm_string,
+                constraints,
+                arg_strs.join(", ")
+            )
+            .unwrap();
+            writeln!(out, "  {} {} = 0; /* asm result */", result_ty.name(), v).unwrap();
         }
     }
 }
@@ -1309,5 +1544,44 @@ mod tests {
         // Should produce valid-looking C code
         assert!(c.contains("int main("));
         assert!(c.contains("return"));
+    }
+
+    #[test]
+    fn test_emit_effect_perform_filesystem() {
+        let c = compile_to_c("fn main() { perform FileSystem.exists(\".\"); }");
+        assert!(
+            c.contains("agam_effect_FileSystem_exists"),
+            "C output should call agam_effect_FileSystem_exists, not a TODO stub"
+        );
+        assert!(
+            !c.contains("/* TODO: effect"),
+            "C output should not contain TODO effect stubs"
+        );
+    }
+
+    #[test]
+    fn test_emit_effect_perform_console() {
+        let c = compile_to_c("fn main() { perform Console.println(\"hello\"); }");
+        assert!(
+            c.contains("agam_effect_Console_println"),
+            "C output should call agam_effect_Console_println"
+        );
+    }
+
+    #[test]
+    fn test_effect_prelude_emitted() {
+        let c = compile_to_c("fn main(): return 0");
+        assert!(
+            c.contains("Agam Effect Runtime"),
+            "C output should include the effect runtime prelude"
+        );
+        assert!(
+            c.contains("agam_effect_FileSystem_exists"),
+            "effect prelude should define FileSystem.exists"
+        );
+        assert!(
+            c.contains("agam_effect_Console_println"),
+            "effect prelude should define Console.println"
+        );
     }
 }

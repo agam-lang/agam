@@ -22,7 +22,8 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 | **19** | partial | Wrapper foundation for agent ecosystems | `details/19.md` |
 | **20** | completed | Language surface: effect/handler/perform syntax | `details/20.md` |
 | **21** | completed | Runtime hardening: OS-level sandbox enforcement | `details/21.md` |
-| **22** | partial | Broader standard library growth (network, crypto, async) | `details/22.md` |
+| **22** | completed | Omni-Targeting Directives (`@target.iot`, `@target.enterprise`, `@target.hpc`) | `details/22.md` |
+| **23** | partial | GPU and NPU Integration (`@gpu` kernel pipeline) | `details/23.md` |
 
 ### 15F Progress
 - ✅ Workspace snapshot + invalidation diff contract
@@ -95,7 +96,12 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 - ✅ `agam_std::io` now provides a first-party deterministic file/path I/O slice with path inspection, directory creation/listing, and UTF-8 text read/write helpers
 - ✅ `IoError` plus crate-level tests now cover round-trip text I/O, append ordering, lexicographic directory listing, and missing-file diagnostics
 - ✅ `agam_sema::effects` now exposes a matching builtin `FileSystem` effect definition plus `register_std_effects()` for the current stdlib I/O surface
-- ⬜ Connect that filesystem effect contract to lowering/runtime-backed handler execution and broader file/network capability
+- ✅ HIR lowering now translates AST `Perform`/`HandleWith` nodes to `HirExprKind::Perform`/`HirExprKind::HandleWith`
+- ✅ C backend emits concrete effect dispatch functions (FileSystem + Console) instead of TODO stubs
+- ✅ LLVM backend emits external function calls for effect dispatch instead of returning errors
+- ✅ `Console` effect added as second stdlib effect (print, println, read_line, eprint, eprintln)
+- ✅ `agam_std::effects` registers 14 handlers total (9 FileSystem + 5 Console)
+- ✅ End-to-end integration tests verify `perform` compiles to real code in both backends
 - ⬜ Align broader standard-library packaging/versioning with first-party distribution and governance contracts
 
 ### 18 Progress
@@ -128,6 +134,27 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 - ✅ Added Linux `prctl(PR_SET_NO_NEW_PRIVS)` and `setrlimit` enforcement for resources
 - ✅ Built robust RAII handle lifecycle management for sandbox state
 - ✅ Added platform-specific crate dependencies (`windows-sys`, `libc`)
+
+### 22 Progress
+- ✅ Parser already supports `@target.iot`, `@target.enterprise`, `@target.hpc` via existing dotted annotation parsing
+- ✅ `agam_sema::target` module: `TargetProfile` enum, `TargetConstraints`, `resolve_target_profile()`, and `validate_effect_for_target()`
+- ✅ HIR carries `target: TargetProfile` on `HirFunction`, resolved from annotations during lowering
+- ✅ MIR carries `target: TargetProfile` on `MirFunction`, propagated from HIR with serde default for backwards compatibility
+- ✅ C emitter: IoT modules skip effect/dataframe/tensor preludes, emit `AGAM_NO_HEAP` define; HPC modules emit `AGAM_HPC` define
+- ✅ 12 new sema tests covering profile resolution, constraint derivation, validation, and error cases
+- ✅ LLVM emitter: function-level target comments and module-level `!agam.target.*` metadata nodes for IoT/HPC/Enterprise
+- ✅ HIR lowering rejects `perform` in `@target.iot` functions at compile time with diagnostic errors
+- ✅ 5 new HIR tests for target propagation (Iot, Hpc, Default) and IoT effect rejection
+
+### 23 Progress
+- ✅ `@gpu` kernel config parsing and sema validation constraints
+- ✅ `GpuKernelLaunch` MIR op and propagation across all backends
+- ✅ High-throughput NVPTX64 IR emitter with CUDA linkage and pre-allocated formatting
+- ✅ Thread and Grid Intrinsics (`thread_id_x`, `block_dim_x`, `barrier`)
+- ⬜ Rich Memory Types (pointer/array lowering in kernels)
+- ⬜ Shared Memory (`shared_alloc<T>`)
+- ✅ Fast Math NVVM Intrinsics (`sin`, `cos`, `sqrt`)
+- ⬜ Host-Device memory transfer APIs (`gpu_malloc`, `gpu_memcpy`)
 
 ## Decision Rules
 
