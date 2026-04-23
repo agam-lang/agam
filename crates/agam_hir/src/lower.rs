@@ -13,6 +13,7 @@ use agam_ast::expr::*;
 use agam_ast::stmt::*;
 use agam_ast::types::TypeExpr;
 use agam_ast::*;
+use agam_sema::gpu::{resolve_gpu_builtin_expr, resolve_gpu_builtin_member};
 use agam_sema::types::{TypeStore, builtin_type_id_for_name};
 
 use agam_sema::target::TargetProfile;
@@ -357,12 +358,7 @@ impl HirLowering {
                 HirExprKind::Var(ident.name.clone()),
             ),
             ExprKind::PathExpr(path) => {
-                let full = path
-                    .segments
-                    .iter()
-                    .map(|s| s.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::");
+                let full = path_name(path);
                 (
                     self.lookup_local(&full)
                         .unwrap_or_else(|| self.types.fresh_var()),
@@ -395,25 +391,50 @@ impl HirLowering {
                 )
             }
 
-            ExprKind::Call { callee, args } => (
-                self.types.fresh_var(),
-                HirExprKind::Call {
-                    callee: Box::new(self.lower_expr(callee)),
-                    args: args.iter().map(|a| self.lower_expr(a)).collect(),
-                },
-            ),
+            ExprKind::Call { callee, args } => {
+                let return_ty = resolve_gpu_builtin_expr(callee)
+                    .map(|builtin| builtin.return_type(&self.types))
+                    .unwrap_or_else(|| self.types.fresh_var());
+                (
+                    return_ty,
+                    HirExprKind::Call {
+                        callee: Box::new(self.lower_expr(callee)),
+                        args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                    },
+                )
+            }
             ExprKind::MethodCall {
                 object,
                 method,
                 args,
-            } => (
-                self.types.fresh_var(),
-                HirExprKind::MethodCall {
-                    object: Box::new(self.lower_expr(object)),
-                    method: method.name.clone(),
-                    args: args.iter().map(|a| self.lower_expr(a)).collect(),
-                },
-            ),
+            } => {
+                if let Some(builtin) =
+                    resolve_gpu_builtin_member(object, &method.name)
+                {
+                    let callee_name =
+                        format!("{}::{}", expr_name(object).unwrap(), method.name);
+                    (
+                        builtin.return_type(&self.types),
+                        HirExprKind::Call {
+                            callee: Box::new(HirExpr {
+                                id: self.fresh_id(),
+                                ty: self.types.fresh_var(),
+                                kind: HirExprKind::Var(callee_name),
+                            }),
+                            args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                        },
+                    )
+                } else {
+                    (
+                        self.types.fresh_var(),
+                        HirExprKind::MethodCall {
+                            object: Box::new(self.lower_expr(object)),
+                            method: method.name.clone(),
+                            args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                        },
+                    )
+                }
+            }
 
             ExprKind::FieldAccess { object, field } => (
                 self.types.fresh_var(),
@@ -645,6 +666,28 @@ fn lower_unaryop(op: UnaryOp) -> HirUnaryOp {
     }
 }
 
+fn path_name(path: &Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.name.as_str())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn expr_name(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Identifier(ident) => Some(ident.name.clone()),
+        ExprKind::PathExpr(path) => Some(path_name(path)),
+        ExprKind::FieldAccess { object, field } => {
+            let mut full = expr_name(object)?;
+            full.push_str("::");
+            full.push_str(&field.name);
+            Some(full)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -859,5 +902,42 @@ mod tests {
         let (_, diagnostics) =
             lower_source_with_diagnostics("fn main(): perform Console.println(\"hello\")");
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_gpu_thread_id_call_uses_i32_type() {
+        let hir = lower_source("@gpu\nfn kern(): let tid = agam.gpu.thread_id_x()");
+        let builtins = TypeStore::new();
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Let {
+                value: Some(expr), ..
+            } => assert_eq!(expr.ty, builtins.i32()),
+            _ => panic!("expected let binding"),
+        }
+    }
+
+    #[test]
+    fn test_gpu_barrier_call_uses_unit_type() {
+        let hir = lower_source("@gpu\nfn kern(): agam.gpu.barrier()");
+        let builtins = TypeStore::new();
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Expr(expr) => assert_eq!(expr.ty, builtins.unit()),
+            _ => panic!("expected barrier expression statement"),
+        }
+    }
+
+    #[test]
+    fn test_gpu_math_call_uses_f32_type() {
+        let hir = lower_source("@gpu\nfn kern(x: f32): let y = agam.gpu.sqrt(x)");
+        let builtins = TypeStore::new();
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Let {
+                value: Some(expr), ..
+            } => assert_eq!(expr.ty, builtins.f32()),
+            _ => panic!("expected let binding"),
+        }
     }
 }

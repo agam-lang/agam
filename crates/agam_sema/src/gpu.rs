@@ -1,11 +1,15 @@
-//! GPU kernel configuration and validation.
+//! GPU kernel configuration, builtin resolution, and validation.
 //!
-//! Resolves `@gpu(threads=N)` annotations into `GpuKernelConfig` and
-//! validates that kernel functions comply with GPU execution constraints
-//! (no heap, no effects, no recursion, scalar returns only).
+//! Resolves `@gpu(threads=N)` annotations into `GpuKernelConfig`, maps
+//! source-level GPU builtins onto compiler-known operations, and validates
+//! that kernel functions comply with GPU execution constraints (no heap,
+//! no effects, no recursion, scalar returns only).
 
-use agam_ast::decl::Annotation;
+use agam_ast::{Path, decl::Annotation, expr::{Expr, ExprKind}};
 use serde::{Deserialize, Serialize};
+
+use crate::symbol::TypeId;
+use crate::types::TypeStore;
 
 /// GPU kernel launch configuration extracted from `@gpu(...)` annotations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,6 +29,147 @@ impl Default for GpuKernelConfig {
             shared_memory_bytes: 0,
             grid_dim: None,
         }
+    }
+}
+
+/// Source-level GPU builtin recognized by the compiler.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuBuiltin {
+    ThreadIdX,
+    ThreadIdY,
+    ThreadIdZ,
+    BlockIdX,
+    BlockIdY,
+    BlockIdZ,
+    BlockDimX,
+    BlockDimY,
+    BlockDimZ,
+    Barrier,
+    Sin,
+    Cos,
+    Sqrt,
+    Exp,
+}
+
+impl GpuBuiltin {
+    /// Return the compiler type produced by this GPU builtin.
+    pub fn return_type(self, types: &TypeStore) -> TypeId {
+        match self {
+            GpuBuiltin::Barrier => types.unit(),
+            GpuBuiltin::Sin
+            | GpuBuiltin::Cos
+            | GpuBuiltin::Sqrt
+            | GpuBuiltin::Exp => types.f32(),
+            GpuBuiltin::ThreadIdX
+            | GpuBuiltin::ThreadIdY
+            | GpuBuiltin::ThreadIdZ
+            | GpuBuiltin::BlockIdX
+            | GpuBuiltin::BlockIdY
+            | GpuBuiltin::BlockIdZ
+            | GpuBuiltin::BlockDimX
+            | GpuBuiltin::BlockDimY
+            | GpuBuiltin::BlockDimZ => types.i32(),
+        }
+    }
+
+    /// Return the expected argument types for this GPU builtin.
+    pub fn arg_types(self, types: &TypeStore) -> Vec<TypeId> {
+        match self {
+            GpuBuiltin::ThreadIdX
+            | GpuBuiltin::ThreadIdY
+            | GpuBuiltin::ThreadIdZ
+            | GpuBuiltin::BlockIdX
+            | GpuBuiltin::BlockIdY
+            | GpuBuiltin::BlockIdZ
+            | GpuBuiltin::BlockDimX
+            | GpuBuiltin::BlockDimY
+            | GpuBuiltin::BlockDimZ
+            | GpuBuiltin::Barrier => Vec::new(),
+            GpuBuiltin::Sin
+            | GpuBuiltin::Cos
+            | GpuBuiltin::Sqrt
+            | GpuBuiltin::Exp => vec![types.f32()],
+        }
+    }
+}
+
+/// Resolve a fully qualified GPU builtin path.
+pub fn resolve_gpu_builtin(path: &str) -> Option<GpuBuiltin> {
+    match path {
+        "agam::gpu::thread_id_x" | "gpu::thread_id_x" => {
+            Some(GpuBuiltin::ThreadIdX)
+        }
+        "agam::gpu::thread_id_y" | "gpu::thread_id_y" => {
+            Some(GpuBuiltin::ThreadIdY)
+        }
+        "agam::gpu::thread_id_z" | "gpu::thread_id_z" => {
+            Some(GpuBuiltin::ThreadIdZ)
+        }
+        "agam::gpu::block_id_x" | "gpu::block_id_x" => {
+            Some(GpuBuiltin::BlockIdX)
+        }
+        "agam::gpu::block_id_y" | "gpu::block_id_y" => {
+            Some(GpuBuiltin::BlockIdY)
+        }
+        "agam::gpu::block_id_z" | "gpu::block_id_z" => {
+            Some(GpuBuiltin::BlockIdZ)
+        }
+        "agam::gpu::block_dim_x" | "gpu::block_dim_x" => {
+            Some(GpuBuiltin::BlockDimX)
+        }
+        "agam::gpu::block_dim_y" | "gpu::block_dim_y" => {
+            Some(GpuBuiltin::BlockDimY)
+        }
+        "agam::gpu::block_dim_z" | "gpu::block_dim_z" => {
+            Some(GpuBuiltin::BlockDimZ)
+        }
+        "agam::gpu::barrier" | "gpu::barrier" => Some(GpuBuiltin::Barrier),
+        "agam::gpu::sin" | "gpu::sin" => Some(GpuBuiltin::Sin),
+        "agam::gpu::cos" | "gpu::cos" => Some(GpuBuiltin::Cos),
+        "agam::gpu::sqrt" | "gpu::sqrt" => Some(GpuBuiltin::Sqrt),
+        "agam::gpu::exp" | "gpu::exp" => Some(GpuBuiltin::Exp),
+        _ => None,
+    }
+}
+
+/// Resolve a GPU builtin from an AST path.
+pub fn resolve_gpu_builtin_path(path: &Path) -> Option<GpuBuiltin> {
+    let full = path_name(path);
+    resolve_gpu_builtin(&full)
+}
+
+/// Resolve a GPU builtin from an AST expression such as `agam.gpu.thread_id_x`.
+pub fn resolve_gpu_builtin_expr(expr: &Expr) -> Option<GpuBuiltin> {
+    expr_name(expr).and_then(|full| resolve_gpu_builtin(&full))
+}
+
+/// Resolve a GPU builtin from a dotted/module-style method call.
+pub fn resolve_gpu_builtin_member(object: &Expr, member: &str) -> Option<GpuBuiltin> {
+    let mut full = expr_name(object)?;
+    full.push_str("::");
+    full.push_str(member);
+    resolve_gpu_builtin(&full)
+}
+
+fn path_name(path: &Path) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.name.as_str())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn expr_name(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Identifier(ident) => Some(ident.name.clone()),
+        ExprKind::PathExpr(path) => Some(path_name(path)),
+        ExprKind::FieldAccess { object, field } => {
+            let mut full = expr_name(object)?;
+            full.push_str("::");
+            full.push_str(&field.name);
+            Some(full)
+        }
+        _ => None,
     }
 }
 
@@ -312,5 +457,31 @@ mod tests {
         assert_eq!(config.threads_per_block, 256);
         assert_eq!(config.shared_memory_bytes, 0);
         assert_eq!(config.grid_dim, None);
+    }
+
+    #[test]
+    fn resolves_gpu_builtin_paths() {
+        assert_eq!(
+            resolve_gpu_builtin("agam::gpu::thread_id_x"),
+            Some(GpuBuiltin::ThreadIdX)
+        );
+        assert_eq!(
+            resolve_gpu_builtin("gpu::barrier"),
+            Some(GpuBuiltin::Barrier)
+        );
+        assert_eq!(
+            resolve_gpu_builtin("agam::gpu::sqrt"),
+            Some(GpuBuiltin::Sqrt)
+        );
+        assert_eq!(resolve_gpu_builtin("std::math::sqrt"), None);
+    }
+
+    #[test]
+    fn gpu_builtin_signatures_use_backend_types() {
+        let types = TypeStore::new();
+        assert_eq!(GpuBuiltin::ThreadIdX.return_type(&types), types.i32());
+        assert_eq!(GpuBuiltin::Barrier.return_type(&types), types.unit());
+        assert_eq!(GpuBuiltin::Sin.return_type(&types), types.f32());
+        assert_eq!(GpuBuiltin::Sqrt.arg_types(&types), vec![types.f32()]);
     }
 }

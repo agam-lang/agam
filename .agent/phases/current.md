@@ -150,10 +150,10 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 - ✅ `@gpu` kernel config parsing and sema validation constraints
 - ✅ `GpuKernelLaunch` MIR op and propagation across all backends
 - ✅ High-throughput NVPTX64 IR emitter with CUDA linkage and pre-allocated formatting
-- ✅ Thread and Grid Intrinsics (`thread_id_x`, `block_dim_x`, `barrier`)
+- ✅ Source-level GPU builtins now resolve and lower end-to-end (`agam.gpu.thread_id_*`, `agam.gpu.block_id_*`, `agam.gpu.block_dim_*`, `agam.gpu.barrier`)
 - ⬜ Rich Memory Types (pointer/array lowering in kernels)
 - ⬜ Shared Memory (`shared_alloc<T>`)
-- ✅ Fast Math NVVM Intrinsics (`sin`, `cos`, `sqrt`)
+- ✅ GPU math builtins now lower to NVVM fast-math intrinsics (`agam.gpu.sin`, `agam.gpu.cos`, `agam.gpu.sqrt`, `agam.gpu.exp`)
 - ⬜ Host-Device memory transfer APIs (`gpu_malloc`, `gpu_memcpy`)
 
 ## Decision Rules

@@ -13,6 +13,7 @@ use agam_ast::types::{TypeExpr, TypeExprKind};
 use agam_ast::*;
 use agam_errors::Span;
 
+use crate::gpu::{resolve_gpu_builtin_expr, resolve_gpu_builtin_member};
 use crate::infer::InferenceEngine;
 use crate::resolver::Resolver;
 use crate::scope::ScopeStack;
@@ -336,15 +337,42 @@ impl TypeChecker {
             // ── Calls ──
             ExprKind::Call { callee, args } => {
                 self.infer_expr(callee);
-                for arg in args {
-                    self.infer_expr(arg);
+                let arg_tys: Vec<TypeId> = args.iter().map(|arg| self.infer_expr(arg)).collect();
+                if let Some(builtin) = resolve_gpu_builtin_expr(callee) {
+                    let expected_arg_tys = builtin.arg_types(&self.types);
+                    for (expected, actual) in
+                        expected_arg_tys.into_iter().zip(arg_tys.into_iter())
+                    {
+                        self.engine.constrain(
+                            expected,
+                            actual,
+                            "GPU builtin argument type mismatch",
+                        );
+                    }
+                    return builtin.return_type(&self.types);
                 }
                 self.types.fresh_var() // Return type inferred later
             }
             ExprKind::MethodCall { object, args, .. } => {
                 self.infer_expr(object);
-                for arg in args {
-                    self.infer_expr(arg);
+                let arg_tys: Vec<TypeId> =
+                    args.iter().map(|arg| self.infer_expr(arg)).collect();
+                if let ExprKind::MethodCall { object, method, .. } = &expr.kind {
+                    if let Some(builtin) =
+                        resolve_gpu_builtin_member(object, &method.name)
+                    {
+                        let expected_arg_tys = builtin.arg_types(&self.types);
+                        for (expected, actual) in
+                            expected_arg_tys.into_iter().zip(arg_tys.into_iter())
+                        {
+                            self.engine.constrain(
+                                expected,
+                                actual,
+                                "GPU builtin argument type mismatch",
+                            );
+                        }
+                        return builtin.return_type(&self.types);
+                    }
                 }
                 self.types.fresh_var()
             }
@@ -590,5 +618,20 @@ mod tests {
     fn test_comparison_returns_bool() {
         let tc = check_source("fn main(): let x = 1 < 2");
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_gpu_builtin_call_type_is_resolved() {
+        let tc = check_source("@gpu\nfn kern(): let tid: i32 = agam.gpu.thread_id_x()");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_gpu_math_builtin_argument_type_is_checked() {
+        let tc = check_source("@gpu\nfn kern(): let y: f32 = agam.gpu.sqrt(1)");
+        assert!(
+            !tc.errors.is_empty(),
+            "expected type error for integer gpu sqrt argument"
+        );
     }
 }

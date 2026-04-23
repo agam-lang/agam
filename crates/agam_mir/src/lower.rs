@@ -3,6 +3,7 @@
 //! Transforms the high-level HIR into basic-block-based MIR with SSA values.
 
 use agam_hir::nodes::*;
+use agam_sema::gpu::{GpuBuiltin, resolve_gpu_builtin};
 use agam_sema::symbol::TypeId;
 use agam_sema::types::TypeStore;
 
@@ -246,11 +247,22 @@ impl MirLowering {
             }
 
             HirExprKind::Call { callee, args } => {
+                let arg_vals: Vec<ValueId> = args.iter().map(|a| self.lower_expr(a)).collect();
+                if let Some(callee_name) = gpu_callee_name(callee) {
+                    if let Some(builtin) = resolve_gpu_builtin(&callee_name) {
+                        return self.emit(
+                            ty,
+                            Op::GpuIntrinsic {
+                                kind: lower_gpu_builtin(builtin),
+                                args: arg_vals,
+                            },
+                        );
+                    }
+                }
                 let callee_name = match &callee.kind {
                     HirExprKind::Var(name) => name.clone(),
                     _ => "__indirect_call".into(),
                 };
-                let arg_vals: Vec<ValueId> = args.iter().map(|a| self.lower_expr(a)).collect();
                 self.emit(
                     ty,
                     Op::Call {
@@ -408,6 +420,38 @@ fn lower_unop(op: HirUnaryOp) -> MirUnOp {
     }
 }
 
+fn lower_gpu_builtin(builtin: GpuBuiltin) -> GpuIntrinsicKind {
+    match builtin {
+        GpuBuiltin::ThreadIdX => GpuIntrinsicKind::ThreadIdX,
+        GpuBuiltin::ThreadIdY => GpuIntrinsicKind::ThreadIdY,
+        GpuBuiltin::ThreadIdZ => GpuIntrinsicKind::ThreadIdZ,
+        GpuBuiltin::BlockIdX => GpuIntrinsicKind::BlockIdX,
+        GpuBuiltin::BlockIdY => GpuIntrinsicKind::BlockIdY,
+        GpuBuiltin::BlockIdZ => GpuIntrinsicKind::BlockIdZ,
+        GpuBuiltin::BlockDimX => GpuIntrinsicKind::BlockDimX,
+        GpuBuiltin::BlockDimY => GpuIntrinsicKind::BlockDimY,
+        GpuBuiltin::BlockDimZ => GpuIntrinsicKind::BlockDimZ,
+        GpuBuiltin::Barrier => GpuIntrinsicKind::Barrier,
+        GpuBuiltin::Sin => GpuIntrinsicKind::NvvmSin,
+        GpuBuiltin::Cos => GpuIntrinsicKind::NvvmCos,
+        GpuBuiltin::Sqrt => GpuIntrinsicKind::NvvmSqrt,
+        GpuBuiltin::Exp => GpuIntrinsicKind::NvvmExp,
+    }
+}
+
+fn gpu_callee_name(expr: &HirExpr) -> Option<String> {
+    match &expr.kind {
+        HirExprKind::Var(name) => Some(name.clone()),
+        HirExprKind::FieldAccess { object, field } => {
+            let mut full = gpu_callee_name(object)?;
+            full.push_str("::");
+            full.push_str(field);
+            Some(full)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,5 +559,59 @@ mod tests {
             has_perform,
             "expected EffectPerform for FileSystem.exists in MIR"
         );
+    }
+
+    #[test]
+    fn test_mir_gpu_thread_id_call_lowers_to_intrinsic() {
+        let mir = lower_to_mir("@gpu\nfn kern(): let tid = agam.gpu.thread_id_x()");
+        let f = &mir.functions[0];
+        let has_intrinsic = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::ThreadIdX,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(has_intrinsic, "expected GpuIntrinsic::ThreadIdX in MIR");
+    }
+
+    #[test]
+    fn test_mir_gpu_barrier_call_lowers_to_intrinsic() {
+        let mir = lower_to_mir("@gpu\nfn kern(): agam.gpu.barrier()");
+        let f = &mir.functions[0];
+        let has_intrinsic = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::Barrier,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(has_intrinsic, "expected GpuIntrinsic::Barrier in MIR");
+    }
+
+    #[test]
+    fn test_mir_gpu_math_call_lowers_to_intrinsic() {
+        let mir = lower_to_mir("@gpu\nfn kern(x: f32): let y = agam.gpu.sqrt(x)");
+        let f = &mir.functions[0];
+        let has_intrinsic = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::NvvmSqrt,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(has_intrinsic, "expected GpuIntrinsic::NvvmSqrt in MIR");
     }
 }
