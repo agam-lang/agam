@@ -108,6 +108,23 @@ python -m benchmarks.infrastructure.benchmark_harness \
 
 The `--match` filter is the easiest way to hold the workload constant across Agam backends and comparison-language targets when you want a same-host, same-situation comparison.
 
+Run the denser tensor matmul comparison slice directly:
+
+```bash
+python -m benchmarks.infrastructure.benchmark_harness \
+  --environment local_windows_win11 \
+  --suite 05_ml_primitives \
+  --match tensor_matmul \
+  --include-comparisons \
+  --target agam_llvm_o3_call_cache_off \
+  --target cpp_clangxx_o3 \
+  --target python_cpython \
+  --warmups 2 \
+  --runs 7
+```
+
+Raw `performance.json` rows now retain `stdout_hashes`, `stdout_preview`, and `stderr_preview` so checksum mismatches are easier to diagnose without rerunning the entire benchmark under a debugger.
+
 Run explicit Agam backend and call-cache comparisons:
 
 ```bash

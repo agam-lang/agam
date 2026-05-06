@@ -9,4 +9,12 @@ coverage/
 .cache/
 __pycache__/
 graphify-out/
+dist/
+build/
+scratch/
+fixtures/c-backend-smoke/
+integrations/python/.venv/
+integrations/python/dist/
+integrations/python/src/*.egg-info/
+*.egg-info/
 *.log

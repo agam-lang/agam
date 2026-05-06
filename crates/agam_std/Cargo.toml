@@ -1,9 +1,0 @@
-[package]
-name = "agam_std"
-description = "Agam standard library"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-agam_runtime = { path = "../agam_runtime" }

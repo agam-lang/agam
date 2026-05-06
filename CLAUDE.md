@@ -5,7 +5,7 @@
 
 > **🤖 Unified Multi-AI Workflow:** Whether you are Gemini, Claude, Codex, or another AI, you are operating in a continuous, hand-off rotation. Read the existing context, respect the ongoing phase checklists, and do not invent your own workflows.
 
-> **🪨 Token Efficiency:** Follow `.agent/rules/token-efficiency.md`. Use caveman skill (full intensity) for terse output. If `graphify-out/GRAPH_REPORT.md` exists, read it before grepping raw files.
+> **🪨 Token Efficiency:** Follow `.agent/rules/token-efficiency.md`. Use caveman skill (full intensity) for terse output. If `graphify-out/GRAPH_REPORT.md` exists, read it before grepping raw files. Treat `graphify-out/graph.json` and `graphify-out/cache/` as generated artifacts, not durable review surfaces.
 
 ---
 
@@ -43,15 +43,14 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 
 | Layer | Crates |
 |-------|--------|
-| **Frontend** | `agam_lexer`, `agam_parser`, `agam_ast` |
-| **Semantics** | `agam_sema` (resolver + type checker) |
-| **Lowering** | `agam_hir`, `agam_mir` (with `agam_mir::opt` optimizer) |
+| **Core** | `agam_errors`, `agam_lexer`, `agam_parser`, `agam_ast` |
+| **Middle** | `agam_sema` (resolver + type checker), `agam_hir`, `agam_mir` (with `agam_mir::opt`) |
 | **Backends** | `agam_codegen` (C/LLVM IR emit), `agam_jit` (Cranelift JIT) |
-| **Runtime** | `agam_runtime` (ABI contract, cache store, host detection) |
-| **Tooling** | `agam_driver` (`agamc` CLI), `agam_fmt`, `agam_lsp`, `agam_test`, `agam_profile` |
-| **Packaging** | `agam_pkg` (manifest, workspace, snapshot, portable packages, SDK distribution) |
-| **Diagnostics** | `agam_errors` (spans, labels, diagnostic emitter) |
-| **Future** | `agam_std`, `agam_ffi`, `agam_lint`, `agam_doc`, `agam_debug`, `agam_macro`, `agam_smt`, `agam_notebook`, `agam_ui`, `agam_game` |
+| **Runtime** | `agam_runtime` (ABI contract, cache store, host detection), `agam_std` |
+| **Tooling** | `agam_driver` (`agamc` CLI), `agam_pkg`, `agam_fmt`, `agam_lsp`, `agam_test`, `agam_profile`, `agam_doc`, `agam_debug`, `agam_lint` |
+| **Experimental** | `agam_ffi`, `agam_notebook`, `agam_macro`, `agam_smt`, `agam_ui`, `agam_game` |
+
+Physical layout: `crates/{core,middle,backends,runtime,tooling,experiments}/...`
 
 ### Key CLI (`agamc`)
 
@@ -153,7 +152,7 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 
 ## 5. Key Data Models (quick reference)
 
-### `agam_pkg` (`crates/agam_pkg/src/lib.rs`)
+### `agam_pkg` (`crates/tooling/agam_pkg/src/lib.rs`)
 
 - **`WorkspaceManifest`** — parsed `agam.toml` (project, workspace, dependencies, toolchain, environments)
 - **`WorkspaceSession`** — manifest + resolved layout + workspace members
@@ -163,7 +162,7 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 - **`PortablePackage`** — verified MIR + runtime metadata (`.agpkg.json`)
 - **`SdkDistributionManifest`** — host-native SDK layout (`sdk-manifest.json`)
 
-### `agam_driver` (`crates/agam_driver/src/main.rs`)
+### `agam_driver` (`crates/tooling/agam_driver/src/main.rs`)
 
 - **`DaemonSession`** — snapshot + per-file warm-state cache (`BTreeMap<PathBuf, BTreeMap<String, WarmState>>`)
 - **`WarmState`** — per-file-version: optional AST Module, HIR, MIR, source features
@@ -189,7 +188,7 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 
 ### Process
 - After major changes, commit locally. After a final milestone or substantial batch of changes, commit and push to GitHub.
-- If CLI, packaging, or platform support changes, update `README.md`, `info.md`, and `.agent/`.
+- If CLI, packaging, or platform support changes, update `README.md`, `docs/architecture/project-brief.md`, `info.md`, and `.agent/`.
 - Keep agent guidance in `.agent/`; root entrypoints (`CLAUDE.md`, `AGENTS.md`) are pointers, not competing sources.
 
 ### Build & Verify
@@ -205,11 +204,21 @@ cargo fmt --manifest-path Cargo.toml -- --check  # should pass
 
 ```
 agam/
-├── crates/              # All compiler, runtime, and tooling crates (26 crates)
+├── crates/
+│   ├── core/            # diagnostics, lexer, parser, AST
+│   ├── middle/          # sema, HIR, MIR
+│   ├── backends/        # C/LLVM codegen and JIT
+│   ├── runtime/         # runtime and stdlib
+│   ├── tooling/         # CLI, packaging, fmt, LSP, test, profiling
+│   └── experiments/     # FFI, notebook, macro, SMT, UI, game
 ├── examples/            # Runnable .agam source examples
 ├── benchmarks/          # Organized benchmark suites, harnesses, CI helpers
-├── docs/                # Documentation
-├── scripts/             # Build/CI scripts
+├── docs/                # Public docs and architecture notes
+├── devops/              # Canonical operational automation and runbooks
+├── integrations/        # External integration packages (for example Python)
+├── fixtures/            # Smoke fixtures and root-level clutter moved out of the top directory
+├── scripts/             # Compatibility shims to canonical devops entrypoints
+├── justfile             # Human-friendly local task runner
 ├── .agent/              # Agent-facing project guidance (see below)
 │   ├── phases/          # current.md, next.md, catalog.md, details/
 │   │   └── details/     # Per-phase implementation checklists

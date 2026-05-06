@@ -1,0 +1,36 @@
+{
+  "version": "0.2.1",
+  "defaults": {},
+  "configurations": [
+    {
+      "type": "default",
+      "project": "target\\debug\\agamc.exe",
+      "name": "agamc doctor",
+      "args": [
+        "doctor",
+        "${workspaceRoot}"
+      ],
+      "currentDir": "${workspaceRoot}"
+    },
+    {
+      "type": "default",
+      "project": "target\\debug\\agamc.exe",
+      "name": "agamc llvm smoke",
+      "args": [
+        "build",
+        "${workspaceRoot}\\examples\\llvm_native_smoke.agam",
+        "--fast"
+      ],
+      "currentDir": "${workspaceRoot}"
+    },
+    {
+      "type": "default",
+      "project": "target\\debug\\agamc.exe",
+      "name": "agamc repl",
+      "args": [
+        "repl"
+      ],
+      "currentDir": "${workspaceRoot}"
+    }
+  ]
+}

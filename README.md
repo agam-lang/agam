@@ -1,5 +1,10 @@
 # Agam
 
+[![CI](https://github.com/agam-lang/agam/actions/workflows/ci.yml/badge.svg)](https://github.com/agam-lang/agam/actions/workflows/ci.yml)
+[![SDK Dist](https://github.com/agam-lang/agam/actions/workflows/sdk-dist.yml/badge.svg)](https://github.com/agam-lang/agam/actions/workflows/sdk-dist.yml)
+[![agam-ffi Python](https://github.com/agam-lang/agam/actions/workflows/agam-ffi-python.yml/badge.svg)](https://github.com/agam-lang/agam/actions/workflows/agam-ffi-python.yml)
+![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)
+
 Agam is a compiled language and toolchain implemented in Rust. The project goal is straightforward:
 
 - keep Python-level readability for everyday code
@@ -99,24 +104,24 @@ flowchart TD
     JIT --> Runtime
 ```
 
-Core workspace areas:
+Layered workspace areas:
 
-- `crates/agam_lexer`, `crates/agam_parser`, `crates/agam_ast`
-  - source parsing and syntax representation
-- `crates/agam_sema`, `crates/agam_hir`, `crates/agam_mir`
+- `crates/core/agam_errors`, `crates/core/agam_lexer`, `crates/core/agam_parser`, `crates/core/agam_ast`
+  - diagnostics plus source parsing and syntax representation
+- `crates/middle/agam_sema`, `crates/middle/agam_hir`, `crates/middle/agam_mir`
   - semantic analysis, typed lowering, and optimization handoff
-- `crates/agam_codegen`
-  - C and LLVM IR emission
-- `crates/agam_jit`
-  - Cranelift-based in-memory execution
-- `crates/agam_runtime`
-  - runtime helpers, ARC, SIMD, cache, contract, and profiling glue
-- `crates/agam_profile`
-  - profiling models and optimization evidence
-- `crates/agam_driver`
-  - the `agamc` CLI
-- `crates/agam_pkg`
-  - portable package, SDK manifest, and future source-package/environment management
+- `crates/backends/agam_codegen`, `crates/backends/agam_jit`
+  - C/LLVM code generation and Cranelift execution
+- `crates/runtime/agam_runtime`, `crates/runtime/agam_std`
+  - runtime helpers, ARC, SIMD, cache, sandboxing, and standard-library surfaces
+- `crates/tooling/agam_driver`, `crates/tooling/agam_pkg`, `crates/tooling/agam_profile`, `crates/tooling/agam_fmt`, `crates/tooling/agam_lsp`, `crates/tooling/agam_test`, `crates/tooling/agam_doc`, `crates/tooling/agam_debug`, `crates/tooling/agam_lint`
+  - the `agamc` CLI, packaging, profiling, and first-party developer tooling
+- `crates/experiments/agam_ffi`, `crates/experiments/agam_notebook`, `crates/experiments/agam_macro`, `crates/experiments/agam_smt`, `crates/experiments/agam_ui`, `crates/experiments/agam_game`
+  - experimental and forward-looking surfaces
+- `integrations/python`
+  - external Python package wrappers over `agamc exec --json`
+- `fixtures/c-backend-smoke`
+  - smoke fixtures and generated C backend artifacts kept out of the repo root
 
 ## Getting Started
 
@@ -146,6 +151,28 @@ Work directly with a single source file:
 cargo run -p agam_driver -- build examples/llvm_native_smoke.agam --fast
 cargo run -p agam_driver -- run examples/llvm_native_smoke.agam --backend jit
 ```
+
+## Development Environment Contract
+
+Agam now treats the local workstation setup as an explicit repo contract instead of tribal
+knowledge:
+
+- `rust-toolchain.toml`
+  - pins the Rust baseline and required developer components (`clippy`, `rustfmt`)
+- `.python-version`
+  - pins the Python baseline for packaging, benchmark, and release scripts
+- `.editorconfig` and `.gitattributes`
+  - normalize whitespace and line endings across Rust, Python, Markdown, YAML, JSON, and Windows scripts
+- `justfile`
+  - is the human-facing task entrypoint for `doctor`, `vs-status`, `sdk-package`, `sdk-validate`, and `ci-local`
+- `devops/`
+  - owns the canonical automation and runbooks, while root `scripts/` stays compatibility-only
+
+Generated review noise is intentionally separated from source:
+
+- stable smoke fixtures belong under `fixtures/`
+- local experiments and temporary output belong under `scratch/`
+- only `graphify-out/GRAPH_REPORT.md` is treated as durable repo context; graph JSON/cache files are generated on demand
 
 ## Main CLI Workflows
 
@@ -215,9 +242,9 @@ agamc package sdk . --env release
 agamc package sdk . --env android-arm64 --android-sysroot /path/to/ndk/sysroot
 
 # Build and validate the hosted-runner SDK layout
-python scripts/package_sdk.py --require-llvm-bundle
-python scripts/package_sdk.py --require-llvm-bundle --archive-format auto --checksum
-python scripts/package_sdk.py --require-llvm-bundle --require-android-target-pack --archive-format auto --checksum
+python devops/scripts/package_sdk.py --require-llvm-bundle
+python devops/scripts/package_sdk.py --require-llvm-bundle --archive-format auto --checksum
+python devops/scripts/package_sdk.py --require-llvm-bundle --require-android-target-pack --archive-format auto --checksum
 ```
 
 `agamc exec` is the dedicated machine-facing execution surface. It accepts either raw Agam source
@@ -233,7 +260,7 @@ requests now run inside an isolated worker subprocess with a sandbox working dir
 environment by default, timeout enforcement, and per-platform memory/process guards where the host
 supports them instead of relying only on a temp workspace and sanitized filename boundary.
 
-For Python-facing integrations, `crates/agam_ffi/python` now ships a minimal package scaffold with
+For Python-facing integrations, `integrations/python` now ships a minimal package scaffold with
 Python-native `HeadlessExecutionRequest`, `HeadlessExecutionResponse`, `AgamExecClient`, and
 `AgamREPLTool` wrappers over the same `agamc exec --json` contract. The package now exposes
 optional extras and adapter hooks for LangChain and LlamaIndex on top of that same strict
@@ -287,6 +314,13 @@ AGAM_LLVM_SYSROOT=/path/to/sysroot
 AGAM_LLVM_TARGET_TRIPLE=x86_64-unknown-linux-gnu
 ```
 
+For the Windows-side Visual Studio flow, the repo now ships [`.vsconfig`](./.vsconfig),
+[`tasks.vs.json`](./tasks.vs.json), [`launch.vs.json`](./launch.vs.json), and the canonical
+DevOps entrypoint [devops/scripts/vs2026-dev.ps1](./devops/scripts/vs2026-dev.ps1). Open the
+`agam` folder in Visual Studio Community 2026, import the repo `.vsconfig`, and use
+[devops/runbooks/windows/visual-studio-2026.md](./devops/runbooks/windows/visual-studio-2026.md)
+for the exact setup and validation loop. The root `scripts/` paths remain as compatibility shims.
+
 ## Optimization and Performance Direction
 
 Agam's performance target is not "fast enough for a new language." The target is to compete with optimized `clang++` output on Agam's proven native workloads.
@@ -330,41 +364,80 @@ Agam is still under active compiler development. Important incomplete areas incl
 
 ## Roadmap Now
 
-These are the active next phases from the repo's current program board:
+These are the public priority themes for the current phase of the project:
 
-1. Phase 22: Broader Stdlib Growth
-   - expand `agam_std` beyond filesystem I/O to include networking, crypto, and async primitives
-   - keep new modules aligned with the effects model and distribution governance
-2. Phase 23: GPU and NPU Integration (Advanced)
-   - Agam provides **first-class, bleeding-edge GPU acceleration directly in the compiler**. 
-   - No external wrapper libraries needed. Features include `@gpu.autotune` for dynamic hardware profiling, inline PTX assembly (`agam::gpu::asm!`), warp-synchronous generic primitives (`warp_shuffle`, `ballot_sync`), and **Device-Local Algebraic Effects** enabling zero-cost divergence handling via shared memory state machines.
-   - Host-side CUDA Graph capture (`@gpu.graph`) for ultra-low latency kernel fusion.
-3. Phase 24+: Ecosystem & Model Integration
-   - move into language server and ML-native capabilities
+1. Native LLVM product hardening
+   - keep Windows, Linux, and Android on a supportable native LLVM path with real SDK packaging and toolchain validation
+2. GPU and NPU integration
+   - continue the current GPU pipeline with richer kernel parameter support, shared memory, and real host-side kernel launch lowering
+3. Effects-aware stdlib and execution hardening
+   - finish the remaining standard-library I/O/networking and execution-isolation work without weakening the runtime contract
+4. Ecosystem integration
+   - ship and maintain the external Python integration story on top of the same `agamc exec --json` contract
 
-*Note: Phases 15H, 17F, 18, 19, 20 (Language Surface Expansion), and 21 (Runtime Hardening) are completed.*
-
-Later anti-hallucination, model, and broader ecosystem phases resume after that sequence, starting with Phase 25.
+For the public roadmap, see [`ROADMAP.md`](./ROADMAP.md). For the repo’s more detailed implementation board, see [`.agent/phases/next.md`](./.agent/phases/next.md).
 
 ## Repository Layout
 
 ```text
-crates/      compiler, runtime, tooling, packaging, and JIT crates
-examples/    example Agam programs
-scripts/     helper scripts for packaging and maintenance
-.agent/      canonical project guidance, rules, and phase board
+crates/                  layered workspace crates grouped by responsibility
+  core/                 diagnostics, lexer, parser, AST
+  middle/               sema, HIR, MIR
+  backends/             codegen and JIT
+  runtime/              runtime and stdlib
+  tooling/              CLI, packaging, fmt, LSP, tests, profiling
+  experiments/          FFI, notebook, SMT, UI, game, macro work
+integrations/           external integration packages owned outside the Rust workspace
+fixtures/               smoke fixtures and generated examples kept out of the repo root
+devops/                 canonical automation, CI mapping, and runbooks
+docs/architecture/      engineering brief and structure docs
+examples/               example Agam programs
+scripts/                compatibility shims to the canonical devops entrypoints
+justfile                one human-friendly task surface for local DevOps work
+scratch/                local non-source workspace for experiments and temporary output
+.agent/                 canonical project guidance, rules, and phase board
 ```
 
 ## Additional Documentation
 
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md)
+  - contributor expectations, local workflow, verification, and change hygiene
+- [`ROADMAP.md`](./ROADMAP.md)
+  - public project priorities and what is intentionally not first
+- [`GOVERNANCE.md`](./GOVERNANCE.md)
+  - maintainer-led decision model and change expectations
+- [`SECURITY.md`](./SECURITY.md)
+  - vulnerability reporting and supported-fix expectations
+- [`SUPPORT.md`](./SUPPORT.md)
+  - how to route bugs, feature requests, and support questions
+- [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)
+  - collaboration standards for repo participation
+- [`docs/README.md`](./docs/README.md)
+  - documentation ownership map for public docs, architecture notes, and runbooks
+- [`docs/architecture/project-brief.md`](./docs/architecture/project-brief.md)
+  - canonical engineering brief for the repo layout and compiler/runtime stack
+- [`docs/architecture/decisions/`](./docs/architecture/decisions/)
+  - architecture decision records for cross-cutting compiler, runtime, and repo-contract choices
 - [`info.md`](./info.md)
-  - concise architecture and program summary
+  - short index into the core engineering and operations documents
+- [`devops/runbooks/releases/release-readiness.md`](./devops/runbooks/releases/release-readiness.md)
+  - release and publication readiness checklist for SDKs, docs, and integration artifacts
 - [`.agent/policy/package-ecosystem.md`](./.agent/policy/package-ecosystem.md)
   - canonical package, registry, lockfile, environment, and first-party distribution direction
 - [`AGENTS.md`](./AGENTS.md)
   - agent entrypoint for repo-specific workflow
 - [`.agent/`](./.agent/)
   - canonical project policy, phases, skills, and rules
+
+## License
+
+Agam is dual-licensed under either:
+
+- [`LICENSE-MIT`](./LICENSE-MIT)
+- [`LICENSE-APACHE`](./LICENSE-APACHE)
+
+Unless explicitly stated otherwise, contributions intentionally submitted for inclusion in the repo
+are understood to be provided under the same dual-license terms.
 
 ## Development Notes
 
@@ -523,6 +596,23 @@ The organized benchmark workspace now lives under `benchmarks/`:
 Use `.agent/test/` for narrow phase-work microbenchmarks and generated inspection artifacts tied to active optimization slices.
 
 The checked-in same-host table below is one constant-workload snapshot, not the full benchmark inventory. The repo currently ships `38` Agam benchmark sources across nine suites and `38` comparison-language sources, with `8` workload families now comparison-ready in-repo. The broader implemented-vs-future workload map now lives in `benchmarks/COVERAGE_MATRIX.md`, which tracks `130` benchmark slots across runnable, comparison-ready, planned, and future-lab categories, while `benchmarks/results/README.md` now records which comparison-ready workloads already have measured rows nearby versus only dry-run validation or source-only status. For call-cache work specifically, the benchmark workspace now includes dedicated hot-set, mixed-locality, phase-shift, and unique-input call-cache cases under `benchmarks/benchmarks/08_jit_optimization/`.
+
+For denser same-host comparison work beyond Fibonacci, the workspace also carries a `05_ml_primitives/tensor_matmul` slice with checked-in Agam, C, C++, Rust, and Python sources. Use:
+
+```bash
+python -m benchmarks.infrastructure.benchmark_harness \
+  --environment local_windows_win11 \
+  --suite 05_ml_primitives \
+  --match tensor_matmul \
+  --include-comparisons \
+  --target agam_llvm_o3_call_cache_off \
+  --target cpp_clangxx_o3 \
+  --target python_cpython \
+  --warmups 2 \
+  --runs 7
+```
+
+Raw runtime rows now preserve `stdout_hashes`, `stdout_preview`, and `stderr_preview` in `benchmarks/results/raw/.../performance.json` so output mismatches are easier to debug when comparing Agam against native and interpreter baselines.
 
 ### Same-Host Comparison Snapshot
 
@@ -922,7 +1012,7 @@ That is why the repo has both `agam_profile` and backend-specific specialization
 
 ### 10. The CLI Layer
 
-`agamc` in `crates/agam_driver` orchestrates the whole flow:
+`agamc` in `crates/tooling/agam_driver` orchestrates the whole flow:
 
 - reads source files or project layouts
 - chooses a backend

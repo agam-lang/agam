@@ -1,0 +1,44 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: Compiler Frontend
+      labels:
+        - frontend
+        - parser
+        - lexer
+        - ast
+        - sema
+    - title: Middle-End and Optimization
+      labels:
+        - hir
+        - mir
+        - optimization
+        - performance
+        - benchmarks
+    - title: Backends and Runtime
+      labels:
+        - llvm
+        - jit
+        - codegen
+        - runtime
+        - gpu
+    - title: Tooling, Packaging, and DevOps
+      labels:
+        - cli
+        - packaging
+        - sdk
+        - devops
+        - ci
+    - title: Integrations and Ecosystem
+      labels:
+        - python
+        - integrations
+        - ffi
+        - docs
+    - title: Documentation and Governance
+      labels:
+        - documentation
+        - governance
+        - community

@@ -4,6 +4,17 @@ fn i64_const(value: i64) -> i64 {
     return value;
 }
 
+fn default_size() -> i64 {
+    return i64_const(96);
+}
+
+fn arg_or(index: i32, fallback: i64) -> i64 {
+    if argc() > index {
+        return parse_int(argv(index));
+    }
+    return fallback;
+}
+
 fn matmul_score(size: i64) -> i64 {
     let one: i64 = i64_const(1);
     let twenty_nine: i64 = i64_const(29);
@@ -28,6 +39,6 @@ fn matmul_score(size: i64) -> i64 {
 }
 
 fn main() -> i32 {
-    print_int(matmul_score(i64_const(48)));
+    print_int(matmul_score(arg_or(1, default_size())));
     return 0;
 }

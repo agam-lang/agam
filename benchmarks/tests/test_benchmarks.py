@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from benchmarks.infrastructure.utils import BENCHMARK_ROOT, SUITE_ROOT, discover_benchmarks
 
@@ -113,6 +114,30 @@ class BenchmarkWorkspaceShapeTests(unittest.TestCase):
             language_filters={"agam"},
         )
         self.assertGreaterEqual(len(jit_sources), 7)
+
+    def test_tensor_matmul_comparison_sources_exist(self) -> None:
+        comparison_dir = SUITE_ROOT / "05_ml_primitives" / "comparisons"
+        expected_files = {
+            "tensor_matmul.c",
+            "tensor_matmul.cpp",
+            "tensor_matmul.py",
+            "tensor_matmul.rs",
+        }
+        present_files = {path.name for path in comparison_dir.iterdir() if path.is_file()}
+        self.assertTrue(expected_files.issubset(present_files))
+
+    def test_tensor_matmul_sources_use_larger_runtime_fallback_size(self) -> None:
+        expected_snippets = {
+            SUITE_ROOT / "05_ml_primitives" / "tensor_matmul.agam": ("96", "argc()", "argv(index)"),
+            SUITE_ROOT / "05_ml_primitives" / "comparisons" / "tensor_matmul.c": ("96", "argc > 1", "strtoll"),
+            SUITE_ROOT / "05_ml_primitives" / "comparisons" / "tensor_matmul.cpp": ("96", "argc > 1", "std::strtoll"),
+            SUITE_ROOT / "05_ml_primitives" / "comparisons" / "tensor_matmul.py": ("96", "sys.argv[1]"),
+            SUITE_ROOT / "05_ml_primitives" / "comparisons" / "tensor_matmul.rs": ("96", "std::env::args()", "unwrap_or(DEFAULT_SIZE)"),
+        }
+        for path, snippets in expected_snippets.items():
+            text = Path(path).read_text(encoding="utf-8")
+            for snippet in snippets:
+                self.assertIn(snippet, text, msg=f"expected {snippet!r} in {path.name}")
 
 
 if __name__ == "__main__":

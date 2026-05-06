@@ -172,6 +172,8 @@ class BenchmarkWorkspace:
                 samples_ms: list[float] = []
                 peak_rss_samples: list[int] = []
                 stdout_hashes: list[str] = []
+                stdout_previews: list[str] = []
+                stderr_previews: list[str] = []
                 return_codes: list[int] = []
                 for _ in range(measured_runs):
                     result = self._execute(prepared.run_command)
@@ -179,6 +181,8 @@ class BenchmarkWorkspace:
                     if result["peak_rss_bytes"] is not None:
                         peak_rss_samples.append(result["peak_rss_bytes"])
                     stdout_hashes.append(result["stdout_sha256"])
+                    stdout_previews.append(result["stdout_preview"])
+                    stderr_previews.append(result["stderr_preview"])
                     return_codes.append(result["return_code"])
 
                 summary = self.statistics.summarize(samples_ms)
@@ -190,6 +194,10 @@ class BenchmarkWorkspace:
                         "delta_percent": summary.get("delta_percent"),
                         "sample_count": summary["sample_count"],
                         "stdout_hash": stdout_hashes[-1] if stdout_hashes else None,
+                        "stdout_hashes": stdout_hashes,
+                        "stdout_preview": stdout_previews[-1] if stdout_previews else None,
+                        "stderr_preview": stderr_previews[-1] if stderr_previews else None,
+                        "stdout_mismatch_detected": len(set(stdout_hashes)) > 1,
                         "return_codes": return_codes,
                         "summary": summary,
                     }

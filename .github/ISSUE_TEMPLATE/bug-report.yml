@@ -1,0 +1,65 @@
+name: Bug report
+description: Report a compiler, tooling, packaging, or integration defect
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for reproducible defects in Agam itself.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Exact commands, files, or steps to reproduce
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Host environment
+      description: OS, toolchain, backend, and relevant versions
+      placeholder: |
+        OS:
+        Rust:
+        Python:
+        Backend:
+        VS/LLVM:
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics and logs
+      description: Paste relevant output from `just doctor`, `agamc doctor`, CI logs, or stack traces
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I checked the docs and existing issues first
+        - label: I can reproduce this on the current branch or workspace state
+        - label: I included concrete reproduction steps

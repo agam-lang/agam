@@ -1,3 +1,9 @@
+import sys
+
+
+DEFAULT_SIZE = 96
+
+
 def matmul_score(size: int) -> int:
     total = 0
     for row in range(size):
@@ -10,5 +16,5 @@ def matmul_score(size: int) -> int:
 
 
 if __name__ == "__main__":
-    print(matmul_score(48))
-
+    size = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_SIZE
+    print(matmul_score(size))

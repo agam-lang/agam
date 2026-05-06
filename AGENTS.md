@@ -21,6 +21,9 @@ Source → agam_lexer → agam_parser → agam_ast → agam_sema → agam_hir �
 
 Key crates: `agam_driver` (CLI, daemon, REPL/headless execution, `exec` tool), `agam_pkg` (manifest/workspace/packaging), `agam_runtime` (ABI/cache), `agam_errors` (diagnostics)
 
+Physical layout: `crates/{core,middle,backends,runtime,tooling,experiments}/...` plus
+`integrations/python` for the external Python package surface.
+
 ## Non-Negotiables
 
 - Agam is its own language — not Python, not Rust. Check real `.agam` files for syntax.
@@ -33,7 +36,12 @@ Key crates: `agam_driver` (CLI, daemon, REPL/headless execution, `exec` tool), `
 
 | Path | Purpose |
 |------|---------|
-| `crates/` | All 26 compiler, runtime, and tooling crates |
+| `crates/` | Layered Rust workspace grouped into `core/`, `middle/`, `backends/`, `runtime/`, `tooling/`, and `experiments/` |
+| `integrations/` | External integration packages outside the Rust workspace |
+| `fixtures/` | Smoke fixtures and generated examples moved out of the repo root |
+| `devops/` | Canonical automation, CI mapping, and runbooks |
+| `docs/architecture/` | Canonical engineering brief and repo structure notes |
+| `justfile` | Root task runner for common local DevOps workflows |
 | `examples/` | Runnable `.agam` examples |
 | `benchmarks/` | Benchmark suites and harnesses |
 | `.agent/phases/` | Active phase status, build order, per-phase checklists |
@@ -56,6 +64,7 @@ Key crates: `agam_driver` (CLI, daemon, REPL/headless execution, `exec` tool), `
 
 - `claude-mem` — persistent memory layer. Use progressive disclosure before rereading old notes.
 - `graphify-out/GRAPH_REPORT.md` — cheaper than raw-file grep for architecture questions
+- `graphify-out/graph.json` and `graphify-out/cache/` — generated artifacts, not durable review surfaces
 - Codex uses `$caveman` / `$graphify` syntax (not `/`)
 
 ## Deep Dives
