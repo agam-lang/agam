@@ -39,50 +39,20 @@ bash benchmarks/setup.sh
 
 ## Current Inventory
 
-The workspace is broader than the published single-workload snapshot in the top-level README.
+The workspace is broader than the older Fibonacci-only snapshot that used to anchor the top-level README.
 
-- Agam benchmark sources: `38`
-- comparison-language sources: `38`
-- total runnable benchmark sources in `benchmarks/benchmarks/`: `76`
-- broad workload slots tracked in `COVERAGE_MATRIX.md`: `130`
+As of `2026-05-14`, the broader same-host benchmark program has:
 
-The canonical implemented-vs-future workload map now lives in `COVERAGE_MATRIX.md`, and it now includes the broader CPU, memory, storage, network, accelerator, interconnect, and quantum-simulator backlog from the methodology list instead of stopping near the initial CPU-first slice.
+- exercised suites `01` through `14`
+- produced `760` timed rows
+- covered `47` cross-language comparable workload families
 
-- comparison-ready today: `8` workloads
-  - `fibonacci`
-  - `edit_distance`
-  - `matrix_multiply`
-  - `polynomial_eval`
-  - `ring_buffer`
-  - `tensor_matmul`
-  - `token_frequency`
-  - `csv_scanning`
-- planned or future workloads tracked beyond the current runnable set: `22`
+The top-level README now summarizes that broader May 14 rollup. The canonical implemented-vs-future workload map still lives in `COVERAGE_MATRIX.md`, and `results/README.md` now distinguishes between:
 
-For the checked-in result roots themselves, including which raw run backs the published same-host table, which comparison-ready workloads are currently measured vs dry-run validated vs source-only, and why the current aggregated CSVs are compile-only, see `results/README.md`.
+- the newer broader all-suite rollup that has been summarized publicly
+- the raw result roots that are actually mirrored inside this repository
 
-The public Fibonacci table exists because it is the only workload that currently has both a checked-in measured same-host result set and the broadest checked-in comparison coverage across C, C++, Go, Rust, and Python. It is a snapshot, not the benchmark boundary.
-
-Current comparison-source coverage by suite:
-
-- `01_algorithms`: `10`
-- `02_numerical_computation`: `9`
-- `03_data_structures`: `5`
-- `05_ml_primitives`: `4`
-- `06_string_processing`: `5`
-- `07_io_operations`: `5`
-
-Current Agam suite counts:
-
-- `01_algorithms`: `5`
-- `02_numerical_computation`: `5`
-- `03_data_structures`: `4`
-- `04_memory_intensive`: `3`
-- `05_ml_primitives`: `4`
-- `06_string_processing`: `3`
-- `07_io_operations`: `3`
-- `08_jit_optimization`: `7`
-- `09_compilation_metrics`: `4`
+That distinction matters because the checked-in `results/raw/` tree in this repository still lags the broader May 14 all-suite run, even though the benchmark program and public benchmark story have moved past the older single-workload snapshot.
 
 Run the default benchmark pass:
 

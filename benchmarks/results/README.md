@@ -2,7 +2,43 @@
 
 This directory is the checked-in result root for the Agam benchmark workspace.
 
-Use [`../README.md`](../README.md) for benchmark inventory and harness usage, and [`../COVERAGE_MATRIX.md`](../COVERAGE_MATRIX.md) for the broader 60-workload implemented-vs-future benchmark map. Use this file to understand which result sets are currently present in git and how to read the files under `raw/`, `aggregated/`, `reports/`, and `plots/`.
+Use [`../README.md`](../README.md) for benchmark inventory and harness usage, and [`../COVERAGE_MATRIX.md`](../COVERAGE_MATRIX.md) for the broader implemented-vs-future benchmark map. Use this file to understand which result sets are currently present in git, which newer rollups are only summarized from the wider benchmark workspace, and how to read the files under `raw/`, `aggregated/`, `reports/`, and `plots/`.
+
+## Latest Broader Same-Host Baseline
+
+The latest broader measured rollup is the `2026-05-14` all-suite same-host baseline from the wider Agam benchmark workspace. That run is newer than the raw result roots currently mirrored in this repository, so the summary below is current but its raw `performance.json` tree is not yet checked in here.
+
+- environment: `local_windows_win11`
+- host: `Windows-11-10.0.26200-SP0`, AMD64, 8 physical cores, 16 logical cores
+- warmups: `2`
+- measured runs: `7`
+- coverage: `760` timed rows across `47` cross-language comparable workload families
+- suites exercised: all suites `01` through `14`
+
+Geometric mean of per-workload medians across the `47` comparable workload families:
+
+| Target | Comparable workloads | Geometric mean median (ms) |
+| --- | ---: | ---: |
+| Agam C O3 | 47 | 14.756 |
+| Agam LLVM O3 | 47 | 18.309 |
+| Rust release | 47 | 15.288 |
+| Clang C O3 | 47 | 14.652 |
+| Clang++ O3 | 47 | 14.519 |
+| Clang 22 C O3 | 47 | 14.216 |
+| Clang 22 C++ O3 | 47 | 14.097 |
+| CPython | 47 | 140.984 |
+
+Representative suite-level pressure points from that same run:
+
+| Suite | Agam LLVM O3 | Agam C O3 | Clang C O3 | CPython |
+| --- | ---: | ---: | ---: | ---: |
+| `01_algorithms` | 13.513 | 14.818 | 13.447 | 98.900 |
+| `08_media_encoding_kernels` | 33.054 | 11.735 | 11.451 | 159.445 |
+| `12_game_ai` | 54.503 | 21.106 | 20.402 | 639.112 |
+| `13_simd_vectorization` | 12.627 | 12.631 | 12.670 | 113.237 |
+| `14_string_processing` | 13.211 | 13.095 | 13.573 | 165.812 |
+
+Important caveat: the wider May 14 benchmark story is newer than this repository's mirrored `results/raw/` tree. The sections below describe the raw result roots that are actually checked in here.
 
 ## Layout
 
@@ -15,11 +51,11 @@ Use [`../README.md`](../README.md) for benchmark inventory and harness usage, an
 - `plots/`
   - optional chart output when plotting dependencies are available
 
-## Checked-In Result Sets
+## Checked-In Result Sets In This Repository
 
-### Published Same-Host Snapshot
+### Older Repo-Local Same-Host Snapshot
 
-The public same-workload comparison table in [`../../README.md`](../../README.md) is backed by `raw/2026-04-02_17-00-55/`.
+The older same-workload snapshot that previously anchored [`../../README.md`](../../README.md) is backed by `raw/2026-04-02_17-00-55/`.
 
 - environment: `local_windows_win11`
 - host: `Windows-11-10.0.26200-SP0`, AMD64, 8 physical cores, 16 logical cores

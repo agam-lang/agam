@@ -595,7 +595,7 @@ The organized benchmark workspace now lives under `benchmarks/`:
 
 Use `.agent/test/` for narrow phase-work microbenchmarks and generated inspection artifacts tied to active optimization slices.
 
-The checked-in same-host table below is one constant-workload snapshot, not the full benchmark inventory. The repo currently ships `38` Agam benchmark sources across nine suites and `38` comparison-language sources, with `8` workload families now comparison-ready in-repo. The broader implemented-vs-future workload map now lives in `benchmarks/COVERAGE_MATRIX.md`, which tracks `130` benchmark slots across runnable, comparison-ready, planned, and future-lab categories, while `benchmarks/results/README.md` now records which comparison-ready workloads already have measured rows nearby versus only dry-run validation or source-only status. For call-cache work specifically, the benchmark workspace now includes dedicated hot-set, mixed-locality, phase-shift, and unique-input call-cache cases under `benchmarks/benchmarks/08_jit_optimization/`.
+The benchmark story is no longer limited to the older Fibonacci-only snapshot. As of `2026-05-14`, the broader same-host benchmark program has exercised suites `01` through `14`, produced `760` timed rows, and covered `47` cross-language comparable workload families on the same Win11 host. The broader implemented-vs-future workload map still lives in `benchmarks/COVERAGE_MATRIX.md`, while `benchmarks/results/README.md` explains which raw result roots are actually mirrored inside this repository versus only summarized from the newer organization-wide benchmark workspace.
 
 For denser same-host comparison work beyond Fibonacci, the workspace also carries a `05_ml_primitives/tensor_matmul` slice with checked-in Agam, C, C++, Rust, and Python sources. Use:
 
@@ -614,93 +614,69 @@ python -m benchmarks.infrastructure.benchmark_harness \
 
 Raw runtime rows now preserve `stdout_hashes`, `stdout_preview`, and `stderr_preview` in `benchmarks/results/raw/.../performance.json` so output mismatches are easier to debug when comparing Agam against native and interpreter baselines.
 
-### Same-Host Comparison Snapshot
+### Latest All-Suite Same-Host Baseline
 
-The current published snapshot was captured on `2026-04-02` from one `benchmark_harness` invocation on the same Win11 host and environment profile: `local_windows_win11` (`Windows-11-10.0.26200-SP0`, AMD64, 8 physical cores / 16 logical cores). Every row below ran the same `01_algorithms/fibonacci` workload with `--match fibonacci`, runtime warmups `2`, measured runs `7`, and compile warmup runs `1`.
+The latest broader measured rollup was captured on `2026-05-14` on the same Win11 host and environment profile: `local_windows_win11` (`Windows-11-10.0.26200-SP0`, AMD64, 8 physical cores / 16 logical cores). This all-suite baseline used runtime warmups `2` and measured runs `7`.
 
-Agam targets in this snapshot were launched through the built `agamc` binary instead of `cargo run`, so Cargo startup did not contaminate runtime or compile-time measurements. The Agam C backend path also compiled the emitted C to a native executable before timing runtime, so the runtime rows stay like-for-like with Clang/Rust/Go native binaries.
+This measured baseline covered:
+
+- all suites `01` through `14`
+- `47` cross-language comparable workload families
+- Agam LLVM `-O3`, Agam C backend `-O3`, Agam JIT `-O2`, Clang C/C++, Clang 22 C/C++, Rust, and CPython
+
+Agam targets in this broader baseline were launched through a built `agamc` binary instead of `cargo run`, and the Agam C backend path compiled emitted C to a native executable before timing runtime, so the runtime rows stayed like-for-like with the native comparison binaries.
 
 ```bash
 python -m benchmarks.infrastructure.benchmark_harness \
   --environment local_windows_win11 \
-  --suite 01_algorithms \
-  --match fibonacci \
+  --all-suites \
   --include-comparisons \
-  --target agam_llvm_o3_call_cache_off \
-  --target agam_llvm_o3_call_cache_on \
-  --target agam_c_o3_call_cache_off \
-  --target agam_c_o3_call_cache_on \
-  --target agam_jit_o2_call_cache_off \
-  --target agam_jit_o2_call_cache_on \
-  --target rust_release \
-  --target python_cpython \
-  --target c_clang_o3 \
-  --target cpp_clangxx_o3 \
-  --target go_release \
   --warmups 2 \
   --runs 7
 ```
 
-All rows in this snapshot measure the same recursive Fibonacci shape: time complexity `O(phi^n)` and space complexity `O(n)`.
+Geometric mean of per-workload medians across the `47` comparable workload families:
 
-| Target | Backend | Runtime median (ms) | Compile time (ms) | SSD footprint | Peak RSS |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Agam LLVM O3 | LLVM | 22.805 | 183.0 | 150.50 KiB | 3.63 MiB |
-| Agam LLVM O3 + Call Cache | LLVM | 12.482 | 173.0 | 150.50 KiB | 3.63 MiB |
-| Agam C O3 | C | 23.287 | 505.7 | 163.50 KiB | 3.62 MiB |
-| Agam C O3 + Call Cache | C | 23.327 | 450.0 | 163.50 KiB | 3.62 MiB |
-| Agam JIT O2 | JIT | 137.818 | n/a | 16.04 MiB | 12.36 MiB |
-| Agam JIT O2 + Call Cache | JIT | 147.551 | n/a | 16.04 MiB | 12.36 MiB |
-| Clang++ O3 | native | 22.753 | 801.0 | 257.00 KiB | 3.69 MiB |
-| Clang C O3 | native | 23.479 | 118.3 | 135.00 KiB | 3.61 MiB |
-| Rust release | native | 23.800 | 190.2 | 126.00 KiB | 4.02 MiB |
-| Go release | native | 33.822 | 192.9 | 2.35 MiB | 5.61 MiB |
-| CPython | interpreted | 359.203 | n/a | 101.96 KiB | 11.66 MiB |
-
-On this specific recursive workload, LLVM plus call cache is the fastest Agam configuration in the current snapshot. Agam LLVM without call cache lands in the same runtime range as the C, C++, and Rust native comparison targets on the same host.
-
-### Snapshot Scorecard
-
-To make the same-host snapshot easier to scan, the benchmark workspace now also supports a simple scorecard for constant-workload runs. This published score uses `60` points for runtime, `20` for peak RAM, `10` for SSD footprint, and `10` for ahead-of-time compile latency. Targets without an AOT compile row, such as JIT and CPython, get `0` compile points in this delivery-oriented score.
-
-| Target | Overall points | Slower than winner |
+| Target | Comparable workloads | Geometric mean median (ms) |
 | --- | ---: | ---: |
-| Agam LLVM O3 + Call Cache | 93.5 | 0.0% |
-| Clang C O3 | 69.5 | 88.1% |
-| Agam LLVM O3 | 66.0 | 82.7% |
-| Rust release | 63.8 | 90.7% |
-| Agam C O3 + Call Cache | 60.9 | 86.9% |
-| Agam C O3 | 60.7 | 86.6% |
-| Clang++ O3 | 57.9 | 82.3% |
-| Go release | 41.6 | 171.0% |
-| CPython | 18.3 | 2777.8% |
-| Agam JIT O2 | 11.3 | 1004.1% |
-| Agam JIT O2 + Call Cache | 11.0 | 1082.1% |
+| Agam C O3 | 47 | 14.756 |
+| Agam LLVM O3 | 47 | 18.309 |
+| Rust release | 47 | 15.288 |
+| Clang C O3 | 47 | 14.652 |
+| Clang++ O3 | 47 | 14.519 |
+| Clang 22 C O3 | 47 | 14.216 |
+| Clang 22 C++ O3 | 47 | 14.097 |
+| CPython | 47 | 140.984 |
 
-Current winner: `Agam LLVM O3 + Call Cache`.
+This broader baseline changed the shape of the conclusion:
 
-Why it wins in this snapshot:
+- `Agam C O3` now sits inside the native-performance cluster overall.
+- `Agam LLVM O3` remains competitive, but it is still dragged down by slower suite-level behavior in media encoding and game AI.
+- `Agam JIT O2` is still much slower than the native and AOT-backed lanes in this workload mix.
 
-- it is the fastest runtime on the same host by a large margin
-- it stays in the same low-RAM band as the native C, C++, and Rust binaries
-- its artifact size stays modest instead of ballooning like Go or JIT output
-- its compile time is competitive enough that the runtime advantage dominates the overall score
+Representative suite-level geometric means:
 
-Why the others trail:
+| Suite | Agam LLVM O3 | Agam C O3 | Clang C O3 | CPython |
+| --- | ---: | ---: | ---: | ---: |
+| `01_algorithms` | 13.513 | 14.818 | 13.447 | 98.900 |
+| `08_media_encoding_kernels` | 33.054 | 11.735 | 11.451 | 159.445 |
+| `12_game_ai` | 54.503 | 21.106 | 20.402 | 639.112 |
+| `13_simd_vectorization` | 12.627 | 12.631 | 12.670 | 113.237 |
+| `14_string_processing` | 13.211 | 13.095 | 13.573 | 165.812 |
 
-- `Agam LLVM O3` loses the call-cache speedup, so it is `82.7%` slower than the winner on this workload
-- `Clang C O3`, `Clang++ O3`, and `Rust release` stay near-native in memory and binary size, but they are still roughly `82%` to `91%` slower in runtime than the winner here
-- `Agam C O3` stays close to the native runtime pack, but its current compile path costs more, which drags down the overall score
-- `Agam JIT O2` pays startup and JIT overhead, which hurts badly on a small recursive benchmark like this
-- `CPython` keeps the smallest SSD footprint, but interpreter overhead dominates runtime on this benchmark shape
+Known limitations in that May 14 same-host run:
 
-Agam is still under active development. Treat these numbers and rankings as a current snapshot of one fair same-host benchmark situation, not as the final ceiling for the language or its backends.
+- GCC `gcc` / `g++` and Go were unavailable on that host
+- suite `06` skipped Python GPU/ML variants requiring `cupy`, `numba`, `tensorflow`, or `torch`
+- the Agam C backend still misses `10_compiler_pipeline/memory/shadowing.agam` because the current generated-C path does not yet handle lexical shadowing correctly
+
+Agam is still under active development. Treat these numbers as a current same-host baseline, not as the final ceiling for the language or its backends. The broader May 14 all-suite rollup is newer than the repo-local raw result roots currently mirrored under `benchmarks/results/raw/`, so `benchmarks/results/README.md` distinguishes between the latest published rollup and the older checked-in raw runs still present in this repository.
 
 Cache and register columns still exist in the raw benchmark outputs, but they are host-capacity context rather than exact live L3 occupancy or exact register allocation counts. If you need precise cache-miss or register-pressure counters, add platform-specific perf tooling on top of this workspace.
 
 ### Published Plots
 
-The generated raw plots live under `benchmarks/results/plots/`; the checked-in snapshots below are copied from the latest same-host run so the README always shows concrete output instead of a schematic placeholder.
+The generated raw plots live under `benchmarks/results/plots/`; the checked-in images below still come from the older repo-local snapshot until the broader all-suite plots are mirrored into this repository.
 
 ![Runtime comparison](docs/benchmarks/performance_comparison.png)
 
