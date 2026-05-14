@@ -800,6 +800,14 @@ fn emit_kernel_instruction(
         Op::GetField { .. } | Op::Phi(_) | Op::Cast { .. } => {
             write!(out, "  ; unhandled GPU op: {:?}\n", instr.op).unwrap();
         }
+        Op::EnumConstruct { .. } | Op::EnumTag(_) | Op::EnumPayload { .. } => {
+            write!(
+                out,
+                "  ; unsupported enum MIR op in GPU emitter: {:?}\n",
+                instr.op
+            )
+            .unwrap();
+        }
     }
 }
 
@@ -872,6 +880,22 @@ fn emit_kernel_terminator(out: &mut String, term: &Terminator) {
                 condition.0, then_block.0, else_block.0
             )
             .unwrap();
+        }
+        Terminator::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
+            write!(
+                out,
+                "  switch i64 %v{}, label %block_{} [",
+                discriminant.0, default.0
+            )
+            .unwrap();
+            for (value, target) in cases {
+                write!(out, " i64 {}, label %block_{}", value, target.0).unwrap();
+            }
+            out.push_str(" ]\n");
         }
         Terminator::Unreachable => {
             out.push_str("  unreachable\n");

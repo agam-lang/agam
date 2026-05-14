@@ -5,6 +5,7 @@ members = [
     "crates/core/agam_ast",
     "crates/core/agam_lexer",
     "crates/core/agam_parser",
+    "crates/core/agam_interface",
     "crates/middle/agam_sema",
     "crates/middle/agam_hir",
     "crates/middle/agam_mir",
@@ -51,6 +52,7 @@ agam_errors = { path = "crates/core/agam_errors" }
 agam_ast = { path = "crates/core/agam_ast" }
 agam_lexer = { path = "crates/core/agam_lexer" }
 agam_parser = { path = "crates/core/agam_parser" }
+agam_interface = { path = "crates/core/agam_interface" }
 agam_sema = { path = "crates/middle/agam_sema" }
 agam_hir = { path = "crates/middle/agam_hir" }
 agam_mir = { path = "crates/middle/agam_mir" }

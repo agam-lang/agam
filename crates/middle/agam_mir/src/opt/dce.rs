@@ -64,6 +64,12 @@ fn reachable_blocks(function: &MirFunction) -> HashSet<BlockId> {
                 worklist.push(*else_block);
             }
             Terminator::Return(_) | Terminator::ReturnVoid | Terminator::Unreachable => {}
+            Terminator::Switch { cases, default, .. } => {
+                worklist.push(*default);
+                for (_, target) in cases {
+                    worklist.push(*target);
+                }
+            }
         }
     }
 
@@ -116,6 +122,9 @@ fn seed_from_terminator(terminator: &Terminator) -> HashSet<ValueId> {
             used.insert(*condition);
         }
         Terminator::ReturnVoid | Terminator::Jump(_) | Terminator::Unreachable => {}
+        Terminator::Switch { discriminant, .. } => {
+            used.insert(*discriminant);
+        }
     }
 
     used
@@ -203,6 +212,12 @@ fn mark_used_values(instr: &Instruction, used_values: &mut HashSet<ValueId>) {
         | Op::Unit
         | Op::LoadLocal(_)
         | Op::Alloca { .. } => {}
+        Op::EnumConstruct { payload, .. } => {
+            used_values.extend(payload.iter().copied());
+        }
+        Op::EnumTag(v) | Op::EnumPayload { value: v, .. } => {
+            used_values.insert(*v);
+        }
     }
 }
 

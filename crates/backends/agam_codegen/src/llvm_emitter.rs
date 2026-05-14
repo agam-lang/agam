@@ -460,6 +460,10 @@ fn analyze_function(
                 Op::GpuSharedAlloc { .. } => LlvmType::default_int(),
                 Op::GpuIntrinsic { .. } => LlvmType::default_int(),
                 Op::InlineAsm { .. } => LlvmType::default_int(),
+                Op::EnumConstruct { .. } | Op::EnumPayload { .. } => {
+                    infer_llvm_type_from_type_id(instr.ty).unwrap_or_else(LlvmType::default_int)
+                }
+                Op::EnumTag(_) => LlvmType::default_int(),
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -614,7 +618,10 @@ fn analyze_function(
                         | Op::GpuKernelLaunch { .. }
                         | Op::GpuSharedAlloc { .. }
                         | Op::GpuIntrinsic { .. }
-                        | Op::InlineAsm { .. } => default_sign_for_type(result_ty),
+                        | Op::InlineAsm { .. }
+                        | Op::EnumConstruct { .. }
+                        | Op::EnumTag(_)
+                        | Op::EnumPayload { .. } => default_sign_for_type(result_ty),
                     };
 
                 if value_signs.get(&instr.result).copied() != Some(inferred_sign) {
@@ -2501,6 +2508,21 @@ impl LlvmEmitter {
                     ValueRef::new(result_ty, result_ty.default_value(), result_sign),
                 );
             }
+            Op::EnumConstruct { .. } => {
+                return Err(
+                    "LLVM backend does not yet support enum construction MIR lowering".into(),
+                );
+            }
+            Op::EnumTag(_) => {
+                return Err(
+                    "LLVM backend does not yet support enum tag extraction MIR lowering".into(),
+                );
+            }
+            Op::EnumPayload { .. } => {
+                return Err(
+                    "LLVM backend does not yet support enum payload extraction MIR lowering".into(),
+                );
+            }
         }
 
         Ok(())
@@ -2989,6 +3011,25 @@ impl LlvmEmitter {
                     out,
                     "  br i1 {}, label %block_{}, label %block_{}",
                     cond.repr, then_block.0, else_block.0
+                )
+                .unwrap();
+            }
+            Terminator::Switch {
+                discriminant,
+                cases,
+                default,
+            } => {
+                let discr = get_value(values, *discriminant)?;
+                let discr = self.coerce_value(out, &discr, LlvmType::default_int())?;
+                let cases = cases
+                    .iter()
+                    .map(|(value, target)| format!("i64 {}, label %block_{}", value, target.0))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    out,
+                    "  switch i64 {}, label %block_{} [ {} ]",
+                    discr.repr, default.0, cases
                 )
                 .unwrap();
             }

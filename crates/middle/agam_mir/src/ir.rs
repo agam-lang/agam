@@ -163,6 +163,15 @@ pub enum Op {
         constraints: String,
         args: Vec<ValueId>,
     },
+
+    // ── Tagged Union (Enum) Operations ──
+    /// Construct an enum variant: tag + optional payload.
+    /// `EnumConstruct { tag: 0, payload: [v1] }` → `Some(v1)`
+    EnumConstruct { tag: u32, payload: Vec<ValueId> },
+    /// Extract the tag from a tagged union value.
+    EnumTag(ValueId),
+    /// Extract the payload of a tagged union (after tag check).
+    EnumPayload { value: ValueId, field_index: u32 },
 }
 
 /// Specialized hardware intrinsics for the GPU.
@@ -232,6 +241,13 @@ pub enum Terminator {
         condition: ValueId,
         then_block: BlockId,
         else_block: BlockId,
+    },
+    /// Multi-way branch for match/switch on an integer tag.
+    /// Maps tag values to target blocks, with a default fallthrough.
+    Switch {
+        discriminant: ValueId,
+        cases: Vec<(i64, BlockId)>,
+        default: BlockId,
     },
     /// Unreachable (after diverging expressions like `panic!`).
     Unreachable,

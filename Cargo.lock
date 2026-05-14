@@ -55,6 +55,7 @@ dependencies = [
  "agam_errors",
  "agam_fmt",
  "agam_hir",
+ "agam_interface",
  "agam_jit",
  "agam_lexer",
  "agam_lsp",
@@ -111,6 +112,20 @@ dependencies = [
  "agam_lexer",
  "agam_parser",
  "agam_sema",
+]
+
+[[package]]
+name = "agam_interface"
+version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
+ "agam_hir",
+ "agam_lexer",
+ "agam_mir",
+ "agam_parser",
+ "agam_sema",
+ "serde",
 ]
 
 [[package]]

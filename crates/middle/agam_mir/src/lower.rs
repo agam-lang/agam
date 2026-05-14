@@ -405,6 +405,11 @@ impl MirLowering {
                 );
                 self.lower_expr(body)
             }
+            agam_hir::nodes::HirExprKind::StructLiteral { .. }
+            | agam_hir::nodes::HirExprKind::EnumVariant { .. }
+            | agam_hir::nodes::HirExprKind::Match { .. } => {
+                todo!("MIR lowering for structs, enums, and match expressions")
+            }
         }
     }
 }

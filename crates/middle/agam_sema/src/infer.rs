@@ -208,6 +208,12 @@ impl InferenceEngine {
             // Optionals.
             (Type::Optional(a), Type::Optional(b)) => self.unify(*a, *b, store),
 
+            // Results.
+            (Type::Result { ok: ok1, err: err1 }, Type::Result { ok: ok2, err: err2 }) => {
+                self.unify(*ok1, *ok2, store)?;
+                self.unify(*err1, *err2, store)
+            }
+
             // Slices.
             (Type::Slice(a), Type::Slice(b)) => self.unify(*a, *b, store),
 
@@ -284,6 +290,9 @@ impl InferenceEngine {
                 }
                 Ok(())
             }
+
+            // Generic type parameters (from a generic struct/fn definition).
+            (Type::TypeParam(a), Type::TypeParam(b)) if a == b => Ok(()),
 
             // Trait objects.
             (Type::DynTrait(a), Type::DynTrait(b)) if a == b => Ok(()),

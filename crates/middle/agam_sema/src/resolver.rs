@@ -624,7 +624,41 @@ impl Resolver {
                 // Return the base type ID while type system learns refinement predicates
                 self.resolve_type_expr_to_id(base)
             }
-            _ => self.types.fresh_var(),
+            TypeExprKind::Result { ok, err } => {
+                let ok_id = self.resolve_type_expr_to_id(ok);
+                let err_id = self.resolve_type_expr_to_id(err);
+                self.types.insert(crate::types::Type::Result {
+                    ok: ok_id,
+                    err: err_id,
+                })
+            }
+            TypeExprKind::DynTrait(inner) => {
+                let inner_id = self.resolve_type_expr_to_id(inner);
+                // In reality, this requires a symbol ID for the trait,
+                // but for now we might map it to a fresh var or generic representation
+                // if it's not a direct named trait.
+                if let crate::types::Type::Named(sym) = self.types.get(inner_id).clone() {
+                    self.types.insert(crate::types::Type::DynTrait(sym))
+                } else {
+                    self.types.error()
+                }
+            }
+            TypeExprKind::Generic { base, args } => {
+                let base_id = self.resolve_type_expr_to_id(&TypeExpr {
+                    id: te.id,
+                    span: te.span,
+                    kind: TypeExprKind::Named(base.clone()),
+                    mode: te.mode,
+                });
+                let arg_ids: Vec<TypeId> = args
+                    .iter()
+                    .map(|a| self.resolve_type_expr_to_id(a))
+                    .collect();
+                self.types.insert(crate::types::Type::Generic {
+                    base: base_id,
+                    args: arg_ids,
+                })
+            }
         }
     }
 

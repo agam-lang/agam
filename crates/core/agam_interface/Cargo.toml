@@ -1,0 +1,16 @@
+[package]
+name = "agam_interface"
+description = "Shared compiler orchestration and lowering interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agam_errors = { workspace = true }
+agam_lexer = { workspace = true }
+agam_parser = { workspace = true }
+agam_ast = { workspace = true }
+agam_sema = { workspace = true }
+agam_hir = { workspace = true }
+agam_mir = { workspace = true }
+serde = { workspace = true }

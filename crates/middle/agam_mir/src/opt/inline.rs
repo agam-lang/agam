@@ -236,6 +236,12 @@ fn reachable_blocks(function: &MirFunction) -> HashSet<crate::ir::BlockId> {
                 worklist.push(*else_block);
             }
             Terminator::Return(_) | Terminator::ReturnVoid | Terminator::Unreachable => {}
+            Terminator::Switch { default, cases, .. } => {
+                worklist.push(*default);
+                for (_, target) in cases {
+                    worklist.push(*target);
+                }
+            }
         }
     }
 
@@ -374,6 +380,15 @@ fn remap_op(
                 .iter()
                 .map(|arg| remap_value(*arg, value_map))
                 .collect(),
+        },
+        Op::EnumConstruct { tag, payload } => Op::EnumConstruct {
+            tag: *tag,
+            payload: payload.iter().map(|v| remap_value(*v, value_map)).collect(),
+        },
+        Op::EnumTag(v) => Op::EnumTag(remap_value(*v, value_map)),
+        Op::EnumPayload { value, field_index } => Op::EnumPayload {
+            value: remap_value(*value, value_map),
+            field_index: *field_index,
         },
     }
 }

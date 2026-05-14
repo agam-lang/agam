@@ -169,6 +169,10 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                 Op::GpuSharedAlloc { .. } => CType::Int,
                 Op::GpuIntrinsic { .. } => CType::Int,
                 Op::InlineAsm { .. } => CType::Int,
+                Op::EnumConstruct { .. } | Op::EnumPayload { .. } => {
+                    infer_ctype_from_type_id(instr.ty).unwrap_or(CType::Int)
+                }
+                Op::EnumTag(_) => CType::Int,
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -354,530 +358,23 @@ fn value_type(layout: &FunctionLayout, value: ValueId) -> CType {
 }
 
 fn emit_common_prelude(out: &mut String) {
-    out.push_str(
-        r#"/* ── Agam Runtime Prelude ──────────────────── */
-agam_int agam_println(agam_str s) { printf("%s\n", s); return 0; }
-agam_int agam_print(agam_str s) { printf("%s", s); return 0; }
-agam_float agam_clock(void) { return (agam_float)clock() / (agam_float)CLOCKS_PER_SEC; }
-static agam_int agam_runtime_argc = 0;
-static char** agam_runtime_argv = NULL;
-agam_int agam_argc(void) { return agam_runtime_argc; }
-agam_str agam_argv(agam_int index) {
-  if (!agam_runtime_argv || index < 0 || index >= agam_runtime_argc) {
-    return "";
-  }
-  return agam_runtime_argv[index];
-}
-agam_int agam_parse_int(agam_str s) {
-  if (!s) {
-    return 0;
-  }
-  return (agam_int)strtoll(s, NULL, 10);
-}
-
-agam_str agam_str_concat(agam_str a, agam_str b) {
-  size_t a_len = strlen(a);
-  size_t b_len = strlen(b);
-  char* out = (char*)malloc(a_len + b_len + 1);
-  memcpy(out, a, a_len);
-  memcpy(out + a_len, b, b_len + 1);
-  return out;
-}
-
-typedef struct AgamTensor {
-  agam_int rows;
-  agam_int cols;
-  agam_int len;
-  agam_float* data;
-} AgamTensor;
-
-typedef struct AgamDataFrame {
-  agam_int len;
-  agam_int* ids;
-  agam_int* groups;
-  agam_float* scores;
-} AgamDataFrame;
-
-typedef struct AgamRow {
-  agam_int id;
-  agam_int group;
-  agam_float score;
-} AgamRow;
-
-static uint64_t agam_mix64(uint64_t x) {
-  x ^= x >> 33;
-  x *= 0xff51afd7ed558ccdULL;
-  x ^= x >> 33;
-  x *= 0xc4ceb9fe1a85ec53ULL;
-  x ^= x >> 33;
-  return x;
-}
-
-static uint64_t agam_seed_bits(agam_float seed) {
-  union {
-    agam_float f;
-    uint64_t u;
-  } bits;
-  bits.f = seed;
-  return bits.u;
-}
-
-static agam_float agam_hash_unit(agam_int index, agam_float seed, agam_int salt) {
-  uint64_t mixed = agam_mix64((uint64_t)index ^ agam_seed_bits(seed) ^ ((uint64_t)salt << 32));
-  return (agam_float)((mixed >> 11) * (1.0 / 9007199254740992.0));
-}
-
-static agam_float agam_weight_sample(agam_int row, agam_int col, agam_float seed) {
-  return agam_hash_unit(row * 4099 + col * 131, seed, 17) * 2.0 - 1.0;
-}
-
-static agam_float agam_bias_sample(agam_int index, agam_float seed) {
-  return agam_hash_unit(index * 7919, seed, 29) * 0.25 - 0.125;
-}
-
-static AgamTensor* agam_tensor_new(agam_int rows, agam_int cols) {
-  AgamTensor* tensor = (AgamTensor*)malloc(sizeof(AgamTensor));
-  tensor->rows = rows;
-  tensor->cols = cols;
-  tensor->len = rows * cols;
-  tensor->data = tensor->len > 0 ? (agam_float*)malloc(sizeof(agam_float) * (size_t)tensor->len) : NULL;
-  return tensor;
-}
-
-static AgamDataFrame* agam_dataframe_new(agam_int len) {
-  AgamDataFrame* df = (AgamDataFrame*)malloc(sizeof(AgamDataFrame));
-  df->len = len;
-  df->ids = len > 0 ? (agam_int*)malloc(sizeof(agam_int) * (size_t)len) : NULL;
-  df->groups = len > 0 ? (agam_int*)malloc(sizeof(agam_int) * (size_t)len) : NULL;
-  df->scores = len > 0 ? (agam_float*)malloc(sizeof(agam_float) * (size_t)len) : NULL;
-  return df;
-}
-
-static int agam_compare_rows_by_score_desc(const void* left, const void* right) {
-  const AgamRow* a = (const AgamRow*)left;
-  const AgamRow* b = (const AgamRow*)right;
-  if (a->score < b->score) {
-    return 1;
-  }
-  if (a->score > b->score) {
-    return -1;
-  }
-  return 0;
-}
-
-"#,
-    );
+    out.push_str(include_str!("../runtime/common_prelude.c"));
 }
 
 fn emit_dataframe_prelude(out: &mut String) {
-    out.push_str(
-        r#"agam_float agam_adam(agam_float x0, agam_float y0, agam_float learning_rate, agam_int max_iter, agam_float tol) {
-  agam_float x = x0;
-  agam_float y = y0;
-  agam_float mx = 0.0;
-  agam_float my = 0.0;
-  agam_float vx = 0.0;
-  agam_float vy = 0.0;
-  const agam_float beta1 = 0.9;
-  const agam_float beta2 = 0.999;
-  const agam_float epsilon = 1e-8;
-
-  for (agam_int t = 1; t <= max_iter; ++t) {
-    agam_float dx = -2.0 * (1.0 - x) - 400.0 * x * (y - x * x);
-    agam_float dy = 200.0 * (y - x * x);
-    agam_float grad_norm = sqrt(dx * dx + dy * dy);
-    if (grad_norm < tol) {
-      break;
-    }
-
-    mx = beta1 * mx + (1.0 - beta1) * dx;
-    my = beta1 * my + (1.0 - beta1) * dy;
-    vx = beta2 * vx + (1.0 - beta2) * dx * dx;
-    vy = beta2 * vy + (1.0 - beta2) * dy * dy;
-
-    agam_float t_f = (agam_float)t;
-    agam_float mx_hat = mx / (1.0 - pow(beta1, t_f));
-    agam_float my_hat = my / (1.0 - pow(beta1, t_f));
-    agam_float vx_hat = vx / (1.0 - pow(beta2, t_f));
-    agam_float vy_hat = vy / (1.0 - pow(beta2, t_f));
-
-    x -= learning_rate * mx_hat / (sqrt(vx_hat) + epsilon);
-    y -= learning_rate * my_hat / (sqrt(vy_hat) + epsilon);
-  }
-
-  {
-    agam_float a = 1.0 - x;
-    agam_float b = y - x * x;
-    return a * a + 100.0 * b * b;
-  }
-}
-
-AgamDataFrame* agam_dataframe_build_sin(agam_int rows) {
-  AgamDataFrame* df = agam_dataframe_new(rows);
-  for (agam_int i = 0; i < rows; ++i) {
-    df->ids[i] = i;
-    df->groups[i] = i % 1024;
-    df->scores[i] = sin((agam_float)i * 0.1);
-  }
-  return df;
-}
-
-AgamDataFrame* agam_dataframe_filter_gt(AgamDataFrame* df, agam_float threshold) {
-  if (!df) {
-    return NULL;
-  }
-
-  agam_int count = 0;
-  for (agam_int i = 0; i < df->len; ++i) {
-    if (df->scores[i] > threshold) {
-      ++count;
-    }
-  }
-
-  AgamDataFrame* filtered = agam_dataframe_new(count);
-  agam_int out_index = 0;
-  for (agam_int i = 0; i < df->len; ++i) {
-    if (df->scores[i] > threshold) {
-      filtered->ids[out_index] = df->ids[i];
-      filtered->groups[out_index] = df->groups[i];
-      filtered->scores[out_index] = df->scores[i];
-      ++out_index;
-    }
-  }
-  return filtered;
-}
-
-AgamDataFrame* agam_dataframe_sort(AgamDataFrame* df) {
-  if (!df) {
-    return NULL;
-  }
-
-  AgamRow* rows = df->len > 0 ? (AgamRow*)malloc(sizeof(AgamRow) * (size_t)df->len) : NULL;
-  for (agam_int i = 0; i < df->len; ++i) {
-    rows[i].id = df->ids[i];
-    rows[i].group = df->groups[i];
-    rows[i].score = df->scores[i];
-  }
-
-  qsort(rows, (size_t)df->len, sizeof(AgamRow), agam_compare_rows_by_score_desc);
-
-  AgamDataFrame* sorted = agam_dataframe_new(df->len);
-  for (agam_int i = 0; i < df->len; ++i) {
-    sorted->ids[i] = rows[i].id;
-    sorted->groups[i] = rows[i].group;
-    sorted->scores[i] = rows[i].score;
-  }
-
-  free(rows);
-  return sorted;
-}
-
-AgamDataFrame* agam_dataframe_group_by(AgamDataFrame* df, agam_int group_count) {
-  if (!df) {
-    return NULL;
-  }
-  if (group_count <= 0) {
-    group_count = 1;
-  }
-
-  agam_float* sums = (agam_float*)calloc((size_t)group_count, sizeof(agam_float));
-  agam_int* counts = (agam_int*)calloc((size_t)group_count, sizeof(agam_int));
-
-  for (agam_int i = 0; i < df->len; ++i) {
-    agam_int bucket = df->groups[i] % group_count;
-    if (bucket < 0) {
-      bucket += group_count;
-    }
-    sums[bucket] += df->scores[i];
-    counts[bucket] += 1;
-  }
-
-  agam_int used = 0;
-  for (agam_int i = 0; i < group_count; ++i) {
-    if (counts[i] > 0) {
-      ++used;
-    }
-  }
-
-  AgamDataFrame* grouped = agam_dataframe_new(used);
-  agam_int out_index = 0;
-  for (agam_int i = 0; i < group_count; ++i) {
-    if (counts[i] > 0) {
-      grouped->ids[out_index] = i;
-      grouped->groups[out_index] = i;
-      grouped->scores[out_index] = sums[i] / (agam_float)counts[i];
-      ++out_index;
-    }
-  }
-
-  free(sums);
-  free(counts);
-  return grouped;
-}
-
-agam_float agam_dataframe_mean(AgamDataFrame* df) {
-  if (!df || df->len == 0) {
-    return 0.0;
-  }
-
-  agam_float sum = 0.0;
-  for (agam_int i = 0; i < df->len; ++i) {
-    sum += df->scores[i];
-  }
-  return sum / (agam_float)df->len;
-}
-
-agam_int agam_dataframe_free(AgamDataFrame* df) {
-  if (!df) {
-    return 0;
-  }
-  free(df->ids);
-  free(df->groups);
-  free(df->scores);
-  free(df);
-  return 0;
-}
-
-"#,
-    );
+    out.push_str(include_str!("../runtime/dataframe_prelude.c"));
 }
 
 fn emit_tensor_prelude(out: &mut String) {
-    out.push_str(
-        r#"AgamTensor* agam_tensor_fill_rand(agam_int rows, agam_int cols, agam_float seed) {
-  AgamTensor* tensor = agam_tensor_new(rows, cols);
-  for (agam_int i = 0; i < tensor->len; ++i) {
-    tensor->data[i] = agam_hash_unit(i, seed, 43) * 2.0 - 1.0;
-  }
-  return tensor;
-}
-
-AgamTensor* agam_dense_layer(AgamTensor* input, agam_int out_features, agam_float seed) {
-  if (!input || out_features <= 0) {
-    return NULL;
-  }
-
-  AgamTensor* output = agam_tensor_new(input->rows, out_features);
-  for (agam_int row = 0; row < input->rows; ++row) {
-    for (agam_int col = 0; col < out_features; ++col) {
-      agam_float acc = agam_bias_sample(col, seed);
-      for (agam_int inner = 0; inner < input->cols; ++inner) {
-        agam_float weight = agam_weight_sample(inner, col, seed);
-        acc += input->data[row * input->cols + inner] * weight;
-      }
-      output->data[row * out_features + col] = acc > 0.0 ? acc : 0.0;
-    }
-  }
-  return output;
-}
-
-AgamTensor* agam_conv2d(AgamTensor* input, agam_int kernel_size, agam_float seed) {
-  if (!input || kernel_size <= 0 || input->rows < kernel_size || input->cols < kernel_size) {
-    return NULL;
-  }
-
-  agam_int out_rows = input->rows - kernel_size + 1;
-  agam_int out_cols = input->cols - kernel_size + 1;
-  AgamTensor* output = agam_tensor_new(out_rows, out_cols);
-
-  for (agam_int y = 0; y < out_rows; ++y) {
-    for (agam_int x = 0; x < out_cols; ++x) {
-      agam_float acc = 0.0;
-      for (agam_int ky = 0; ky < kernel_size; ++ky) {
-        for (agam_int kx = 0; kx < kernel_size; ++kx) {
-          agam_float kernel = agam_weight_sample(ky, kx, seed);
-          agam_float value = input->data[(y + ky) * input->cols + (x + kx)];
-          acc += value * kernel;
-        }
-      }
-      output->data[y * out_cols + x] = acc;
-    }
-  }
-  return output;
-}
-
-agam_float agam_tensor_checksum(AgamTensor* tensor) {
-  if (!tensor || tensor->len == 0) {
-    return 0.0;
-  }
-
-  agam_float sum = 0.0;
-  for (agam_int i = 0; i < tensor->len; ++i) {
-    sum += tensor->data[i] * (1.0 + (agam_float)(i & 7));
-  }
-  return sum;
-}
-
-agam_int agam_tensor_free(AgamTensor* tensor) {
-  if (!tensor) {
-    return 0;
-  }
-  free(tensor->data);
-  free(tensor);
-  return 0;
-}
-
-"#,
-    );
+    out.push_str(include_str!("../runtime/tensor_prelude.c"));
 }
 
 fn emit_gpu_host_prelude(out: &mut String) {
-    out.push_str(
-        r#"/* ── Agam GPU Host Runtime ─────────────────── */
-void* agam_gpu_malloc(agam_int size_bytes) {
-  if (size_bytes <= 0) {
-    return NULL;
-  }
-  return malloc((size_t)size_bytes);
-}
-
-agam_int agam_gpu_free(void* ptr) {
-  free(ptr);
-  return 0;
-}
-
-agam_int agam_gpu_memcpy_to_device(void* device_dst, void* host_src, agam_int size_bytes) {
-  if (!device_dst || !host_src || size_bytes < 0) {
-    return -1;
-  }
-  memcpy(device_dst, host_src, (size_t)size_bytes);
-  return 0;
-}
-
-agam_int agam_gpu_memcpy_to_host(void* host_dst, void* device_src, agam_int size_bytes) {
-  if (!host_dst || !device_src || size_bytes < 0) {
-    return -1;
-  }
-  memcpy(host_dst, device_src, (size_t)size_bytes);
-  return 0;
-}
-
-"#,
-    );
+    out.push_str(include_str!("../runtime/gpu_host_prelude.c"));
 }
 
 fn emit_effect_prelude(out: &mut String) {
-    out.push_str(
-        r#"/* ── Agam Effect Runtime ───────────────────── */
-#include <sys/stat.h>
-#include <errno.h>
-
-/* FileSystem.exists(path) -> bool */
-agam_bool agam_effect_FileSystem_exists(agam_str path) {
-  struct stat st;
-  return stat(path, &st) == 0 ? 1 : 0;
-}
-
-/* FileSystem.is_file(path) -> bool */
-agam_bool agam_effect_FileSystem_is_file(agam_str path) {
-  struct stat st;
-  if (stat(path, &st) != 0) return 0;
-  return S_ISREG(st.st_mode) ? 1 : 0;
-}
-
-/* FileSystem.is_dir(path) -> bool */
-agam_bool agam_effect_FileSystem_is_dir(agam_str path) {
-  struct stat st;
-  if (stat(path, &st) != 0) return 0;
-  return S_ISDIR(st.st_mode) ? 1 : 0;
-}
-
-/* FileSystem.create_dir_all(path) */
-agam_int agam_effect_FileSystem_create_dir_all(agam_str path) {
-  /* Simple recursive mkdir for POSIX; on Windows use _mkdir */
-#ifdef _WIN32
-  (void)_mkdir(path);
-#else
-  mkdir(path, 0755);
-#endif
-  return 0;
-}
-
-/* FileSystem.read_to_string(path) -> string */
-agam_str agam_effect_FileSystem_read_to_string(agam_str path) {
-  FILE* f = fopen(path, "rb");
-  if (!f) return "";
-  fseek(f, 0, SEEK_END);
-  long len = ftell(f);
-  fseek(f, 0, SEEK_SET);
-  char* buf = (char*)malloc((size_t)len + 1);
-  if (len > 0) {
-    size_t read = fread(buf, 1, (size_t)len, f);
-    buf[read] = '\0';
-  } else {
-    buf[0] = '\0';
-  }
-  fclose(f);
-  return buf;
-}
-
-/* FileSystem.read_lines(path) -> string (newline-joined) */
-agam_str agam_effect_FileSystem_read_lines(agam_str path) {
-  return agam_effect_FileSystem_read_to_string(path);
-}
-
-/* FileSystem.write_string(path, contents) */
-agam_int agam_effect_FileSystem_write_string(agam_str path, agam_str contents) {
-  FILE* f = fopen(path, "w");
-  if (!f) return -1;
-  fputs(contents, f);
-  fclose(f);
-  return 0;
-}
-
-/* FileSystem.append_string(path, contents) */
-agam_int agam_effect_FileSystem_append_string(agam_str path, agam_str contents) {
-  FILE* f = fopen(path, "a");
-  if (!f) return -1;
-  fputs(contents, f);
-  fclose(f);
-  return 0;
-}
-
-/* FileSystem.list_dir(path) -> string (newline-joined entries) */
-agam_str agam_effect_FileSystem_list_dir(agam_str path) {
-  (void)path;
-  return ""; /* simplified: full implementation requires dirent.h */
-}
-
-/* Console.print(msg) */
-agam_int agam_effect_Console_print(agam_str msg) {
-  printf("%s", msg);
-  return 0;
-}
-
-/* Console.println(msg) */
-agam_int agam_effect_Console_println(agam_str msg) {
-  printf("%s\n", msg);
-  return 0;
-}
-
-/* Console.read_line() -> string */
-agam_str agam_effect_Console_read_line(void) {
-  char* buf = (char*)malloc(4096);
-  if (!fgets(buf, 4096, stdin)) {
-    buf[0] = '\0';
-  }
-  /* Strip trailing newline */
-  size_t len = strlen(buf);
-  if (len > 0 && buf[len-1] == '\n') buf[len-1] = '\0';
-  return buf;
-}
-
-/* Console.eprint(msg) */
-agam_int agam_effect_Console_eprint(agam_str msg) {
-  fprintf(stderr, "%s", msg);
-  return 0;
-}
-
-/* Console.eprintln(msg) */
-agam_int agam_effect_Console_eprintln(agam_str msg) {
-  fprintf(stderr, "%s\n", msg);
-  return 0;
-}
-
-"#,
-    );
+    out.push_str(include_str!("../runtime/effect_prelude.c"));
 }
 
 fn emit_runtime_prelude(out: &mut String, module: &MirModule) {
@@ -1368,6 +865,59 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
             .unwrap();
             writeln!(out, "  {} {} = 0; /* asm result */", result_ty.name(), v).unwrap();
         }
+        Op::EnumConstruct { tag, payload } => {
+            let payload_desc = payload
+                .iter()
+                .map(|value| format!("__v{}", value.0))
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(
+                out,
+                "  /* unsupported enum construct: tag={} payload=[{}] */",
+                tag, payload_desc
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {} {} = {};",
+                result_ty.name(),
+                v,
+                result_ty.default_value()
+            )
+            .unwrap();
+        }
+        Op::EnumTag(value) => {
+            writeln!(
+                out,
+                "  /* unsupported enum tag extraction from __v{} */",
+                value.0
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {} {} = {};",
+                result_ty.name(),
+                v,
+                result_ty.default_value()
+            )
+            .unwrap();
+        }
+        Op::EnumPayload { value, field_index } => {
+            writeln!(
+                out,
+                "  /* unsupported enum payload extraction: __v{} field {} */",
+                value.0, field_index
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "  {} {} = {};",
+                result_ty.name(),
+                v,
+                result_ty.default_value()
+            )
+            .unwrap();
+        }
     }
 }
 
@@ -1397,6 +947,18 @@ fn emit_terminator(out: &mut String, term: &Terminator, _layout: &FunctionLayout
                 condition.0, then_block.0, else_block.0
             )
             .unwrap();
+        }
+        Terminator::Switch {
+            discriminant,
+            cases,
+            default,
+        } => {
+            writeln!(out, "  switch (__v{}) {{", discriminant.0).unwrap();
+            for (value, target) in cases {
+                writeln!(out, "    case {}: goto block_{};", value, target.0).unwrap();
+            }
+            writeln!(out, "    default: goto block_{};", default.0).unwrap();
+            writeln!(out, "  }}").unwrap();
         }
         Terminator::Unreachable => {
             writeln!(out, "  __builtin_unreachable();").unwrap();

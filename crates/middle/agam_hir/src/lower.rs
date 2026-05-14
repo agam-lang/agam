@@ -133,6 +133,16 @@ impl HirLowering {
         let lowered = HirFunction {
             id: self.fresh_id(),
             name: f.name.name.clone(),
+            generics: f
+                .generics
+                .iter()
+                .map(|g| {
+                    HirGenericParam {
+                        name: g.name.name.clone(),
+                        bounds: vec![], // TODO: properly stringify TypeExpr bounds
+                    }
+                })
+                .collect(),
             params,
             return_ty: f
                 .return_type
@@ -304,6 +314,17 @@ impl HirLowering {
                 }
                 lowered
             }
+            StmtKind::Match { scrutinee, arms } => HirStmt::Match {
+                scrutinee: self.lower_expr(scrutinee),
+                arms: arms
+                    .iter()
+                    .map(|arm| HirMatchArm {
+                        pattern: self.lower_pattern(&arm.pattern),
+                        guard: arm.guard.as_ref().map(|g| self.lower_expr(g)),
+                        body: self.lower_expr(&arm.body),
+                    })
+                    .collect(),
+            },
             _ => HirStmt::Expr(HirExpr {
                 id: self.fresh_id(),
                 ty: self.types.unit(),
@@ -601,6 +622,41 @@ impl HirLowering {
                 },
             ),
 
+            ExprKind::Match { scrutinee, arms } => {
+                let scrutinee_hir = self.lower_expr(scrutinee);
+                let result_ty = self.types.fresh_var();
+                let hir_arms: Vec<HirMatchArm> = arms
+                    .iter()
+                    .map(|arm| HirMatchArm {
+                        pattern: self.lower_pattern(&arm.pattern),
+                        guard: arm.guard.as_ref().map(|g| self.lower_expr(g)),
+                        body: self.lower_expr(&arm.body),
+                    })
+                    .collect();
+                (
+                    result_ty,
+                    HirExprKind::Match {
+                        scrutinee: Box::new(scrutinee_hir),
+                        arms: hir_arms,
+                    },
+                )
+            }
+
+            ExprKind::StructLiteral { path, fields } => {
+                let name = path_name(path);
+                let hir_fields = fields
+                    .iter()
+                    .map(|f| (f.name.name.clone(), self.lower_expr(&f.value)))
+                    .collect();
+                (
+                    self.types.fresh_var(),
+                    HirExprKind::StructLiteral {
+                        name,
+                        fields: hir_fields,
+                    },
+                )
+            }
+
             // Fallback for unhandled expressions
             _ => (self.types.unit(), HirExprKind::Tuple(vec![])), // Unit value
         };
@@ -814,6 +870,51 @@ impl HirLowering {
         match &pattern.kind {
             agam_ast::pattern::PatternKind::Identifier { name, .. } => Some(name.name.clone()),
             _ => None,
+        }
+    }
+
+    fn lower_pattern(&mut self, pattern: &agam_ast::pattern::Pattern) -> HirPattern {
+        use agam_ast::pattern::PatternKind;
+        match &pattern.kind {
+            PatternKind::Wildcard => HirPattern::Wildcard,
+            PatternKind::Identifier { name, .. } => HirPattern::Bind(name.name.clone()),
+            PatternKind::Literal(expr) => HirPattern::Literal(self.lower_expr(expr)),
+            PatternKind::Tuple(pats) => {
+                HirPattern::Tuple(pats.iter().map(|p| self.lower_pattern(p)).collect())
+            }
+            PatternKind::Variant { path, fields } => {
+                let name = path
+                    .segments
+                    .last()
+                    .map(|s| s.name.clone())
+                    .unwrap_or_default();
+                HirPattern::Variant {
+                    name,
+                    fields: fields.iter().map(|f| self.lower_pattern(f)).collect(),
+                }
+            }
+            PatternKind::Struct { path, fields, .. } => {
+                let name = path
+                    .segments
+                    .last()
+                    .map(|s| s.name.clone())
+                    .unwrap_or_default();
+                HirPattern::Struct {
+                    name,
+                    fields: fields
+                        .iter()
+                        .map(|f| {
+                            let pat = f
+                                .pattern
+                                .as_ref()
+                                .map(|p| self.lower_pattern(p))
+                                .unwrap_or(HirPattern::Bind(f.name.name.clone()));
+                            (f.name.name.clone(), pat)
+                        })
+                        .collect(),
+                }
+            }
+            _ => HirPattern::Wildcard,
         }
     }
 }

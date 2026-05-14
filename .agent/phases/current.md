@@ -4,6 +4,14 @@
 
 Native LLVM as first-class production backend for Windows, Linux, and Android.
 
+## 2026-05-14 Compiler Structure Note
+
+- ✅ `crates/core/agam_interface/` now exists and owns the shared parse/semantic-check/HIR/MIR orchestration layer plus `WarmState`
+- ✅ `agam_driver` is now materially split: `main.rs` is a thin entrypoint, command dispatch lives in `src/dispatch.rs`, and the large inline test module moved to `src/main_tests.rs`
+- ✅ The workspace builds again with the newer MIR surface (`Switch`, `EnumConstruct`, `EnumTag`, `EnumPayload`) and all `agam_driver` tests pass
+- ✅ The earlier “TypeStore O(n) interning” and “extract C runtime” items are already complete in-tree, so they are no longer active blockers
+- ⬜ The next real compiler gap is not the build itself; it is semantic completeness: `agam_mir::lower` still has `todo!` paths for struct literals, enum variants, and `match` lowering, and backend enum-layout/codegen remains incomplete
+
 ## Active Workstreams
 
 | Phase | Status | Focus | Detail |

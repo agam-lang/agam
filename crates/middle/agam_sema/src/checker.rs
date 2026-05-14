@@ -14,6 +14,7 @@ use agam_ast::*;
 use agam_errors::Span;
 
 use crate::consteval::ConstEvaluator;
+use crate::exhaustive::{SimplePattern, TypeShape, check_exhaustiveness};
 use crate::gpu::{GpuBuiltin, resolve_gpu_builtin_expr, resolve_gpu_builtin_member};
 use crate::infer::InferenceEngine;
 use crate::resolver::Resolver;
@@ -485,8 +486,9 @@ impl TypeChecker {
                 tt
             }
             ExprKind::Match { scrutinee, arms } => {
-                self.infer_expr(scrutinee);
+                let scrutinee_ty = self.infer_expr(scrutinee);
                 let result_ty = self.types.fresh_var();
+                let mut patterns = Vec::new();
                 for arm in arms {
                     if let Some(guard) = &arm.guard {
                         let g = self.infer_expr(guard);
@@ -496,7 +498,22 @@ impl TypeChecker {
                     let arm_ty = self.infer_expr(&arm.body);
                     self.engine
                         .constrain(result_ty, arm_ty, "match arms must have same type");
+                    patterns.push(self.pattern_to_simple(&arm.pattern));
                 }
+
+                // Solve constraints so we know the scrutinee type before shape mapping
+                self.engine.solve(&self.types);
+
+                let resolved_scrutinee_ty = self.engine.resolve(scrutinee_ty);
+                let shape = self.type_to_shape(resolved_scrutinee_ty);
+                let exh_errors = check_exhaustiveness(&patterns, &shape, expr.span);
+                for e in exh_errors {
+                    self.errors.push(TypeError {
+                        message: e.message,
+                        span: e.span,
+                    });
+                }
+
                 result_ty
             }
 
@@ -774,6 +791,78 @@ impl TypeChecker {
         match &pattern.kind {
             agam_ast::pattern::PatternKind::Identifier { name, .. } => Some(name.name.clone()),
             _ => None,
+        }
+    }
+
+    fn type_to_shape(&self, ty: TypeId) -> TypeShape {
+        match self.types.get(ty) {
+            Type::Bool => TypeShape::Bool,
+            Type::Int(_) | Type::UInt(_) => TypeShape::Int,
+            Type::Str => TypeShape::Str,
+            Type::Tuple(elems) => {
+                TypeShape::Tuple(elems.iter().map(|t| self.type_to_shape(*t)).collect())
+            }
+            Type::Optional(_) => TypeShape::Enum {
+                variants: vec!["None".into(), "Some".into()],
+            },
+            Type::Result { .. } => TypeShape::Enum {
+                variants: vec!["Ok".into(), "Err".into()],
+            },
+            Type::Named(_sym) => {
+                // Ideally we'd look up the symbol to see if it's an enum and get its variants.
+                // For now, if we can't look it up, we return Other.
+                TypeShape::Other
+            }
+            _ => TypeShape::Other,
+        }
+    }
+
+    fn pattern_to_simple(&self, pat: &agam_ast::pattern::Pattern) -> SimplePattern {
+        use agam_ast::pattern::PatternKind;
+        match &pat.kind {
+            PatternKind::Wildcard => SimplePattern::Wildcard,
+            PatternKind::Identifier { .. } => SimplePattern::Wildcard,
+            PatternKind::Literal(expr) => match &expr.kind {
+                ExprKind::BoolLiteral(b) => SimplePattern::Bool(*b),
+                ExprKind::IntLiteral(i) => SimplePattern::Int(*i),
+                ExprKind::StringLiteral(s) => SimplePattern::Str(s.clone()),
+                _ => SimplePattern::Wildcard,
+            },
+            PatternKind::Tuple(pats) => {
+                SimplePattern::Tuple(pats.iter().map(|p| self.pattern_to_simple(p)).collect())
+            }
+            PatternKind::Struct { path, fields, .. } => {
+                let name = path
+                    .segments
+                    .last()
+                    .map(|s| s.name.clone())
+                    .unwrap_or_default();
+                let simple_fields = fields
+                    .iter()
+                    .filter_map(|f| f.pattern.as_ref().map(|p| self.pattern_to_simple(p)))
+                    .collect();
+                SimplePattern::Constructor {
+                    name,
+                    fields: simple_fields,
+                }
+            }
+            PatternKind::Variant { path, fields } => {
+                let name = path
+                    .segments
+                    .last()
+                    .map(|s| s.name.clone())
+                    .unwrap_or_default();
+                if fields.is_empty() {
+                    SimplePattern::Variant(name)
+                } else {
+                    let simple_fields = fields.iter().map(|f| self.pattern_to_simple(f)).collect();
+                    SimplePattern::Constructor {
+                        name,
+                        fields: simple_fields,
+                    }
+                }
+            }
+            _ => SimplePattern::Wildcard,
         }
     }
 }

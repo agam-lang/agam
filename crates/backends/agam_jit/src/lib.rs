@@ -1127,6 +1127,15 @@ impl AgamJit {
             Op::InlineAsm { .. } => {
                 Err("Inline assembly is not supported by the Cranelift JIT slice".into())
             }
+            Op::EnumConstruct { .. } => {
+                Err("enum construction is not yet supported by the Cranelift JIT slice".into())
+            }
+            Op::EnumTag(_) => {
+                Err("enum tag extraction is not yet supported by the Cranelift JIT slice".into())
+            }
+            Op::EnumPayload { .. } => Err(
+                "enum payload extraction is not yet supported by the Cranelift JIT slice".into(),
+            ),
         }
     }
 
@@ -1211,6 +1220,12 @@ impl AgamJit {
                     else_block,
                     seen_predecessors,
                     predecessor_totals,
+                );
+            }
+            Terminator::Switch { .. } => {
+                return Err(
+                    "MIR switch terminators are not yet supported by the Cranelift JIT slice"
+                        .into(),
                 );
             }
             Terminator::Unreachable => {
@@ -2226,7 +2241,10 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                 | Op::GpuKernelLaunch { .. }
                 | Op::GpuSharedAlloc { .. }
                 | Op::GpuIntrinsic { .. }
-                | Op::InlineAsm { .. } => JitType::Int {
+                | Op::InlineAsm { .. }
+                | Op::EnumConstruct { .. }
+                | Op::EnumTag(_)
+                | Op::EnumPayload { .. } => JitType::Int {
                     bits: 32,
                     signed: true,
                 },
@@ -2728,6 +2746,12 @@ fn predecessor_counts(function: &MirFunction) -> HashMap<BlockId, usize> {
             } => {
                 *counts.entry(*then_block).or_insert(0) += 1;
                 *counts.entry(*else_block).or_insert(0) += 1;
+            }
+            Terminator::Switch { default, cases, .. } => {
+                *counts.entry(*default).or_insert(0) += 1;
+                for (_, target) in cases {
+                    *counts.entry(*target).or_insert(0) += 1;
+                }
             }
             Terminator::Return(_) | Terminator::ReturnVoid | Terminator::Unreachable => {}
         }
