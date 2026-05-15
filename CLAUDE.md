@@ -144,9 +144,19 @@ Physical layout: `crates/{core,middle,backends,runtime,tooling,experiments}/...`
 
 **Detail:** `.agent/phases/details/21.md`
 
+### Phase F6: Indic Grammatical Design Principles (in-progress)
+
+**Goal:** Formalize 7 design principles drawn from Pāṇini's Aṣṭādhyāyī (Sanskrit) and the Tolkāppiyam (Tamil) — the world's oldest formal grammar systems — as a design philosophy that shapes F2–F5.
+
+**Done:** Design specification documents — `design-principles.md` (7 principles), `naming-conventions.md` (30 root verbs), `type-sandhi.md` (7 type composition rules). Phase integrated into Tier 0 roadmap as Pillar 29.
+
+**Remaining:** Cross-reference with F2 (pratyāhāra constraints), F3 (anuvṛtti defaults), F5 (vibhakti roles, dhātu naming)
+
+**Detail:** `.agent/phases/details/F6.md`
+
 ### Build Priority Order
 
-22 (broader stdlib) → 23 (elite GPU/NPU integration: auto-tuning, inline PTX, warp primitives) → 24 (ecosystem integration)
+F6 (design principles, parallel) → F2 (type system) → F3 (object model) → F4 (modules) → F5 (ergonomics)
 
 ---
 
@@ -185,6 +195,7 @@ Physical layout: `crates/{core,middle,backends,runtime,tooling,experiments}/...`
 - Agam is **not** Python and **not** Rust. Use real `.agam` files as syntax references.
 - ML/tensor features are native compiler/runtime concerns, not wrappers.
 - New language features must strengthen simplicity, safety, performance, portability, or AI/ML usability.
+- **Design principles** from `docs/specification/design-principles.md` (dhātu naming, vibhakti roles, sandhi composition, pratyāhāra constraints) inform all API and type system decisions.
 
 ### Process
 - After major changes, commit locally. After a final milestone or substantial batch of changes, commit and push to GitHub.
@@ -244,6 +255,9 @@ agam/
 | Full phase history and catalog? | `.agent/phases/catalog.md` |
 | Package/registry/environment architecture? | `.agent/policy/package-ecosystem.md` |
 | Syntax questions about `.agam` files? | `examples/*.agam`, `.agent/test/*.agam` |
+| Design principles (naming, type composition)? | `docs/specification/design-principles.md` |
+| Stdlib naming conventions? | `docs/specification/naming-conventions.md` |
+| Type composition rules (sandhi table)? | `docs/specification/type-sandhi.md` |
 | Platform/SDK/LLVM toolchain details? | Run `agamc doctor` or read `README.md` |
 | Benchmark methodology? | `benchmarks/README.md` |
 | Architecture graph (if built)? | `graphify-out/GRAPH_REPORT.md` |
