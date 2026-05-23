@@ -1,4 +1,4 @@
-﻿//! CLI definitions for the Agam compiler driver.
+//! CLI definitions for the Agam compiler driver.
 //!
 //! All Clap-derived command-line interface types live here,
 //! separated from the implementation for maintainability.
@@ -37,6 +37,8 @@ pub(crate) enum Backend {
 pub(crate) enum LtoMode {
     Thin,
     Full,
+    ThinParallel,
+    Distributed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]

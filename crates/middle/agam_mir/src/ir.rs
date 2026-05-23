@@ -142,6 +142,8 @@ pub enum Op {
         kernel_name: String,
         grid: ValueId,
         block: ValueId,
+        #[serde(default)]
+        shared_memory_bytes: u32,
         args: Vec<ValueId>,
     },
 

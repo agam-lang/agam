@@ -155,18 +155,23 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 - ✅ 5 new HIR tests for target propagation (Iot, Hpc, Default) and IoT effect rejection
 
 ### 23 Progress
-- ✅ `@gpu` kernel config parsing and sema validation constraints
+- ✅ `@gpu(...)` annotation arguments now parse from source, including tuple-style `grid=(x, y, z)`, and sema resolves `threads`, `shared`, and `grid`
 - ✅ `GpuKernelLaunch` MIR op and propagation across all backends
 - ✅ High-throughput NVPTX64 IR emitter with CUDA linkage and pre-allocated formatting
 - ✅ GPU kernel parameter ABI hints now preserve scalar and buffer signatures (`float`, `float*`, `i32*`) through HIR → MIR → NVPTX entry binding
+- ✅ Reference-wrapped GPU buffers (`&[T]`, `&[T; N]`, `&mut [T; N]`) now preserve typed pointer ABI through HIR → MIR → NVPTX instead of degrading to `i8*`
 - ✅ GPU integer width support now extends through the LLVM/NVPTX path for `i128/u128`, `i256/u256`, and `i512/u512` kernel params and shared-memory element typing
 - ✅ Fixed-size array type expressions (`[T; N]`) now parse/resolve across parser, HIR, and sema, and lower through GPU buffer/shared-memory paths as element-typed device pointers
 - ✅ Source-level GPU builtins now resolve and lower end-to-end (`agam.gpu.thread_id_*`, `agam.gpu.block_id_*`, `agam.gpu.block_dim_*`, `agam.gpu.barrier`)
+- ✅ GPU kernel validation now runs during HIR lowering, rejects effects/strings/heap-style allocation/direct recursion, and still permits shared-memory plus indexed pointer/array access
 - ✅ Indexed GPU buffer reads and writes now lower from source (`input[idx]`, `output[idx] = value`) through MIR into NVPTX `getelementptr` + load/store
+- ✅ Host calls to known `@gpu` functions now lower into `GpuKernelLaunch` with the current scalar launch contract (`grid.x`, block size, shared bytes) instead of falling back to plain calls
 - ⬜ Rich Memory Types (pointer/array lowering in kernels)
 - ✅ Shared Memory (`agam.gpu.shared_alloc(...)` now lowers to `addrspace(3)` NVPTX shared allocations for annotated pointer/slice/reference targets)
+- ✅ Reference-wrapped shared-memory targets (`&mut [T]`) now preserve typed shared alloc lowering instead of degrading to opaque pointers
 - ✅ GPU math builtins now lower to NVVM fast-math intrinsics (`agam.gpu.sin`, `agam.gpu.cos`, `agam.gpu.sqrt`, `agam.gpu.exp`)
 - ✅ Host-Device memory transfer APIs (`gpu_malloc`, `gpu_free`, `gpu_memcpy_to_device`, `gpu_memcpy_to_host`) now lower through the stdlib plus both the C and LLVM host backends
+- ✅ LLVM host emission now lowers `GpuKernelLaunch` into concrete CUDA runtime IR with argument packing and `cudaLaunchKernel(...)` calls
 
 ## Decision Rules
 

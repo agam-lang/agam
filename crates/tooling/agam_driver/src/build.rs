@@ -215,6 +215,8 @@ pub(crate) fn render_lto_cli_value(mode: LtoMode) -> &'static str {
     match mode {
         LtoMode::Thin => "thin",
         LtoMode::Full => "full",
+        LtoMode::ThinParallel => "thin-parallel",
+        LtoMode::Distributed => "distributed",
     }
 }
 
@@ -1133,7 +1135,7 @@ pub(crate) fn build_native_llvm_clang_args(
         }
     }
     if let Some(lto) = tuning.lto {
-        args.push(lto_flag(lto).into());
+        args.extend(lto_flags(lto).iter().map(|s| s.to_string()));
     }
     if let Some(dir) = &tuning.pgo_generate {
         args.push(format!("-fprofile-generate={}", dir.to_string_lossy()));
@@ -3039,7 +3041,7 @@ pub(crate) fn build_with_llvm_backend(
                 }
             }
             if let Some(lto) = tuning.lto {
-                args.push(lto_flag(lto).into());
+                args.extend(lto_flags(lto).iter().map(|s| s.to_string()));
             }
             if let Some(dir) = &tuning.pgo_generate {
                 args.push(format!("-fprofile-generate={}", path_to_wsl(dir)?));
@@ -3581,9 +3583,11 @@ pub(crate) fn validate_release_tuning(
     validate_llvm_target_config(tuning)
 }
 
-pub(crate) fn lto_flag(mode: LtoMode) -> &'static str {
+pub(crate) fn lto_flags(mode: LtoMode) -> &'static [&'static str] {
     match mode {
-        LtoMode::Thin => "-flto=thin",
-        LtoMode::Full => "-flto=full",
+        LtoMode::Thin => &["-flto=thin"],
+        LtoMode::Full => &["-flto=full"],
+        LtoMode::ThinParallel => &["-flto=thin", "-Wl,--thinlto-jobs=all"],
+        LtoMode::Distributed => &["-flto=thin", "-Wl,--thinlto-index-only"],
     }
 }

@@ -414,6 +414,12 @@ scratch/                local non-source workspace for experiments and temporary
   - collaboration standards for repo participation
 - [`docs/README.md`](./docs/README.md)
   - documentation ownership map for public docs, architecture notes, and runbooks
+- [`docs/specification/design-principles.md`](./docs/specification/design-principles.md)
+  - the 7 Indic grammatical design principles that govern Agam
+- [`docs/specification/naming-conventions.md`](./docs/specification/naming-conventions.md)
+  - standard library root verb (dhātu) naming conventions
+- [`docs/specification/type-sandhi.md`](./docs/specification/type-sandhi.md)
+  - formal type junction rules and composition guarantees
 - [`docs/architecture/project-brief.md`](./docs/architecture/project-brief.md)
   - canonical engineering brief for the repo layout and compiler/runtime stack
 - [`docs/architecture/decisions/`](./docs/architecture/decisions/)

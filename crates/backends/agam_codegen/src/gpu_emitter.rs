@@ -292,34 +292,34 @@ fn emit_cuda_linkage_comment(out: &mut String, linkage: &CudaLinkage) {
 }
 
 struct KernelLayout {
-    param_types: Vec<&'static str>,
-    value_types: HashMap<ValueId, &'static str>,
-    local_types: HashMap<String, &'static str>,
+    param_types: Vec<String>,
+    value_types: HashMap<ValueId, String>,
+    local_types: HashMap<String, String>,
 }
 
-fn kernel_ir_type_from_type_id(ty: agam_sema::symbol::TypeId) -> &'static str {
+fn kernel_ir_type_from_type_id(ty: agam_sema::symbol::TypeId) -> String {
     match builtin_type_by_id(ty) {
-        Some(Type::Bool) => "i1",
-        Some(Type::Char) => "i32",
-        Some(Type::Str) => "i8*",
-        Some(Type::Unit) => "i32",
-        Some(Type::Float(FloatSize::F32)) => "float",
-        Some(Type::Float(FloatSize::F64)) => "double",
-        Some(Type::Int(IntSize::I8)) | Some(Type::UInt(IntSize::I8)) => "i8",
-        Some(Type::Int(IntSize::I16)) | Some(Type::UInt(IntSize::I16)) => "i16",
-        Some(Type::Int(IntSize::I32)) | Some(Type::UInt(IntSize::I32)) => "i32",
+        Some(Type::Bool) => "i1".into(),
+        Some(Type::Char) => "i32".into(),
+        Some(Type::Str) => "i8*".into(),
+        Some(Type::Unit) => "i32".into(),
+        Some(Type::Float(FloatSize::F32)) => "float".into(),
+        Some(Type::Float(FloatSize::F64)) => "double".into(),
+        Some(Type::Int(IntSize::I8)) | Some(Type::UInt(IntSize::I8)) => "i8".into(),
+        Some(Type::Int(IntSize::I16)) | Some(Type::UInt(IntSize::I16)) => "i16".into(),
+        Some(Type::Int(IntSize::I32)) | Some(Type::UInt(IntSize::I32)) => "i32".into(),
         Some(Type::Int(IntSize::I64))
         | Some(Type::UInt(IntSize::I64))
         | Some(Type::Int(IntSize::ISize))
-        | Some(Type::UInt(IntSize::ISize)) => "i64",
-        Some(Type::Int(IntSize::I128)) | Some(Type::UInt(IntSize::I128)) => "i128",
-        Some(Type::Int(IntSize::I256)) | Some(Type::UInt(IntSize::I256)) => "i256",
-        Some(Type::Int(IntSize::I512)) | Some(Type::UInt(IntSize::I512)) => "i512",
-        _ => "i8*",
+        | Some(Type::UInt(IntSize::ISize)) => "i64".into(),
+        Some(Type::Int(IntSize::I128)) | Some(Type::UInt(IntSize::I128)) => "i128".into(),
+        Some(Type::Int(IntSize::I256)) | Some(Type::UInt(IntSize::I256)) => "i256".into(),
+        Some(Type::Int(IntSize::I512)) | Some(Type::UInt(IntSize::I512)) => "i512".into(),
+        _ => "i8*".into(),
     }
 }
 
-fn kernel_param_type(param: &MirParam) -> &'static str {
+fn kernel_param_type(param: &MirParam) -> String {
     match param.gpu_abi {
         GpuKernelParamAbi::OpaquePtr => kernel_ir_type_from_type_id(param.ty),
         abi => abi.llvm_ir(),
@@ -359,8 +359,12 @@ fn analyze_kernel_layout(func: &MirFunction) -> KernelLayout {
     };
 
     for (index, param) in func.params.iter().enumerate() {
-        let ty = layout.param_types.get(index).copied().unwrap_or("i32");
-        layout.value_types.insert(param.value, ty);
+        let ty = layout
+            .param_types
+            .get(index)
+            .cloned()
+            .unwrap_or_else(|| "i32".into());
+        layout.value_types.insert(param.value, ty.clone());
         layout.local_types.insert(param.name.clone(), ty);
     }
 
@@ -370,32 +374,32 @@ fn analyze_kernel_layout(func: &MirFunction) -> KernelLayout {
                 Op::Alloca { name, ty } => {
                     let local_ty = kernel_ir_type_from_type_id(*ty);
                     layout.local_types.insert(name.clone(), local_ty);
-                    "i8*"
+                    "i8*".into()
                 }
                 Op::StoreLocal { name, value } => {
                     let ty = layout
                         .value_types
                         .get(value)
-                        .copied()
+                        .cloned()
                         .unwrap_or_else(|| kernel_ir_type_from_type_id(instr.ty));
-                    layout.local_types.insert(name.clone(), ty);
+                    layout.local_types.insert(name.clone(), ty.clone());
                     ty
                 }
                 Op::StoreIndex { value, .. } => layout
                     .value_types
                     .get(value)
-                    .copied()
+                    .cloned()
                     .unwrap_or_else(|| kernel_ir_type_from_type_id(instr.ty)),
                 Op::GpuSharedAlloc { element_abi, .. } => element_abi.shared_ptr_llvm_ir(),
                 Op::LoadLocal(name) => layout
                     .local_types
                     .get(name)
-                    .copied()
+                    .cloned()
                     .unwrap_or_else(|| kernel_ir_type_from_type_id(instr.ty)),
                 Op::Copy(src) => layout
                     .value_types
                     .get(src)
-                    .copied()
+                    .cloned()
                     .unwrap_or_else(|| kernel_ir_type_from_type_id(instr.ty)),
                 Op::GetIndex { object, .. } => layout
                     .value_types
@@ -412,11 +416,19 @@ fn analyze_kernel_layout(func: &MirFunction) -> KernelLayout {
 }
 
 fn kernel_value_type<'a>(layout: &'a KernelLayout, value: ValueId) -> &'a str {
-    layout.value_types.get(&value).copied().unwrap_or("i32")
+    layout
+        .value_types
+        .get(&value)
+        .map(|ty| ty.as_str())
+        .unwrap_or("i32")
 }
 
 fn kernel_local_type<'a>(layout: &'a KernelLayout, name: &str) -> &'a str {
-    layout.local_types.get(name).copied().unwrap_or("i32")
+    layout
+        .local_types
+        .get(name)
+        .map(|ty| ty.as_str())
+        .unwrap_or("i32")
 }
 
 fn is_float_ir(ty: &str) -> bool {
@@ -427,9 +439,13 @@ fn is_pointer_ir(ty: &str) -> bool {
     ty.ends_with('*')
 }
 
-fn pointee_ir_type(ty: &str) -> Option<&str> {
+fn pointee_ir_type(ty: &str) -> Option<String> {
     let base = ty.strip_suffix('*')?.trim_end();
-    Some(base.strip_suffix(" addrspace(3)").unwrap_or(base))
+    Some(
+        base.strip_suffix(" addrspace(3)")
+            .unwrap_or(base)
+            .to_string(),
+    )
 }
 
 fn default_value_for_ir(ty: &str) -> &'static str {
@@ -443,7 +459,11 @@ fn default_value_for_ir(ty: &str) -> &'static str {
 
 fn emit_kernel_param_bindings(out: &mut String, func: &MirFunction, layout: &KernelLayout) {
     for (index, param) in func.params.iter().enumerate() {
-        let ty = layout.param_types.get(index).copied().unwrap_or("i32");
+        let ty = layout
+            .param_types
+            .get(index)
+            .map(|ty| ty.as_str())
+            .unwrap_or("i32");
         out.push_str("  %local_");
         push_sanitized(out, &param.name);
         out.push_str(" = alloca ");
@@ -547,7 +567,11 @@ fn emit_kernel_function(out: &mut String, func: &MirFunction) {
         if i > 0 {
             out.push_str(", ");
         }
-        let ty = layout.param_types.get(i).copied().unwrap_or("i32");
+        let ty = layout
+            .param_types
+            .get(i)
+            .map(|ty| ty.as_str())
+            .unwrap_or("i32");
         write!(out, "{} %p{}", ty, i).unwrap();
     }
     out.push_str(") {\n");
@@ -659,13 +683,13 @@ fn emit_kernel_instruction(
                 write!(
                     out,
                     "  %v{}.ptr = getelementptr inbounds {}, {} %v{}, i32 %v{}\n",
-                    id, element_ty, object_ty, object.0, index.0
+                    id, &element_ty, object_ty, object.0, index.0
                 )
                 .unwrap();
                 write!(
                     out,
                     "  store {} %v{}, {} %v{}.ptr\n",
-                    element_ty, value.0, object_ty, id
+                    &element_ty, value.0, object_ty, id
                 )
                 .unwrap();
                 write!(
@@ -706,12 +730,11 @@ fn emit_kernel_instruction(
             out.push('\n');
         }
         Op::GpuSharedAlloc { element_abi, count } => {
+            let element_ty = element_abi.llvm_ir();
             write!(
                 out,
                 "  %v{} = alloca {}, i32 %v{}, addrspace(3)\n",
-                id,
-                element_abi.pointee_llvm_ir(),
-                count.0
+                id, element_ty, count.0
             )
             .unwrap();
         }
@@ -769,13 +792,13 @@ fn emit_kernel_instruction(
                 write!(
                     out,
                     "  %v{}.ptr = getelementptr inbounds {}, {} %v{}, i32 %v{}\n",
-                    id, element_ty, object_ty, object.0, index.0
+                    id, &element_ty, object_ty, object.0, index.0
                 )
                 .unwrap();
                 write!(
                     out,
                     "  %v{} = load {}, {} %v{}.ptr\n",
-                    id, element_ty, object_ty, id
+                    id, &element_ty, object_ty, id
                 )
                 .unwrap();
             } else {
@@ -1385,6 +1408,30 @@ mod tests {
     }
 
     #[test]
+    fn lowers_reference_wrapped_gpu_buffers_as_typed_pointers_from_source() {
+        let ir = emit_gpu_ir_from_source(
+            "@gpu\nfn kern(input: &[f32], output: &mut [f32; 64]) { let tid = agam.gpu.thread_id_x(); output[tid] = input[tid]; }",
+        );
+        assert!(ir.contains("define ptx_kernel void @__agam_gpu_kern(float* %p0, float* %p1)"));
+        assert!(ir.contains("store float* %p0, float** %local_input"));
+        assert!(ir.contains("store float* %p1, float** %local_output"));
+        assert!(ir.contains("getelementptr inbounds float, float*"));
+        assert!(!ir.contains("i8* %p0"));
+        assert!(!ir.contains("i8* %p1"));
+    }
+
+    #[test]
+    fn lowers_nested_gpu_pointer_params_as_typed_double_pointers_from_source() {
+        let ir = emit_gpu_ir_from_source(
+            "@gpu\nfn kern(input: *mut *mut f32, output: &*mut f32) { let tid = agam.gpu.thread_id_x(); output[tid] = input[tid]; }",
+        );
+        assert!(ir.contains("define ptx_kernel void @__agam_gpu_kern(float** %p0, float** %p1)"));
+        assert!(ir.contains("store float** %p0, float*** %local_input"));
+        assert!(ir.contains("store float** %p1, float*** %local_output"));
+        assert!(ir.contains("getelementptr inbounds float*, float**"));
+    }
+
+    #[test]
     fn lowers_wide_integer_gpu_params_from_source() {
         let ir = emit_gpu_ir_from_source("@gpu\nfn kern(a: i256, b: *mut u512): return 0");
         assert!(ir.contains("define ptx_kernel void @__agam_gpu_kern(i256 %p0, i512* %p1)"));
@@ -1411,6 +1458,26 @@ mod tests {
         );
         assert!(ir.contains("alloca float, i32 %v"));
         assert!(ir.contains("addrspace(3)"));
+    }
+
+    #[test]
+    fn lowers_reference_wrapped_shared_alloc_to_addrspace3_memory() {
+        let ir = emit_gpu_ir_from_source(
+            "@gpu\nfn kern() { let scratch: &mut [f32] = agam.gpu.shared_alloc(128); let tid = agam.gpu.thread_id_x(); scratch[tid] = 1.0; }",
+        );
+        assert!(ir.contains("alloca float, i32 %v"));
+        assert!(ir.contains("addrspace(3)"));
+        assert!(ir.contains("getelementptr inbounds float, float addrspace(3)*"));
+    }
+
+    #[test]
+    fn lowers_pointer_element_shared_alloc_to_typed_addrspace3_memory() {
+        let ir = emit_gpu_ir_from_source(
+            "@gpu\nfn kern() { let scratch: [*mut f32] = agam.gpu.shared_alloc(128); let tid = agam.gpu.thread_id_x(); scratch[tid] = scratch[tid]; }",
+        );
+        assert!(ir.contains("alloca float*, i32 %v"));
+        assert!(ir.contains("addrspace(3)"));
+        assert!(ir.contains("getelementptr inbounds float*, float* addrspace(3)*"));
     }
 
     #[test]

@@ -41,6 +41,7 @@ pub trait Visitor {
             DeclKind::TypeAlias { ty, .. } => self.visit_type_expr(ty),
             DeclKind::Effect(_) => self.default_result(),
             DeclKind::Handler(_) => self.default_result(),
+            DeclKind::Constraint(_) => self.default_result(),
         }
     }
 

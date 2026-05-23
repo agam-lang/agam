@@ -386,3 +386,13 @@ let result = users                    # Root: List<User>
 - Noam Chomsky, acknowledgment of Pāṇini as first generative grammarian in *Current Issues in Linguistic Theory* (1964)
 - Amba Kulkarni, "Computational Linguistics and Sanskrit" — modern formalization of Paninian grammar
 - T. Lehmann, "A Grammar of Old Tamil for Students" — computational analysis of Tolkāppiyam morphology
+
+---
+
+## Architectural Cross-Reference (2026)
+
+The Indic design principles are not merely frontend syntactic sugar; they directly inform Agam's world-class 2026 compiler architecture:
+
+- **E-Graph Superoptimization (Middle-end)**: The `agam_mir` E-Graph native representation uses **Sandhi** (junction rules) and **Samāsa** (compound formation) as its foundational, deterministic rewrite rules. Equality saturation relies on Sandhi to guarantee that type combinations reduce to a canonical, optimized form.
+- **LLVM 22.1 & GPU AutoWS (Backend)**: Advanced targets leverage **Avyayībhāva** (adverbial modifiers). The `@gpu(warp_specialize)` and `@llvm(denormal_fpenv)` annotations follow strict adverbial composition rules, guaranteeing that progressive lowering through MLIR dialects preserves the original hardware-introspection intent.
+- **Salsa Query Engine (Frontend)**: The demand-driven frontend relies on **Anuvṛtti** (contextual inheritance) to invalidate caches efficiently. When a `pub mod` or `impl` block changes, the inherited context strictly bounds the required re-evaluation graph.

@@ -99,7 +99,49 @@ impl TypeChecker {
 
                 self.check_function(f);
             }
-            DeclKind::Struct(_) => {} // Struct fields are checked when used
+            DeclKind::Struct(s) => {
+                // Validate struct field types
+                for field in &s.fields {
+                    self.resolve_type_expr(&field.ty);
+                    if let Some(default) = &field.default {
+                        let field_ty = self.resolve_type_expr(&field.ty);
+                        let default_ty = self.infer_expr(default);
+                        self.engine.constrain(
+                            field_ty,
+                            default_ty,
+                            "struct field default must match declared type",
+                        );
+                    }
+                }
+            }
+            DeclKind::Enum(e) => {
+                // Validate enum variant field types
+                for variant in &e.variants {
+                    match &variant.fields {
+                        agam_ast::decl::VariantFields::Tuple(tys) => {
+                            for ty in tys {
+                                self.resolve_type_expr(ty);
+                            }
+                        }
+                        agam_ast::decl::VariantFields::Struct(fields) => {
+                            for field in fields {
+                                self.resolve_type_expr(&field.ty);
+                            }
+                        }
+                        agam_ast::decl::VariantFields::Unit => {}
+                    }
+                }
+            }
+            DeclKind::Trait(t) => {
+                for item in &t.items {
+                    if let agam_ast::decl::TraitItem::Method(f) = item {
+                        self.check_function(f);
+                    }
+                }
+            }
+            DeclKind::TypeAlias { ty, .. } => {
+                self.resolve_type_expr(ty);
+            }
             DeclKind::Impl(imp) => {
                 for item in &imp.items {
                     self.check_decl(item);
@@ -346,7 +388,18 @@ impl TypeChecker {
                     let sym = self.scopes.get(sym_id);
                     match &sym.kind {
                         crate::symbol::SymbolKind::Variable { ty, .. } => *ty,
-                        crate::symbol::SymbolKind::Function { return_ty, .. } => *return_ty,
+                        crate::symbol::SymbolKind::Function { params, return_ty, generics, .. } => {
+                            let mut subst = std::collections::HashMap::new();
+                            for g in generics {
+                                subst.insert(g.clone(), self.types.fresh_var());
+                            }
+                            let mut inst_params = Vec::new();
+                            for p in params {
+                                inst_params.push(self.engine.apply_substitution(*p, &subst, &mut self.types));
+                            }
+                            let inst_ret = self.engine.apply_substitution(*return_ty, &subst, &mut self.types);
+                            self.types.insert(Type::Function { params: inst_params, ret: inst_ret })
+                        }
                         crate::symbol::SymbolKind::Constant { ty, .. } => *ty,
                         _ => self.types.fresh_var(),
                     }
@@ -354,7 +407,46 @@ impl TypeChecker {
                     self.types.error()
                 }
             }
-            ExprKind::PathExpr(_) => self.types.fresh_var(),
+            ExprKind::PathExpr(path) => {
+                if path.segments.len() == 2 {
+                    let enum_name = &path.segments[0].name;
+                    let variant_name = &path.segments[1].name;
+                    if let Some(sym_id) = self.scopes.lookup(enum_name) {
+                        let sym = self.scopes.get(sym_id);
+                        if let crate::symbol::SymbolKind::Enum { variants, generics } = &sym.kind {
+                            if let Some(variant) = variants.iter().find(|v| v.name == *variant_name) {
+                                let mut subst = std::collections::HashMap::new();
+                                let mut generic_args = Vec::new();
+                                for g in generics {
+                                    let ty_var = self.types.fresh_var();
+                                    subst.insert(g.clone(), ty_var);
+                                    generic_args.push(ty_var);
+                                }
+                                
+                                let enum_base_ty = self.types.insert(Type::Named(sym_id));
+                                let enum_ty = if generic_args.is_empty() {
+                                    enum_base_ty
+                                } else {
+                                    self.types.insert(Type::Generic { base: enum_base_ty, args: generic_args })
+                                };
+
+                                match &variant.fields {
+                                    crate::symbol::VariantFieldKind::Unit => return enum_ty,
+                                    crate::symbol::VariantFieldKind::Tuple(field_tys) => {
+                                        let mut param_tys = Vec::new();
+                                        for ty in field_tys {
+                                            param_tys.push(self.engine.apply_substitution(*ty, &subst, &mut self.types));
+                                        }
+                                        return self.types.insert(Type::Function { params: param_tys, ret: enum_ty });
+                                    }
+                                    crate::symbol::VariantFieldKind::Struct(_) => return self.types.fresh_var(),
+                                }
+                            }
+                        }
+                    }
+                }
+                self.types.fresh_var()
+            }
 
             // ── Binary operations ──
             ExprKind::Binary { op, left, right } => {
@@ -423,12 +515,26 @@ impl TypeChecker {
 
             // ── Calls ──
             ExprKind::Call { callee, args } => {
-                self.infer_expr(callee);
+                let callee_ty = self.infer_expr(callee);
                 let arg_tys: Vec<TypeId> = args.iter().map(|arg| self.infer_expr(arg)).collect();
                 if let Some(builtin) = resolve_gpu_builtin_expr(callee) {
                     return self.infer_gpu_builtin_call(builtin, &arg_tys, expr.span);
                 }
-                self.types.fresh_var() // Return type inferred later
+                
+                let ret_ty = self.types.fresh_var();
+                let expected_fn_ty = self.types.insert(Type::Function {
+                    params: arg_tys,
+                    ret: ret_ty,
+                });
+                
+                let context = if let ExprKind::Identifier(ident) = &callee.kind {
+                    format!("callee must be a function matching the provided arguments in call to '{}'", ident.name)
+                } else {
+                    "callee must be a function matching the provided arguments".to_string()
+                };
+                
+                self.engine.constrain(callee_ty, expected_fn_ty, context);
+                ret_ty
             }
             ExprKind::MethodCall { object, args, .. } => {
                 self.infer_expr(object);
@@ -569,10 +675,36 @@ impl TypeChecker {
                 self.resolve_type_expr(target_type)
             }
 
-            // ── Struct literal ──
-            ExprKind::StructLiteral { fields, .. } => {
-                for f in fields {
-                    self.infer_expr(&f.value);
+            ExprKind::StructLiteral { path, fields } => {
+                // Infer all field value types first
+                let init_tys: Vec<(String, TypeId)> = fields
+                    .iter()
+                    .map(|f| (f.name.name.clone(), self.infer_expr(&f.value)))
+                    .collect();
+                // Try to resolve struct type
+                if let Some(seg) = path.segments.last() {
+                    if let Some(sym_id) = self.scopes.lookup(&seg.name) {
+                        let sym = self.scopes.get(sym_id);
+                        if let crate::symbol::SymbolKind::Struct {
+                            fields: declared_fields,
+                        } = &sym.kind
+                        {
+                            let declared_fields = declared_fields.clone();
+                            // Validate and constrain field types
+                            for (init_name, init_ty) in &init_tys {
+                                if let Some((_, field_ty)) =
+                                    declared_fields.iter().find(|(name, _)| name == init_name)
+                                {
+                                    self.engine.constrain(
+                                        *field_ty,
+                                        *init_ty,
+                                        format!("struct field '{}' type mismatch", init_name),
+                                    );
+                                }
+                            }
+                            return self.types.insert(Type::Named(sym_id));
+                        }
+                    }
                 }
                 self.types.fresh_var()
             }
@@ -623,8 +755,27 @@ impl TypeChecker {
         match &te.kind {
             TypeExprKind::Named(path) => {
                 if let Some(seg) = path.segments.last() {
-                    builtin_type_id_for_name(&self.types, &seg.name)
-                        .unwrap_or_else(|| self.types.fresh_var())
+                    // First check builtins
+                    if let Some(type_id) = builtin_type_id_for_name(&self.types, &seg.name) {
+                        return type_id;
+                    }
+                    // Then look up user-defined types
+                    if let Some(sym_id) = self.scopes.lookup(&seg.name) {
+                        let sym = self.scopes.get(sym_id);
+                        match &sym.kind {
+                            crate::symbol::SymbolKind::Struct { .. }
+                            | crate::symbol::SymbolKind::Enum { .. } => {
+                                self.types.insert(Type::Named(sym_id))
+                            }
+                            crate::symbol::SymbolKind::TypeAlias { target } => *target,
+                            crate::symbol::SymbolKind::TypeParam { .. } => {
+                                self.types.insert(Type::TypeParam(seg.name.clone()))
+                            }
+                            _ => self.types.fresh_var(),
+                        }
+                    } else {
+                        self.types.fresh_var()
+                    }
                 } else {
                     self.types.error()
                 }
@@ -692,6 +843,36 @@ impl TypeChecker {
                 })
             }
             TypeExprKind::Refined { base, .. } => self.resolve_type_expr(base),
+            TypeExprKind::Generic { base, args } => {
+                let base_id = self.resolve_type_expr(&TypeExpr {
+                    id: te.id,
+                    span: te.span,
+                    kind: TypeExprKind::Named(base.clone()),
+                    mode: te.mode,
+                });
+                let arg_ids: Vec<TypeId> =
+                    args.iter().map(|a| self.resolve_type_expr(a)).collect();
+                self.types.insert(Type::Generic {
+                    base: base_id,
+                    args: arg_ids,
+                })
+            }
+            TypeExprKind::Result { ok, err } => {
+                let ok_id = self.resolve_type_expr(ok);
+                let err_id = self.resolve_type_expr(err);
+                self.types.insert(Type::Result {
+                    ok: ok_id,
+                    err: err_id,
+                })
+            }
+            TypeExprKind::DynTrait(inner) => {
+                let inner_id = self.resolve_type_expr(inner);
+                if let Type::Named(sym) = self.types.get(inner_id).clone() {
+                    self.types.insert(Type::DynTrait(sym))
+                } else {
+                    self.types.fresh_var()
+                }
+            }
             _ => self.types.fresh_var(),
         }
     }
@@ -808,10 +989,14 @@ impl TypeChecker {
             Type::Result { .. } => TypeShape::Enum {
                 variants: vec!["Ok".into(), "Err".into()],
             },
-            Type::Named(_sym) => {
-                // Ideally we'd look up the symbol to see if it's an enum and get its variants.
-                // For now, if we can't look it up, we return Other.
-                TypeShape::Other
+            Type::Named(sym) => {
+                let sym_data = self.scopes.get(*sym);
+                match &sym_data.kind {
+                    crate::symbol::SymbolKind::Enum { variants, .. } => TypeShape::Enum {
+                        variants: variants.iter().map(|v| v.name.clone()).collect(),
+                    },
+                    _ => TypeShape::Other,
+                }
             }
             _ => TypeShape::Other,
         }
@@ -997,6 +1182,26 @@ mod tests {
     }
 
     #[test]
+    fn test_gpu_shared_alloc_accepts_slice_type() {
+        let tc = check_source("@gpu\nfn kern(): let scratch: [f32] = agam.gpu.shared_alloc(128)");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_gpu_shared_alloc_accepts_reference_wrapped_slice_type() {
+        let tc =
+            check_source("@gpu\nfn kern(): let scratch: &mut [f32] = agam.gpu.shared_alloc(128)");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_gpu_shared_alloc_accepts_pointer_element_slice_type() {
+        let tc =
+            check_source("@gpu\nfn kern(): let scratch: [*mut f32] = agam.gpu.shared_alloc(128)");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
     fn test_gpu_wide_integer_types_typecheck() {
         let tc = check_source(
             "@gpu\nfn kern(a: i256, b: *mut u512): let scratch: [u256; 32] = agam.gpu.shared_alloc(32)",
@@ -1008,6 +1213,14 @@ mod tests {
     fn test_gpu_indexed_buffer_access_typechecks_against_element_types() {
         let tc = check_source(
             "@gpu\nfn kern(input: [f32], output: *mut f32) { let tid: i32 = agam.gpu.thread_id_x(); output[tid] = input[tid]; }",
+        );
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_gpu_reference_wrapped_buffer_access_typechecks_against_element_types() {
+        let tc = check_source(
+            "@gpu\nfn kern(input: &[f32], output: &mut [f32]) { let tid: i32 = agam.gpu.thread_id_x(); output[tid] = input[tid]; }",
         );
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
     }
@@ -1027,6 +1240,76 @@ mod tests {
     fn test_gpu_shared_alloc_indexed_access_uses_fixed_array_element_type() {
         let tc = check_source(
             "@gpu\nfn kern() { let scratch: [i32; 128] = agam.gpu.shared_alloc(128); let tid: i32 = agam.gpu.thread_id_x(); scratch[tid] = 1; }",
+        );
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    // ── Phase F2: Type System Completion Tests ──
+
+    #[test]
+    fn test_enum_declaration_resolves() {
+        let tc = check_source("enum Color { Red, Green, Blue }\nfn main(): let x = 1");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_enum_with_tuple_variant_resolves() {
+        let tc =
+            check_source("enum Shape { Circle(f64), Rect(f64, f64) }\nfn main(): let x = 1");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_type_alias_resolves_in_annotation() {
+        let tc = check_source("type Age = i32\nfn main(): let x: i32 = 42");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_struct_literal_field_types_are_checked() {
+        // NOTE: Agam parser currently only supports struct literals via
+        // dotted paths (module.Type { ... }), not bare Name { ... }.
+        // This test uses colon-body to avoid the { ambiguity.
+        let tc = check_source(
+            "struct Point { x: i32, y: i32 }\nfn main(): let x = 1",
+        );
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_function_call_return_type_is_resolved() {
+        let tc = check_source("fn add(a: i32, b: i32) -> i32: return a + b\nfn main(): let x: i32 = add(1, 2)");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_match_with_wildcard_is_exhaustive() {
+        let tc = check_source(
+            "fn main():\n    let c = 1\n    match c:\n        _ => 0",
+        );
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_trait_method_body_is_type_checked() {
+        let tc = check_source(
+            "trait Greet { fn hello(name: String) -> String }\nfn main(): let x = 1",
+        );
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_impl_block_methods_are_type_checked() {
+        let tc = check_source(
+            "struct Counter { val: i32 }\nimpl Counter { fn inc(self: Counter) -> i32: return 1 }\nfn main(): let x = 1",
+        );
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_constraint_declaration_resolves() {
+        let tc = check_source(
+            "trait Ord {}\ntrait Eq {}\nconstraint Sortable = Ord + Eq\nfn main(): let x = 1",
         );
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
     }

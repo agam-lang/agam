@@ -15,6 +15,8 @@ This directory is the canonical home for Agam's operational automation and runbo
 
 - `justfile`
   - human-friendly front door for the common local DevOps and CI-adjacent tasks
+- `devops/runbooks/windows/optional-amd-tooling.md`
+  - optional AMD workstation tooling note; not part of Agam's default build contract
 - `devops/scripts/package_sdk.py`
   - build, package, archive, and validate an SDK layout
 - `devops/scripts/validate_sdk_e2e.py`

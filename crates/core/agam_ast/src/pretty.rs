@@ -101,6 +101,9 @@ impl PrettyPrinter {
                     h.name.name, h.effect_name.name
                 ));
             }
+            DeclKind::Constraint(c) => {
+                self.line(&format!("constraint {} = ...", c.name.name));
+            }
         }
     }
 

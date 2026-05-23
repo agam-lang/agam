@@ -46,6 +46,6 @@ brief.
 - Native LLVM remains the primary production backend for Windows, Linux, and Android.
 - Visual Studio Community 2026 remains the canonical Windows host toolchain inventory.
 - Current near-term work stays focused on the remaining GPU/NPU gaps (rich kernel
-  memory types, shared memory, and host launch lowering) plus ecosystem integration
+  memory types and broader NPU breadth) plus ecosystem integration
   after the completed packaging, daemon, REPL, runtime-hardening, and host-device
   GPU transfer slices.

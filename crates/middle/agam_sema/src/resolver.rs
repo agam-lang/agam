@@ -16,7 +16,7 @@ use agam_errors::Span;
 
 use crate::consteval::ConstEvaluator;
 use crate::scope::ScopeStack;
-use crate::symbol::{SymbolKind, TypeId};
+use crate::symbol::{EnumVariantInfo, SymbolKind, TypeId, VariantFieldKind};
 use crate::types::TypeStore;
 
 /// Errors produced during name resolution.
@@ -64,12 +64,14 @@ impl Resolver {
                 let ret_ty = self.types.fresh_var();
                 let param_tys: Vec<TypeId> =
                     f.params.iter().map(|_| self.types.fresh_var()).collect();
+                let generics: Vec<String> = f.generics.iter().map(|g| g.name.name.clone()).collect();
                 if let Err(prev) = self.scopes.declare(
                     f.name.name.clone(),
                     SymbolKind::Function {
                         params: param_tys,
                         return_ty: ret_ty,
                         is_async: f.is_async,
+                        generics,
                     },
                     f.span,
                 ) {
@@ -94,10 +96,41 @@ impl Resolver {
                         .declare(s.name.name.clone(), SymbolKind::Struct { fields }, s.span);
             }
             DeclKind::Enum(e) => {
-                let variants = e.variants.iter().map(|v| v.name.name.clone()).collect();
-                let _ =
-                    self.scopes
-                        .declare(e.name.name.clone(), SymbolKind::Enum { variants }, e.span);
+                let variants: Vec<EnumVariantInfo> = e
+                    .variants
+                    .iter()
+                    .map(|v| {
+                        let fields = match &v.fields {
+                            VariantFields::Unit => VariantFieldKind::Unit,
+                            VariantFields::Tuple(tys) => VariantFieldKind::Tuple(
+                                tys.iter()
+                                    .map(|t| self.resolve_type_expr_to_id(t))
+                                    .collect(),
+                            ),
+                            VariantFields::Struct(fields) => VariantFieldKind::Struct(
+                                fields
+                                    .iter()
+                                    .map(|f| {
+                                        (
+                                            f.name.name.clone(),
+                                            self.resolve_type_expr_to_id(&f.ty),
+                                        )
+                                    })
+                                    .collect(),
+                            ),
+                        };
+                        EnumVariantInfo {
+                            name: v.name.name.clone(),
+                            fields,
+                        }
+                    })
+                    .collect();
+                let generics = e.generics.iter().map(|g| g.name.name.clone()).collect();
+                let _ = self.scopes.declare(
+                    e.name.name.clone(),
+                    SymbolKind::Enum { variants, generics },
+                    e.span,
+                );
             }
             DeclKind::Trait(t) => {
                 let methods = t
@@ -123,6 +156,18 @@ impl Resolver {
                     name.name.clone(),
                     SymbolKind::TypeAlias { target },
                     ty.span,
+                );
+            }
+            DeclKind::Constraint(c) => {
+                let bounds: Vec<TypeId> = c
+                    .bounds
+                    .iter()
+                    .map(|b| self.resolve_type_expr_to_id(b))
+                    .collect();
+                let _ = self.scopes.declare(
+                    c.name.name.clone(),
+                    SymbolKind::Constraint { bounds },
+                    c.span,
                 );
             }
             // Use/Import and Impl handled elsewhere
@@ -707,6 +752,7 @@ impl Resolver {
                     params,
                     return_ty,
                     is_async: false,
+                    generics: Vec::new(),
                 },
                 Span::dummy(),
             );
@@ -839,5 +885,38 @@ fn main():
     fn test_wide_integer_gpu_types_resolve_without_errors() {
         let r = parse_and_resolve("fn kern(a: i256, b: *mut u512): return 0");
         assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+    }
+
+    // ── Phase F2: Type System Completion Tests ──
+
+    #[test]
+    fn test_enum_variants_registered_with_field_info() {
+        let r = parse_and_resolve("enum Color { Red, Green, Blue }\nfn main(): let x = 1");
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        assert!(r.scopes.lookup("Color").is_some());
+    }
+
+    #[test]
+    fn test_enum_with_tuple_variant_registered() {
+        let r =
+            parse_and_resolve("enum Shape { Circle(f64), Rect(f64, f64) }\nfn main(): let x = 1");
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        assert!(r.scopes.lookup("Shape").is_some());
+    }
+
+    #[test]
+    fn test_type_alias_registered() {
+        let r = parse_and_resolve("type Age = i32\nfn main(): let x = 1");
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        assert!(r.scopes.lookup("Age").is_some());
+    }
+
+    #[test]
+    fn test_constraint_registered() {
+        let r = parse_and_resolve(
+            "trait Ord {}\ntrait Eq {}\nconstraint Sortable = Ord + Eq\nfn main(): let x = 1",
+        );
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+        assert!(r.scopes.lookup("Sortable").is_some());
     }
 }

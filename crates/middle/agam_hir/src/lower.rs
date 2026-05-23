@@ -15,7 +15,8 @@ use agam_ast::types::{TypeExpr, TypeExprKind};
 use agam_ast::*;
 use agam_sema::consteval::ConstEvaluator;
 use agam_sema::gpu::{
-    GpuBuiltin, GpuKernelParamAbi, resolve_gpu_builtin_expr, resolve_gpu_builtin_member,
+    GpuBuiltin, GpuKernelParamAbi, GpuKernelScalarAbi, resolve_gpu_builtin_expr,
+    resolve_gpu_builtin_member,
 };
 use agam_sema::types::{FloatSize, IntSize, Type, TypeStore, builtin_type_id_for_name};
 
@@ -104,6 +105,11 @@ impl HirLowering {
                 None
             }
         };
+        if gpu_config.is_some() {
+            for error in agam_sema::gpu::validate_gpu_kernel_function(f) {
+                self.diagnostics.push(format!("error: {error}"));
+            }
+        }
 
         let params: Vec<HirParam> = f
             .params
@@ -430,7 +436,7 @@ impl HirLowering {
                     let element_abi = self.shared_alloc_element_abi(expected_ty);
                     if element_abi == GpuKernelParamAbi::OpaquePtr {
                         self.diagnostics.push(
-                            "error: `agam.gpu.shared_alloc(...)` currently requires an annotated pointer, slice, or reference target type".into(),
+                            "error: `agam.gpu.shared_alloc(...)` currently requires an annotated pointer, slice, reference, or fixed-size array target type".into(),
                         );
                     }
                     (
@@ -469,7 +475,7 @@ impl HirLowering {
                     let element_abi = self.shared_alloc_element_abi(expected_ty);
                     if element_abi == GpuKernelParamAbi::OpaquePtr {
                         self.diagnostics.push(
-                                "error: `agam.gpu.shared_alloc(...)` currently requires an annotated pointer, slice, or reference target type".into(),
+                                "error: `agam.gpu.shared_alloc(...)` currently requires an annotated pointer, slice, reference, or fixed-size array target type".into(),
                             );
                     }
                     (
@@ -800,34 +806,64 @@ impl HirLowering {
         let Some(expected_ty) = expected_ty else {
             return GpuKernelParamAbi::OpaquePtr;
         };
-        match self.types.get(expected_ty) {
-            Type::Ref { inner, .. }
-            | Type::Ptr { inner, .. }
-            | Type::Slice(inner)
-            | Type::Array { element: inner, .. } => self
-                .scalar_abi_from_type_id(*inner)
+        self.shared_alloc_element_abi_from_type_id(expected_ty)
+    }
+
+    fn shared_alloc_element_abi_from_type_id(
+        &self,
+        ty: agam_sema::symbol::TypeId,
+    ) -> GpuKernelParamAbi {
+        match self.types.get(ty) {
+            Type::Ref { inner, .. } | Type::Ptr { inner, .. } => match self.types.get(*inner) {
+                Type::Slice(element) | Type::Array { element, .. } => self
+                    .type_abi_from_type_id(*element)
+                    .unwrap_or(GpuKernelParamAbi::OpaquePtr),
+                _ => self
+                    .type_abi_from_type_id(*inner)
+                    .unwrap_or(GpuKernelParamAbi::OpaquePtr),
+            },
+            Type::Slice(inner) | Type::Array { element: inner, .. } => self
+                .type_abi_from_type_id(*inner)
                 .unwrap_or(GpuKernelParamAbi::OpaquePtr),
             _ => GpuKernelParamAbi::OpaquePtr,
         }
     }
 
-    fn scalar_abi_from_type_id(&self, ty: agam_sema::symbol::TypeId) -> Option<GpuKernelParamAbi> {
+    fn type_abi_from_type_id(&self, ty: agam_sema::symbol::TypeId) -> Option<GpuKernelParamAbi> {
         match self.types.get(ty) {
-            Type::Bool => Some(GpuKernelParamAbi::I1),
+            Type::Bool => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I1)),
             Type::Char | Type::Int(IntSize::I32) | Type::UInt(IntSize::I32) => {
-                Some(GpuKernelParamAbi::I32)
+                Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I32))
             }
-            Type::Int(IntSize::I8) | Type::UInt(IntSize::I8) => Some(GpuKernelParamAbi::I8),
-            Type::Int(IntSize::I16) | Type::UInt(IntSize::I16) => Some(GpuKernelParamAbi::I16),
+            Type::Int(IntSize::I8) | Type::UInt(IntSize::I8) => {
+                Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I8))
+            }
+            Type::Int(IntSize::I16) | Type::UInt(IntSize::I16) => {
+                Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I16))
+            }
             Type::Int(IntSize::I64)
             | Type::UInt(IntSize::I64)
             | Type::Int(IntSize::ISize)
-            | Type::UInt(IntSize::ISize) => Some(GpuKernelParamAbi::I64),
-            Type::Int(IntSize::I128) | Type::UInt(IntSize::I128) => Some(GpuKernelParamAbi::I128),
-            Type::Int(IntSize::I256) | Type::UInt(IntSize::I256) => Some(GpuKernelParamAbi::I256),
-            Type::Int(IntSize::I512) | Type::UInt(IntSize::I512) => Some(GpuKernelParamAbi::I512),
-            Type::Float(FloatSize::F32) => Some(GpuKernelParamAbi::F32),
-            Type::Float(FloatSize::F64) => Some(GpuKernelParamAbi::F64),
+            | Type::UInt(IntSize::ISize) => {
+                Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I64))
+            }
+            Type::Int(IntSize::I128) | Type::UInt(IntSize::I128) => {
+                Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I128))
+            }
+            Type::Int(IntSize::I256) | Type::UInt(IntSize::I256) => {
+                Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I256))
+            }
+            Type::Int(IntSize::I512) | Type::UInt(IntSize::I512) => {
+                Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I512))
+            }
+            Type::Float(FloatSize::F32) => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F32)),
+            Type::Float(FloatSize::F64) => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F64)),
+            Type::Ref { inner, .. } | Type::Ptr { inner, .. } => self
+                .type_abi_from_type_id(*inner)
+                .map(GpuKernelParamAbi::pointer_to),
+            Type::Slice(inner) | Type::Array { element: inner, .. } => self
+                .type_abi_from_type_id(*inner)
+                .map(GpuKernelParamAbi::pointer_to),
             _ => None,
         }
     }
@@ -942,11 +978,20 @@ fn classify_gpu_kernel_param_abi(ty: &TypeExpr) -> GpuKernelParamAbi {
             .last()
             .and_then(|segment| GpuKernelParamAbi::scalar_from_name(&segment.name))
             .unwrap_or(GpuKernelParamAbi::OpaquePtr),
-        TypeExprKind::Reference { inner, .. }
-        | TypeExprKind::Pointer { inner, .. }
-        | TypeExprKind::Slice(inner) => classify_gpu_kernel_param_abi(inner).pointer_to(),
+        TypeExprKind::Reference { inner, .. } | TypeExprKind::Pointer { inner, .. } => {
+            classify_gpu_memory_wrapper_abi(inner)
+        }
+        TypeExprKind::Slice(inner) => classify_gpu_kernel_param_abi(inner).pointer_to(),
         TypeExprKind::Array { element, .. } => classify_gpu_kernel_param_abi(element).pointer_to(),
         _ => GpuKernelParamAbi::OpaquePtr,
+    }
+}
+
+fn classify_gpu_memory_wrapper_abi(inner: &TypeExpr) -> GpuKernelParamAbi {
+    match &inner.kind {
+        TypeExprKind::Slice(element) => classify_gpu_kernel_param_abi(element).pointer_to(),
+        TypeExprKind::Array { element, .. } => classify_gpu_kernel_param_abi(element).pointer_to(),
+        _ => classify_gpu_kernel_param_abi(inner).pointer_to(),
     }
 }
 
@@ -1223,6 +1268,76 @@ mod tests {
     }
 
     #[test]
+    fn test_gpu_validation_rejects_effect_operations() {
+        let (_, diagnostics) =
+            lower_source_with_diagnostics("@gpu\nfn kern(): perform Console.println(1)");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("effect perform/handle is not allowed")),
+            "diagnostics: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn test_gpu_validation_rejects_string_operations() {
+        let (_, diagnostics) = lower_source_with_diagnostics("@gpu\nfn kern(): let s = \"hello\"");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("string operations are not allowed")),
+            "diagnostics: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn test_gpu_validation_rejects_gpu_malloc_inside_kernel() {
+        let (_, diagnostics) = lower_source_with_diagnostics("@gpu\nfn kern(): gpu_malloc(16)");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("heap allocation is not allowed")),
+            "diagnostics: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn test_gpu_validation_rejects_direct_recursion() {
+        let (_, diagnostics) = lower_source_with_diagnostics("@gpu\nfn kern(): kern()");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("recursion (`kern`) is not allowed")),
+            "diagnostics: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn test_gpu_validation_rejects_non_scalar_return_types() {
+        let (_, diagnostics) =
+            lower_source_with_diagnostics("@gpu\nfn kern() -> *mut i32: return 0");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.contains("return type must be void or a scalar")),
+            "diagnostics: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn test_gpu_validation_allows_shared_alloc_and_indexed_access() {
+        let (_, diagnostics) = lower_source_with_diagnostics(
+            "@gpu\nfn kern(input: [f32], output: *mut f32) { let scratch: [f32; 64] = agam.gpu.shared_alloc(64); let tid: i32 = agam.gpu.thread_id_x(); scratch[tid] = input[tid]; output[tid] = scratch[tid]; }",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+    }
+
+    #[test]
     fn test_gpu_thread_id_call_uses_i32_type() {
         let hir = lower_source("@gpu\nfn kern(): let tid = agam.gpu.thread_id_x()");
         let builtins = TypeStore::new();
@@ -1322,25 +1437,101 @@ mod tests {
         let hir =
             lower_source("@gpu\nfn kern(input: [f32], output: *mut i32, scale: f32): return 0");
         let f = &hir.functions[0];
-        assert_eq!(f.params[0].gpu_abi, GpuKernelParamAbi::PtrF32);
-        assert_eq!(f.params[1].gpu_abi, GpuKernelParamAbi::PtrI32);
-        assert_eq!(f.params[2].gpu_abi, GpuKernelParamAbi::F32);
+        assert_eq!(
+            f.params[0].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::F32,
+                depth: 1,
+            }
+        );
+        assert_eq!(
+            f.params[1].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::I32,
+                depth: 1,
+            }
+        );
+        assert_eq!(
+            f.params[2].gpu_abi,
+            GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F32)
+        );
     }
 
     #[test]
     fn test_gpu_fixed_array_param_abi_tracks_buffer_syntax() {
         let hir = lower_source("@gpu\nfn kern(input: [f32; 64], output: *mut i32): return 0");
         let f = &hir.functions[0];
-        assert_eq!(f.params[0].gpu_abi, GpuKernelParamAbi::PtrF32);
-        assert_eq!(f.params[1].gpu_abi, GpuKernelParamAbi::PtrI32);
+        assert_eq!(
+            f.params[0].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::F32,
+                depth: 1,
+            }
+        );
+        assert_eq!(
+            f.params[1].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::I32,
+                depth: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn test_gpu_reference_wrapped_buffer_params_preserve_typed_pointer_abi() {
+        let hir = lower_source("@gpu\nfn kern(input: &[f32], output: &mut [i32; 64]): return 0");
+        let f = &hir.functions[0];
+        assert_eq!(
+            f.params[0].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::F32,
+                depth: 1,
+            }
+        );
+        assert_eq!(
+            f.params[1].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::I32,
+                depth: 1,
+            }
+        );
     }
 
     #[test]
     fn test_gpu_wide_integer_param_abi_tracks_256_and_512_bit_syntax() {
         let hir = lower_source("@gpu\nfn kern(a: i256, b: *mut u512): return 0");
         let f = &hir.functions[0];
-        assert_eq!(f.params[0].gpu_abi, GpuKernelParamAbi::I256);
-        assert_eq!(f.params[1].gpu_abi, GpuKernelParamAbi::PtrI512);
+        assert_eq!(
+            f.params[0].gpu_abi,
+            GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I256)
+        );
+        assert_eq!(
+            f.params[1].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::I512,
+                depth: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn test_gpu_nested_pointer_param_abi_tracks_two_pointer_layers() {
+        let hir = lower_source("@gpu\nfn kern(input: *mut *mut f32, output: &*mut i32): return 0");
+        let f = &hir.functions[0];
+        assert_eq!(
+            f.params[0].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::F32,
+                depth: 2,
+            }
+        );
+        assert_eq!(
+            f.params[1].gpu_abi,
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::I32,
+                depth: 2,
+            }
+        );
     }
 
     #[test]
@@ -1355,7 +1546,82 @@ mod tests {
                 value: Some(expr), ..
             } => match &expr.kind {
                 HirExprKind::GpuSharedAlloc { element_abi, .. } => {
-                    assert_eq!(*element_abi, GpuKernelParamAbi::F32)
+                    assert_eq!(
+                        *element_abi,
+                        GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F32)
+                    )
+                }
+                _ => panic!("expected gpu shared allocation expression"),
+            },
+            _ => panic!("expected let binding"),
+        }
+    }
+
+    #[test]
+    fn test_gpu_shared_alloc_uses_slice_element_abi() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "@gpu\nfn kern(): let scratch: [f32] = agam.gpu.shared_alloc(128)",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Let {
+                value: Some(expr), ..
+            } => match &expr.kind {
+                HirExprKind::GpuSharedAlloc { element_abi, .. } => {
+                    assert_eq!(
+                        *element_abi,
+                        GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F32)
+                    )
+                }
+                _ => panic!("expected gpu shared allocation expression"),
+            },
+            _ => panic!("expected let binding"),
+        }
+    }
+
+    #[test]
+    fn test_gpu_shared_alloc_uses_reference_wrapped_slice_element_abi() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "@gpu\nfn kern(): let scratch: &mut [f32] = agam.gpu.shared_alloc(128)",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Let {
+                value: Some(expr), ..
+            } => match &expr.kind {
+                HirExprKind::GpuSharedAlloc { element_abi, .. } => {
+                    assert_eq!(
+                        *element_abi,
+                        GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F32)
+                    )
+                }
+                _ => panic!("expected gpu shared allocation expression"),
+            },
+            _ => panic!("expected let binding"),
+        }
+    }
+
+    #[test]
+    fn test_gpu_shared_alloc_uses_pointer_element_slice_abi() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "@gpu\nfn kern(): let scratch: [*mut f32] = agam.gpu.shared_alloc(128)",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Let {
+                value: Some(expr), ..
+            } => match &expr.kind {
+                HirExprKind::GpuSharedAlloc { element_abi, .. } => {
+                    assert_eq!(
+                        *element_abi,
+                        GpuKernelParamAbi::Pointer {
+                            scalar: GpuKernelScalarAbi::F32,
+                            depth: 1,
+                        }
+                    )
                 }
                 _ => panic!("expected gpu shared allocation expression"),
             },
@@ -1375,7 +1641,10 @@ mod tests {
                 value: Some(expr), ..
             } => match &expr.kind {
                 HirExprKind::GpuSharedAlloc { element_abi, .. } => {
-                    assert_eq!(*element_abi, GpuKernelParamAbi::I32)
+                    assert_eq!(
+                        *element_abi,
+                        GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I32)
+                    )
                 }
                 _ => panic!("expected gpu shared allocation expression"),
             },
@@ -1395,7 +1664,10 @@ mod tests {
                 value: Some(expr), ..
             } => match &expr.kind {
                 HirExprKind::GpuSharedAlloc { element_abi, .. } => {
-                    assert_eq!(*element_abi, GpuKernelParamAbi::I256)
+                    assert_eq!(
+                        *element_abi,
+                        GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I256)
+                    )
                 }
                 _ => panic!("expected gpu shared allocation expression"),
             },

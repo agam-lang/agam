@@ -126,7 +126,7 @@ impl Parser {
         self.skip_newlines();
         let span_start = self.peek().span.start;
         let vis = self.parse_visibility();
-        let annotations = self.parse_annotations();
+        let annotations = self.parse_annotations()?;
 
         let kind = match self.peek_kind() {
             TokenKind::Fn | TokenKind::Async => {
@@ -151,6 +151,7 @@ impl Parser {
             }
             TokenKind::Effect => DeclKind::Effect(self.parse_effect_decl(vis)?),
             TokenKind::Handle => DeclKind::Handler(self.parse_handler_decl()?),
+            TokenKind::Constraint => DeclKind::Constraint(self.parse_constraint_decl(vis)?),
             _ => {
                 let stmt = self.parse_statement()?;
                 return Ok(Decl {
@@ -192,7 +193,7 @@ impl Parser {
         }
     }
 
-    fn parse_annotations(&mut self) -> Vec<Annotation> {
+    fn parse_annotations(&mut self) -> Result<Vec<Annotation>, ParseError> {
         let mut anns = Vec::new();
         while self.peek_kind() == TokenKind::At {
             let start = self.peek().span.start;
@@ -200,6 +201,7 @@ impl Parser {
 
             let mut name_parts = Vec::new();
             let mut end_span = start;
+            let mut args = Vec::new();
 
             while self.peek_kind() == TokenKind::Identifier {
                 let t = self.advance().clone();
@@ -213,6 +215,16 @@ impl Parser {
                 }
             }
 
+            if self.eat(TokenKind::LParen) {
+                while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                    args.push(self.parse_expression(0)?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                end_span = self.expect(TokenKind::RParen)?.span.end;
+            }
+
             if !name_parts.is_empty() {
                 let name = Ident::new(
                     name_parts.join("."),
@@ -220,13 +232,13 @@ impl Parser {
                 );
                 anns.push(Annotation {
                     name,
-                    args: vec![],
+                    args,
                     span: Span::new(self.peek().span.source_id, start, end_span),
                 });
             }
             self.skip_newlines();
         }
-        anns
+        Ok(anns)
     }
 
     fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
@@ -564,6 +576,29 @@ impl Parser {
         self.eat(TokenKind::Semicolon);
         self.skip_newlines();
         Ok((name, generics, ty))
+    }
+
+    /// Parse `constraint Name = Trait1 + Trait2 + ...`
+    fn parse_constraint_decl(&mut self, vis: Visibility) -> Result<ConstraintDecl, ParseError> {
+        let start = self.advance().span; // constraint
+        let name_tok = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(&name_tok.lexeme, name_tok.span);
+        self.expect(TokenKind::Eq)?;
+
+        let mut bounds = Vec::new();
+        bounds.push(self.parse_type_expr()?);
+        while self.eat(TokenKind::Plus) {
+            bounds.push(self.parse_type_expr()?);
+        }
+        self.eat(TokenKind::Semicolon);
+        self.skip_newlines();
+
+        Ok(ConstraintDecl {
+            name,
+            bounds,
+            visibility: vis,
+            span: Span::new(start.source_id, start.start, self.peek().span.end),
+        })
     }
 
     /// Parse `effect Name { fn op1(params) -> RetType; fn op2(...); }`
@@ -1038,9 +1073,34 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
-                let expr = self.parse_expression(0)?;
-                self.expect(TokenKind::RParen)?;
-                Ok(expr)
+                if self.peek_kind() == TokenKind::RParen {
+                    self.advance();
+                    Ok(Expr {
+                        id,
+                        span: tok.span,
+                        kind: ExprKind::TupleLiteral(Vec::new()),
+                    })
+                } else {
+                    let first = self.parse_expression(0)?;
+                    if self.eat(TokenKind::Comma) {
+                        let mut elements = vec![first];
+                        while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                            elements.push(self.parse_expression(0)?);
+                            if !self.eat(TokenKind::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(TokenKind::RParen)?;
+                        Ok(Expr {
+                            id,
+                            span: tok.span,
+                            kind: ExprKind::TupleLiteral(elements),
+                        })
+                    } else {
+                        self.expect(TokenKind::RParen)?;
+                        Ok(first)
+                    }
+                }
             }
             TokenKind::LBracket => {
                 self.advance();
@@ -1852,6 +1912,16 @@ mod tests {
     }
 
     #[test]
+    fn test_tuple_literal() {
+        let expr = parse_expr("(1, 2, 3)");
+        if let ExprKind::TupleLiteral(elems) = &expr.kind {
+            assert_eq!(elems.len(), 3);
+        } else {
+            panic!("not tuple");
+        }
+    }
+
+    #[test]
     fn test_parse_fixed_array_type() {
         let module = parse_src("fn kern(input: [f32; 64]): return 0");
         let DeclKind::Function(f) = &module.declarations[0].kind else {
@@ -1934,6 +2004,21 @@ mod tests {
         } else {
             panic!("not function");
         }
+    }
+
+    #[test]
+    fn test_parse_annotation_arguments() {
+        let module =
+            parse_src("@gpu(threads = 128, shared = 64, grid = (8, 1, 1))\nfn kern(): return 0");
+        let DeclKind::Function(f) = &module.declarations[0].kind else {
+            panic!("expected function");
+        };
+        assert_eq!(f.annotations.len(), 1);
+        assert_eq!(f.annotations[0].args.len(), 3);
+        let ExprKind::Assign { value, .. } = &f.annotations[0].args[2].kind else {
+            panic!("expected grid assignment");
+        };
+        assert!(matches!(value.kind, ExprKind::TupleLiteral(_)));
     }
 
     #[test]

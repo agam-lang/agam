@@ -806,16 +806,18 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
             kernel_name,
             grid,
             block,
+            shared_memory_bytes,
             args,
         } => {
             let arg_strs: Vec<String> = args.iter().map(|a| format!("__v{}", a.0)).collect();
             writeln!(
                 out,
-                "  /* GPU kernel launch: {}<<<__v{}, __v{}>>>({}) */",
+                "  /* GPU kernel launch: {}<<<__v{}, __v{}>>>({}, shared={}) */",
                 kernel_name,
                 grid.0,
                 block.0,
-                arg_strs.join(", ")
+                arg_strs.join(", "),
+                shared_memory_bytes
             )
             .unwrap();
             writeln!(

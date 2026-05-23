@@ -2,8 +2,10 @@
 //!
 //! Transforms the high-level HIR into basic-block-based MIR with SSA values.
 
+use std::collections::HashMap;
+
 use agam_hir::nodes::*;
-use agam_sema::gpu::{GpuBuiltin, resolve_gpu_builtin};
+use agam_sema::gpu::{GpuBuiltin, GpuKernelConfig, resolve_gpu_builtin};
 use agam_sema::symbol::TypeId;
 use agam_sema::types::TypeStore;
 
@@ -16,6 +18,7 @@ pub struct MirLowering {
     blocks: Vec<BasicBlock>,
     current_instrs: Vec<Instruction>,
     current_block: BlockId,
+    gpu_kernels: HashMap<String, GpuKernelConfig>,
     types: TypeStore,
 }
 
@@ -27,6 +30,7 @@ impl MirLowering {
             blocks: Vec::new(),
             current_instrs: Vec::new(),
             current_block: BlockId(0),
+            gpu_kernels: HashMap::new(),
             types: TypeStore::new(),
         }
     }
@@ -60,6 +64,16 @@ impl MirLowering {
 
     /// Lower an entire HIR module into MIR.
     pub fn lower_module(&mut self, hir: &HirModule) -> MirModule {
+        self.gpu_kernels = hir
+            .functions
+            .iter()
+            .filter_map(|function| {
+                function
+                    .gpu_config
+                    .clone()
+                    .map(|config| (function.name.clone(), config))
+            })
+            .collect();
         let functions = hir
             .functions
             .iter()
@@ -264,6 +278,26 @@ impl MirLowering {
                     HirExprKind::Var(name) => name.clone(),
                     _ => "__indirect_call".into(),
                 };
+                if let Some(config) = self.gpu_kernel_launch_config(callee) {
+                    let grid = self.emit(
+                        self.types.i32(),
+                        Op::ConstInt(config.grid_dim.map(|(x, _, _)| x).unwrap_or(1) as i64),
+                    );
+                    let block = self.emit(
+                        self.types.i32(),
+                        Op::ConstInt(config.threads_per_block as i64),
+                    );
+                    return self.emit(
+                        ty,
+                        Op::GpuKernelLaunch {
+                            kernel_name: callee_name,
+                            grid,
+                            block,
+                            shared_memory_bytes: config.shared_memory_bytes,
+                            args: arg_vals,
+                        },
+                    );
+                }
                 self.emit(
                     ty,
                     Op::Call {
@@ -411,6 +445,18 @@ impl MirLowering {
                 todo!("MIR lowering for structs, enums, and match expressions")
             }
         }
+    }
+}
+
+impl MirLowering {
+    fn gpu_kernel_launch_config(&self, callee: &HirExpr) -> Option<GpuKernelConfig> {
+        let callee_name = gpu_callee_name(callee)?;
+        self.gpu_kernels.get(&callee_name).cloned().or_else(|| {
+            callee_name
+                .rsplit("::")
+                .next()
+                .and_then(|name| self.gpu_kernels.get(name).cloned())
+        })
     }
 }
 
@@ -746,7 +792,9 @@ mod tests {
                 matches!(
                     &i.op,
                     Op::GpuSharedAlloc {
-                        element_abi: agam_sema::gpu::GpuKernelParamAbi::F32,
+                        element_abi: agam_sema::gpu::GpuKernelParamAbi::Scalar(
+                            agam_sema::gpu::GpuKernelScalarAbi::F32
+                        ),
                         ..
                     }
                 )
@@ -768,7 +816,9 @@ mod tests {
                 matches!(
                     &i.op,
                     Op::GpuSharedAlloc {
-                        element_abi: agam_sema::gpu::GpuKernelParamAbi::I32,
+                        element_abi: agam_sema::gpu::GpuKernelParamAbi::Scalar(
+                            agam_sema::gpu::GpuKernelScalarAbi::I32
+                        ),
                         ..
                     }
                 )
@@ -778,5 +828,69 @@ mod tests {
             has_shared_alloc,
             "expected fixed-array GPU shared allocation in MIR"
         );
+    }
+
+    #[test]
+    fn test_mir_gpu_pointer_element_shared_alloc_lowers_to_explicit_op() {
+        let mir =
+            lower_to_mir("@gpu\nfn kern(): let scratch: [*mut f32] = agam.gpu.shared_alloc(128)");
+        let f = &mir.functions[0];
+        let has_shared_alloc = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::GpuSharedAlloc {
+                        element_abi: agam_sema::gpu::GpuKernelParamAbi::Pointer {
+                            scalar: agam_sema::gpu::GpuKernelScalarAbi::F32,
+                            depth: 1,
+                        },
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(
+            has_shared_alloc,
+            "expected pointer-element GPU shared allocation in MIR"
+        );
+    }
+
+    #[test]
+    fn test_host_call_to_gpu_kernel_lowers_to_gpu_kernel_launch() {
+        let mir = lower_to_mir(
+            "@gpu(threads=128, shared=64, grid=(8, 1, 1))\nfn kern(input: [f32], output: *mut f32) { let tid = agam.gpu.thread_id_x(); output[tid] = input[tid]; }\nfn host(input: [f32], output: *mut f32): kern(input, output)",
+        );
+        let host = mir
+            .functions
+            .iter()
+            .find(|function| function.name == "host")
+            .expect("expected host function");
+        let launch = host
+            .blocks
+            .iter()
+            .flat_map(|block| block.instructions.iter())
+            .find_map(|instruction| match &instruction.op {
+                Op::GpuKernelLaunch {
+                    kernel_name,
+                    shared_memory_bytes,
+                    ..
+                } => Some((kernel_name.as_str(), *shared_memory_bytes)),
+                _ => None,
+            });
+        assert_eq!(launch, Some(("kern", 64)));
+        let has_grid = host.blocks.iter().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|instruction| matches!(instruction.op, Op::ConstInt(8)))
+        });
+        let has_block = host.blocks.iter().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|instruction| matches!(instruction.op, Op::ConstInt(128)))
+        });
+        assert!(has_grid, "expected launch grid constant in MIR");
+        assert!(has_block, "expected launch block constant in MIR");
     }
 }

@@ -882,9 +882,29 @@ fn module_uses_gpu_host_builtins(module: &MirModule) -> bool {
                 matches!(
                     &instr.op,
                     Op::Call { callee, .. } if is_gpu_host_builtin(callee)
-                )
+                ) || matches!(&instr.op, Op::GpuKernelLaunch { .. })
             })
         })
+    })
+}
+
+fn gpu_kernel_symbol(name: &str) -> String {
+    let mut symbol = String::with_capacity(12 + name.len());
+    symbol.push_str("__agam_gpu_");
+    for ch in name.chars() {
+        if ch.is_alphanumeric() {
+            symbol.push(ch);
+        } else {
+            symbol.push('_');
+        }
+    }
+    symbol
+}
+
+fn llvm_i64_type() -> LlvmType {
+    LlvmType::Int(LlvmIntType {
+        bits: 64,
+        signed: true,
     })
 }
 
@@ -2044,7 +2064,14 @@ impl LlvmEmitter {
             .get(&func.name)
             .copied()
             .unwrap_or_default();
-        let fn_attr_suffix = format_function_attrs(attrs);
+        let mut fn_attr_suffix = format_function_attrs(attrs);
+        if layout.return_ty.float_spec().is_some() || func.params.iter().any(|param| infer_llvm_type_from_type_id(param.ty).map_or(false, |t| t.float_spec().is_some())) {
+            if fn_attr_suffix.is_empty() {
+                fn_attr_suffix = " \"denormal_fpenv\"".to_string();
+            } else {
+                fn_attr_suffix.push_str(" \"denormal_fpenv\"");
+            }
+        }
         let is_main = func.name == "main" && specialization.is_none();
 
         // Emit target profile annotation
@@ -2190,7 +2217,7 @@ impl LlvmEmitter {
             Op::ConstFloat(val) => {
                 values.insert(
                     instr.result,
-                    ValueRef::new(result_ty, format!("{val}"), result_sign),
+                    ValueRef::new(result_ty, format!("f0x{:016X}", val.to_bits()), result_sign),
                 );
             }
             Op::ConstBool(val) => {
@@ -2457,24 +2484,86 @@ impl LlvmEmitter {
                 kernel_name,
                 grid,
                 block,
+                shared_memory_bytes,
                 args,
             } => {
-                // GPU kernel launches are handled by the separate GPU module.
-                // In the host module, emit a CUDA runtime API call stub.
                 let grid_ref = get_value(values, *grid)?;
                 let block_ref = get_value(values, *block)?;
+                let grid_ref = self.coerce_value(out, &grid_ref, llvm_i64_type())?;
+                let block_ref = self.coerce_value(out, &block_ref, llvm_i64_type())?;
+                let kernel_symbol = gpu_kernel_symbol(kernel_name);
+                self.register_external_decl(
+                    &kernel_symbol,
+                    &format!("declare void @{}()", kernel_symbol),
+                );
+                let kernel_ptr = format!("%tmp{}", self.fresh_temp_id());
                 writeln!(
                     out,
-                    "  ; GPU kernel launch: {}<<<{}, {}>>> ({} args)",
-                    kernel_name,
+                    "  {} = bitcast void ()* @{} to i8*",
+                    kernel_ptr, kernel_symbol
+                )
+                .unwrap();
+
+                let args_ptr = if args.is_empty() {
+                    "null".to_string()
+                } else {
+                    let args_array_ty = format!("[{} x i8*]", args.len());
+                    let args_array = format!("%tmp{}", self.fresh_temp_id());
+                    writeln!(out, "  {} = alloca {}", args_array, args_array_ty).unwrap();
+                    for (index, arg) in args.iter().enumerate() {
+                        let value = get_value(values, *arg)?;
+                        let slot = format!("%tmp{}", self.fresh_temp_id());
+                        writeln!(out, "  {} = alloca {}", slot, value.ty.ir()).unwrap();
+                        writeln!(
+                            out,
+                            "  store {} {}, {}* {}",
+                            value.ty.ir(),
+                            value.repr,
+                            value.ty.ir(),
+                            slot
+                        )
+                        .unwrap();
+                        let erased_slot = format!("%tmp{}", self.fresh_temp_id());
+                        writeln!(
+                            out,
+                            "  {} = bitcast {}* {} to i8*",
+                            erased_slot,
+                            value.ty.ir(),
+                            slot
+                        )
+                        .unwrap();
+                        let element_ptr = format!("%tmp{}", self.fresh_temp_id());
+                        writeln!(
+                            out,
+                            "  {} = getelementptr inbounds {}, {}* {}, i32 0, i32 {}",
+                            element_ptr, args_array_ty, args_array_ty, args_array, index
+                        )
+                        .unwrap();
+                        writeln!(out, "  store i8* {}, i8** {}", erased_slot, element_ptr).unwrap();
+                    }
+                    let args_ptr = format!("%tmp{}", self.fresh_temp_id());
+                    writeln!(
+                        out,
+                        "  {} = getelementptr inbounds {}, {}* {}, i32 0, i32 0",
+                        args_ptr, args_array_ty, args_array_ty, args_array
+                    )
+                    .unwrap();
+                    args_ptr
+                };
+                writeln!(
+                    out,
+                    "  {} = call noundef i32 @cudaLaunchKernel(i8* {}, i64 {}, i64 {}, i8** {}, i64 {}, i8* null)",
+                    result_name,
+                    kernel_ptr,
                     grid_ref.repr,
                     block_ref.repr,
-                    args.len()
+                    args_ptr,
+                    shared_memory_bytes
                 )
                 .unwrap();
                 values.insert(
                     instr.result,
-                    ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                    ValueRef::new(result_ty, result_name.clone(), result_sign),
                 );
             }
             Op::GpuSharedAlloc { .. } => {
@@ -3192,6 +3281,28 @@ impl LlvmEmitter {
                     value.repr.clone(),
                     infer_cast_sign(value.ty, target, value.sign),
                 ));
+            }
+            (LlvmType::OpaquePtr, LlvmType::Int(int_ty)) => {
+                writeln!(
+                    out,
+                    "  {} = ptrtoaddr {} {} to {}",
+                    temp,
+                    value.ty.ir(),
+                    value.repr,
+                    int_ty.ir()
+                )
+                .unwrap();
+            }
+            (LlvmType::Int(int_ty), LlvmType::OpaquePtr) => {
+                writeln!(
+                    out,
+                    "  {} = inttoptr {} {} to {}",
+                    temp,
+                    int_ty.ir(),
+                    value.repr,
+                    target.ir()
+                )
+                .unwrap();
             }
             _ => {
                 return Err(format!(
@@ -6307,6 +6418,18 @@ mod tests {
         assert!(llvm.contains("call noundef i32 @agam_gpu_memcpy_to_host"));
         assert!(llvm.contains("call noundef i32 @agam_gpu_free"));
         assert!(!llvm.contains("declare noundef i8* @agam_gpu_malloc("));
+    }
+
+    #[test]
+    fn test_emit_gpu_kernel_launch_from_host_call() {
+        let llvm = compile_to_llvm(
+            "@gpu(threads=128, shared=64, grid=(8, 1, 1))\nfn kern(a: i32, b: f32): return 0\nfn main() -> i32 { return kern(7, 3.0); }",
+        );
+        assert!(llvm.contains("declare void @__agam_gpu_kern()"));
+        assert!(llvm.contains("bitcast void ()* @__agam_gpu_kern to i8*"));
+        assert!(llvm.contains("call noundef i32 @cudaLaunchKernel"));
+        assert!(llvm.contains("i64 64, i8* null)"));
+        assert!(llvm.contains("[2 x i8*]"));
     }
 
     #[test]

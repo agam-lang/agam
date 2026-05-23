@@ -430,11 +430,13 @@ fn clone_op(op: &Op, value_map: &HashMap<ValueId, ValueId>) -> Op {
             kernel_name,
             grid,
             block,
+            shared_memory_bytes,
             args,
         } => Op::GpuKernelLaunch {
             kernel_name: kernel_name.clone(),
             grid: remap_value(*grid, value_map),
             block: remap_value(*block, value_map),
+            shared_memory_bytes: *shared_memory_bytes,
             args: args
                 .iter()
                 .map(|arg| remap_value(*arg, value_map))

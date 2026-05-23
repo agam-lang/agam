@@ -6,7 +6,7 @@ Use this as the default answer to "what should Agam agents build next?"
 
 1. **Phase 23: GPU and NPU Integration (Advanced)**
    - Support Rich Memory Types beyond the new fixed-size array parameter/shared-memory path
-   - Replace the current host-side kernel-launch placeholder with real CUDA launch lowering once the richer kernel argument model is in place
+   - Keep extending the richer kernel argument/memory model beyond the current typed pointer-depth and shared-memory launch path
    - Detail file: `details/23.md`
 2. **Finish Phase 15H**
    - Exercise the hosted-runner Windows/Linux SDK flow on GitHub with bundled LLVM and the new post-download archive validation

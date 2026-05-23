@@ -7,8 +7,10 @@
 
 use agam_ast::{
     Path,
-    decl::Annotation,
-    expr::{Expr, ExprKind},
+    decl::{Annotation, FunctionDecl},
+    expr::{Expr, ExprKind, FStringPart},
+    stmt::{ElseBranch, Stmt, StmtKind},
+    types::{TypeExpr, TypeExprKind},
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +41,17 @@ impl Default for GpuKernelConfig {
 /// GPU kernel ABI hint for parameter lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GpuKernelParamAbi {
+    Scalar(GpuKernelScalarAbi),
+    Pointer {
+        scalar: GpuKernelScalarAbi,
+        depth: u8,
+    },
+    #[default]
+    OpaquePtr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum GpuKernelScalarAbi {
     I1,
     I8,
     I16,
@@ -49,109 +62,84 @@ pub enum GpuKernelParamAbi {
     I512,
     F32,
     F64,
-    PtrI1,
-    PtrI8,
-    PtrI16,
-    PtrI32,
-    PtrI64,
-    PtrI128,
-    PtrI256,
-    PtrI512,
-    PtrF32,
-    PtrF64,
-    #[default]
-    OpaquePtr,
+}
+
+impl GpuKernelScalarAbi {
+    pub fn llvm_ir(self) -> &'static str {
+        match self {
+            GpuKernelScalarAbi::I1 => "i1",
+            GpuKernelScalarAbi::I8 => "i8",
+            GpuKernelScalarAbi::I16 => "i16",
+            GpuKernelScalarAbi::I32 => "i32",
+            GpuKernelScalarAbi::I64 => "i64",
+            GpuKernelScalarAbi::I128 => "i128",
+            GpuKernelScalarAbi::I256 => "i256",
+            GpuKernelScalarAbi::I512 => "i512",
+            GpuKernelScalarAbi::F32 => "float",
+            GpuKernelScalarAbi::F64 => "double",
+        }
+    }
 }
 
 impl GpuKernelParamAbi {
-    pub fn llvm_ir(self) -> &'static str {
+    pub fn llvm_ir(self) -> String {
         match self {
-            GpuKernelParamAbi::I1 => "i1",
-            GpuKernelParamAbi::I8 => "i8",
-            GpuKernelParamAbi::I16 => "i16",
-            GpuKernelParamAbi::I32 => "i32",
-            GpuKernelParamAbi::I64 => "i64",
-            GpuKernelParamAbi::I128 => "i128",
-            GpuKernelParamAbi::I256 => "i256",
-            GpuKernelParamAbi::I512 => "i512",
-            GpuKernelParamAbi::F32 => "float",
-            GpuKernelParamAbi::F64 => "double",
-            GpuKernelParamAbi::PtrI1 => "i1*",
-            GpuKernelParamAbi::PtrI8 => "i8*",
-            GpuKernelParamAbi::PtrI16 => "i16*",
-            GpuKernelParamAbi::PtrI32 => "i32*",
-            GpuKernelParamAbi::PtrI64 => "i64*",
-            GpuKernelParamAbi::PtrI128 => "i128*",
-            GpuKernelParamAbi::PtrI256 => "i256*",
-            GpuKernelParamAbi::PtrI512 => "i512*",
-            GpuKernelParamAbi::PtrF32 => "float*",
-            GpuKernelParamAbi::PtrF64 => "double*",
-            GpuKernelParamAbi::OpaquePtr => "i8*",
+            GpuKernelParamAbi::Scalar(scalar) => scalar.llvm_ir().into(),
+            GpuKernelParamAbi::Pointer { scalar, depth } => {
+                format!("{}{}", scalar.llvm_ir(), "*".repeat(depth as usize))
+            }
+            GpuKernelParamAbi::OpaquePtr => "i8*".into(),
         }
     }
 
     pub fn scalar_from_name(name: &str) -> Option<Self> {
         match name {
-            "bool" => Some(GpuKernelParamAbi::I1),
-            "i8" | "u8" => Some(GpuKernelParamAbi::I8),
-            "i16" | "u16" => Some(GpuKernelParamAbi::I16),
-            "i32" | "u32" | "char" => Some(GpuKernelParamAbi::I32),
-            "i64" | "u64" | "isize" | "usize" => Some(GpuKernelParamAbi::I64),
-            "i128" | "u128" => Some(GpuKernelParamAbi::I128),
-            "i256" | "u256" => Some(GpuKernelParamAbi::I256),
-            "i512" | "u512" => Some(GpuKernelParamAbi::I512),
-            "f32" => Some(GpuKernelParamAbi::F32),
-            "f64" => Some(GpuKernelParamAbi::F64),
+            "bool" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I1)),
+            "i8" | "u8" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I8)),
+            "i16" | "u16" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I16)),
+            "i32" | "u32" | "char" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I32)),
+            "i64" | "u64" | "isize" | "usize" => {
+                Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I64))
+            }
+            "i128" | "u128" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I128)),
+            "i256" | "u256" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I256)),
+            "i512" | "u512" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I512)),
+            "f32" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F32)),
+            "f64" => Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F64)),
             _ => None,
         }
     }
 
     pub fn pointer_to(self) -> Self {
         match self {
-            GpuKernelParamAbi::I1 => GpuKernelParamAbi::PtrI1,
-            GpuKernelParamAbi::I8 => GpuKernelParamAbi::PtrI8,
-            GpuKernelParamAbi::I16 => GpuKernelParamAbi::PtrI16,
-            GpuKernelParamAbi::I32 => GpuKernelParamAbi::PtrI32,
-            GpuKernelParamAbi::I64 => GpuKernelParamAbi::PtrI64,
-            GpuKernelParamAbi::I128 => GpuKernelParamAbi::PtrI128,
-            GpuKernelParamAbi::I256 => GpuKernelParamAbi::PtrI256,
-            GpuKernelParamAbi::I512 => GpuKernelParamAbi::PtrI512,
-            GpuKernelParamAbi::F32 => GpuKernelParamAbi::PtrF32,
-            GpuKernelParamAbi::F64 => GpuKernelParamAbi::PtrF64,
-            _ => GpuKernelParamAbi::OpaquePtr,
+            GpuKernelParamAbi::Scalar(scalar) => GpuKernelParamAbi::Pointer { scalar, depth: 1 },
+            GpuKernelParamAbi::Pointer { scalar, depth } => {
+                if depth == u8::MAX {
+                    GpuKernelParamAbi::OpaquePtr
+                } else {
+                    GpuKernelParamAbi::Pointer {
+                        scalar,
+                        depth: depth + 1,
+                    }
+                }
+            }
+            GpuKernelParamAbi::OpaquePtr => GpuKernelParamAbi::OpaquePtr,
         }
     }
 
-    pub fn pointee_llvm_ir(self) -> &'static str {
+    pub fn pointee_llvm_ir(self) -> String {
         match self {
-            GpuKernelParamAbi::I1 | GpuKernelParamAbi::PtrI1 => "i1",
-            GpuKernelParamAbi::I8 | GpuKernelParamAbi::PtrI8 => "i8",
-            GpuKernelParamAbi::I16 | GpuKernelParamAbi::PtrI16 => "i16",
-            GpuKernelParamAbi::I32 | GpuKernelParamAbi::PtrI32 => "i32",
-            GpuKernelParamAbi::I64 | GpuKernelParamAbi::PtrI64 => "i64",
-            GpuKernelParamAbi::I128 | GpuKernelParamAbi::PtrI128 => "i128",
-            GpuKernelParamAbi::I256 | GpuKernelParamAbi::PtrI256 => "i256",
-            GpuKernelParamAbi::I512 | GpuKernelParamAbi::PtrI512 => "i512",
-            GpuKernelParamAbi::F32 | GpuKernelParamAbi::PtrF32 => "float",
-            GpuKernelParamAbi::F64 | GpuKernelParamAbi::PtrF64 => "double",
-            GpuKernelParamAbi::OpaquePtr => "i8",
+            GpuKernelParamAbi::Scalar(scalar) => scalar.llvm_ir().into(),
+            GpuKernelParamAbi::Pointer { scalar, depth } => {
+                let pointee_depth = depth.saturating_sub(1);
+                format!("{}{}", scalar.llvm_ir(), "*".repeat(pointee_depth as usize))
+            }
+            GpuKernelParamAbi::OpaquePtr => "i8".into(),
         }
     }
 
-    pub fn shared_ptr_llvm_ir(self) -> &'static str {
-        match self {
-            GpuKernelParamAbi::I1 | GpuKernelParamAbi::PtrI1 => "i1 addrspace(3)*",
-            GpuKernelParamAbi::I8 | GpuKernelParamAbi::PtrI8 => "i8 addrspace(3)*",
-            GpuKernelParamAbi::I16 | GpuKernelParamAbi::PtrI16 => "i16 addrspace(3)*",
-            GpuKernelParamAbi::I32 | GpuKernelParamAbi::PtrI32 => "i32 addrspace(3)*",
-            GpuKernelParamAbi::I64 | GpuKernelParamAbi::PtrI64 => "i64 addrspace(3)*",
-            GpuKernelParamAbi::I128 | GpuKernelParamAbi::PtrI128 => "i128 addrspace(3)*",
-            GpuKernelParamAbi::I256 | GpuKernelParamAbi::PtrI256 => "i256 addrspace(3)*",
-            GpuKernelParamAbi::I512 | GpuKernelParamAbi::PtrI512 => "i512 addrspace(3)*",
-            GpuKernelParamAbi::F32 | GpuKernelParamAbi::PtrF32 => "float addrspace(3)*",
-            GpuKernelParamAbi::F64 | GpuKernelParamAbi::PtrF64 => "double addrspace(3)*",
-            GpuKernelParamAbi::OpaquePtr => "i8 addrspace(3)*",
-        }
+    pub fn shared_ptr_llvm_ir(self) -> String {
+        format!("{} addrspace(3)*", self.llvm_ir())
     }
 }
 
@@ -294,6 +282,15 @@ fn expr_name(expr: &Expr) -> Option<String> {
     }
 }
 
+#[derive(Default)]
+struct GpuKernelBodyFacts {
+    has_effects: bool,
+    has_strings: bool,
+    has_heap_alloc: bool,
+    body_calls_self: bool,
+    callees: Vec<String>,
+}
+
 /// Errors encountered during GPU kernel validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GpuKernelError {
@@ -379,36 +376,72 @@ pub fn resolve_gpu_config(
     let ann = gpu_annotations[0];
     let mut config = GpuKernelConfig::default();
 
-    // Parse annotation arguments as key=value expressions.
-    // The AST represents these as Expr nodes; we extract textual form.
     for arg in &ann.args {
-        let text = format!("{:?}", arg);
-        // Look for known parameter patterns in debug representation
-        if let Some(threads) = extract_int_param(&text, "threads") {
-            config.threads_per_block = threads;
-        } else if let Some(shared) = extract_int_param(&text, "shared") {
-            config.shared_memory_bytes = shared;
-        } else {
-            // Accept but ignore unknown args for forward compatibility
+        let Some((key, value)) = annotation_assignment(arg) else {
+            continue;
+        };
+        match key {
+            "threads" => {
+                config.threads_per_block =
+                    expr_as_u32(value).ok_or_else(|| GpuKernelError::InvalidAnnotationArg {
+                        arg: "threads".into(),
+                    })?;
+            }
+            "shared" => {
+                config.shared_memory_bytes =
+                    expr_as_u32(value).ok_or_else(|| GpuKernelError::InvalidAnnotationArg {
+                        arg: "shared".into(),
+                    })?;
+            }
+            "grid" => {
+                config.grid_dim =
+                    Some(expr_as_grid_dim(value).ok_or_else(|| {
+                        GpuKernelError::InvalidAnnotationArg { arg: "grid".into() }
+                    })?);
+            }
+            _ => {
+                // Accept but ignore unknown args for forward compatibility
+            }
         }
     }
 
     Ok(Some(config))
 }
 
-/// Extract an integer parameter from a debug-formatted expression string.
-fn extract_int_param(text: &str, key: &str) -> Option<u32> {
-    // Match patterns like `Assign { target: Var("threads"), value: IntLit(512) }`
-    if text.contains(key) {
-        // Find the integer literal value
-        if let Some(start) = text.find("IntLit(") {
-            let after = &text[start + 7..];
-            if let Some(end) = after.find(')') {
-                return after[..end].parse::<u32>().ok();
-            }
-        }
+fn annotation_assignment(arg: &Expr) -> Option<(&str, &Expr)> {
+    let ExprKind::Assign { target, value } = &arg.kind else {
+        return None;
+    };
+    match &target.kind {
+        ExprKind::Identifier(ident) => Some((ident.name.as_str(), value.as_ref())),
+        ExprKind::PathExpr(path) => path
+            .segments
+            .last()
+            .map(|segment| (segment.name.as_str(), value.as_ref())),
+        _ => None,
     }
-    None
+}
+
+fn expr_as_u32(expr: &Expr) -> Option<u32> {
+    match expr.kind {
+        ExprKind::IntLiteral(value) if value >= 0 => Some(value as u32),
+        _ => None,
+    }
+}
+
+fn expr_as_grid_dim(expr: &Expr) -> Option<(u32, u32, u32)> {
+    let values = match &expr.kind {
+        ExprKind::TupleLiteral(values) | ExprKind::ArrayLiteral(values) => values,
+        _ => return None,
+    };
+    if values.len() != 3 {
+        return None;
+    }
+    Some((
+        expr_as_u32(&values[0])?,
+        expr_as_u32(&values[1])?,
+        expr_as_u32(&values[2])?,
+    ))
 }
 
 /// Validate that a function body is compatible with GPU kernel execution.
@@ -449,6 +482,251 @@ pub fn validate_gpu_kernel_body(
     errors
 }
 
+/// Validate one `@gpu` function declaration against kernel execution rules.
+pub fn validate_gpu_kernel_function(function: &FunctionDecl) -> Vec<GpuKernelError> {
+    let mut facts = GpuKernelBodyFacts::default();
+    if let Some(body) = &function.body {
+        collect_gpu_kernel_block_facts(body, &function.name.name, &mut facts);
+    }
+
+    let mut errors = validate_gpu_kernel_body(
+        facts.has_effects,
+        facts.has_strings,
+        facts.has_heap_alloc,
+        facts.body_calls_self,
+        &function.name.name,
+        &facts.callees,
+    );
+
+    if let Some(return_ty) = &function.return_type
+        && !is_gpu_scalar_type_expr(return_ty)
+    {
+        errors.push(GpuKernelError::InvalidReturnType);
+    }
+
+    errors
+}
+
+fn collect_gpu_kernel_block_facts(
+    block: &agam_ast::expr::Block,
+    self_name: &str,
+    facts: &mut GpuKernelBodyFacts,
+) {
+    for stmt in &block.stmts {
+        collect_gpu_kernel_stmt_facts(stmt, self_name, facts);
+    }
+    if let Some(expr) = &block.expr {
+        collect_gpu_kernel_expr_facts(expr, self_name, facts);
+    }
+}
+
+fn collect_gpu_kernel_stmt_facts(stmt: &Stmt, self_name: &str, facts: &mut GpuKernelBodyFacts) {
+    match &stmt.kind {
+        StmtKind::Let { value, .. } => {
+            if let Some(value) = value {
+                collect_gpu_kernel_expr_facts(value, self_name, facts);
+            }
+        }
+        StmtKind::Const { value, .. } | StmtKind::Expression(value) | StmtKind::Throw(value) => {
+            collect_gpu_kernel_expr_facts(value, self_name, facts)
+        }
+        StmtKind::Return(value) | StmtKind::Break(value) | StmtKind::Yield(value) => {
+            if let Some(value) = value {
+                collect_gpu_kernel_expr_facts(value, self_name, facts);
+            }
+        }
+        StmtKind::While { condition, body } => {
+            collect_gpu_kernel_expr_facts(condition, self_name, facts);
+            collect_gpu_kernel_block_facts(body, self_name, facts);
+        }
+        StmtKind::Loop { body } => collect_gpu_kernel_block_facts(body, self_name, facts),
+        StmtKind::For { iterable, body, .. } => {
+            collect_gpu_kernel_expr_facts(iterable, self_name, facts);
+            collect_gpu_kernel_block_facts(body, self_name, facts);
+        }
+        StmtKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_gpu_kernel_expr_facts(condition, self_name, facts);
+            collect_gpu_kernel_block_facts(then_branch, self_name, facts);
+            if let Some(else_branch) = else_branch {
+                collect_gpu_kernel_else_branch_facts(else_branch, self_name, facts);
+            }
+        }
+        StmtKind::Match { scrutinee, arms } => {
+            collect_gpu_kernel_expr_facts(scrutinee, self_name, facts);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_gpu_kernel_expr_facts(guard, self_name, facts);
+                }
+                collect_gpu_kernel_expr_facts(&arm.body, self_name, facts);
+            }
+        }
+        StmtKind::TryCatch { body, catches } => {
+            collect_gpu_kernel_block_facts(body, self_name, facts);
+            for catch in catches {
+                collect_gpu_kernel_block_facts(&catch.body, self_name, facts);
+            }
+        }
+        StmtKind::Continue | StmtKind::Declaration(_) => {}
+    }
+}
+
+fn collect_gpu_kernel_else_branch_facts(
+    else_branch: &ElseBranch,
+    self_name: &str,
+    facts: &mut GpuKernelBodyFacts,
+) {
+    match else_branch {
+        ElseBranch::Else(block) => collect_gpu_kernel_block_facts(block, self_name, facts),
+        ElseBranch::ElseIf(stmt) => collect_gpu_kernel_stmt_facts(stmt, self_name, facts),
+    }
+}
+
+fn collect_gpu_kernel_expr_facts(expr: &Expr, self_name: &str, facts: &mut GpuKernelBodyFacts) {
+    match &expr.kind {
+        ExprKind::StringLiteral(_) => facts.has_strings = true,
+        ExprKind::FStringLiteral { parts } => {
+            facts.has_strings = true;
+            for part in parts {
+                if let FStringPart::Expr(expr) = part {
+                    collect_gpu_kernel_expr_facts(expr, self_name, facts);
+                }
+            }
+        }
+        ExprKind::ArrayLiteral(elements) | ExprKind::TupleLiteral(elements) => {
+            for element in elements {
+                collect_gpu_kernel_expr_facts(element, self_name, facts);
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_gpu_kernel_expr_facts(left, self_name, facts);
+            collect_gpu_kernel_expr_facts(right, self_name, facts);
+        }
+        ExprKind::Unary { operand, .. }
+        | ExprKind::Await(operand)
+        | ExprKind::Spawn(operand)
+        | ExprKind::Try(operand)
+        | ExprKind::Backward(operand)
+        | ExprKind::Resume(operand) => collect_gpu_kernel_expr_facts(operand, self_name, facts),
+        ExprKind::FieldAccess { object, .. } => {
+            collect_gpu_kernel_expr_facts(object, self_name, facts);
+        }
+        ExprKind::Index { object, index } => {
+            collect_gpu_kernel_expr_facts(object, self_name, facts);
+            collect_gpu_kernel_expr_facts(index, self_name, facts);
+        }
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+        } => {
+            collect_gpu_kernel_expr_facts(object, self_name, facts);
+            for arg in args {
+                collect_gpu_kernel_expr_facts(arg, self_name, facts);
+            }
+
+            if resolve_gpu_builtin_member(object, &method.name) == Some(GpuBuiltin::SharedAlloc) {
+                return;
+            }
+
+            if method.name == "gpu_malloc" {
+                facts.has_heap_alloc = true;
+            }
+        }
+        ExprKind::Call { callee, args } => {
+            if let Some(name) = expr_name(callee) {
+                if name == self_name {
+                    facts.body_calls_self = true;
+                } else {
+                    facts.callees.push(name.clone());
+                }
+
+                if name == "gpu_malloc" || name.ends_with("::gpu_malloc") {
+                    facts.has_heap_alloc = true;
+                }
+            }
+
+            collect_gpu_kernel_expr_facts(callee, self_name, facts);
+            for arg in args {
+                collect_gpu_kernel_expr_facts(arg, self_name, facts);
+            }
+        }
+        ExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_gpu_kernel_expr_facts(condition, self_name, facts);
+            collect_gpu_kernel_expr_facts(then_branch, self_name, facts);
+            if let Some(else_branch) = else_branch {
+                collect_gpu_kernel_expr_facts(else_branch, self_name, facts);
+            }
+        }
+        ExprKind::Match { scrutinee, arms } => {
+            collect_gpu_kernel_expr_facts(scrutinee, self_name, facts);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_gpu_kernel_expr_facts(guard, self_name, facts);
+                }
+                collect_gpu_kernel_expr_facts(&arm.body, self_name, facts);
+            }
+        }
+        ExprKind::Block(block) | ExprKind::BlockExpr(block) => {
+            collect_gpu_kernel_block_facts(block, self_name, facts);
+        }
+        ExprKind::Lambda { body, .. } => collect_gpu_kernel_expr_facts(body, self_name, facts),
+        ExprKind::Assign { target, value } | ExprKind::CompoundAssign { target, value, .. } => {
+            collect_gpu_kernel_expr_facts(target, self_name, facts);
+            collect_gpu_kernel_expr_facts(value, self_name, facts);
+        }
+        ExprKind::Range { start, end, .. } => {
+            if let Some(start) = start {
+                collect_gpu_kernel_expr_facts(start, self_name, facts);
+            }
+            if let Some(end) = end {
+                collect_gpu_kernel_expr_facts(end, self_name, facts);
+            }
+        }
+        ExprKind::Cast { expr, .. } => collect_gpu_kernel_expr_facts(expr, self_name, facts),
+        ExprKind::StructLiteral { fields, .. } => {
+            for field in fields {
+                collect_gpu_kernel_expr_facts(&field.value, self_name, facts);
+            }
+        }
+        ExprKind::Grad { func, .. } => collect_gpu_kernel_expr_facts(func, self_name, facts),
+        ExprKind::Perform { args, .. } => {
+            facts.has_effects = true;
+            for arg in args {
+                collect_gpu_kernel_expr_facts(arg, self_name, facts);
+            }
+        }
+        ExprKind::HandleWith { body, .. } => {
+            facts.has_effects = true;
+            collect_gpu_kernel_expr_facts(body, self_name, facts);
+        }
+        ExprKind::Identifier(_)
+        | ExprKind::PathExpr(_)
+        | ExprKind::IntLiteral(_)
+        | ExprKind::FloatLiteral(_)
+        | ExprKind::BoolLiteral(_) => {}
+    }
+}
+
+fn is_gpu_scalar_type_expr(ty: &TypeExpr) -> bool {
+    match &ty.kind {
+        TypeExprKind::Named(path) => path
+            .segments
+            .last()
+            .and_then(|segment| GpuKernelParamAbi::scalar_from_name(&segment.name))
+            .is_some(),
+        TypeExprKind::Refined { base, .. } => is_gpu_scalar_type_expr(base),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,6 +760,36 @@ mod tests {
         }
     }
 
+    fn ident_expr(name: &str) -> Expr {
+        Expr {
+            id: agam_ast::NodeId(0),
+            span: make_span(),
+            kind: ExprKind::Identifier(Ident {
+                name: name.into(),
+                span: make_span(),
+            }),
+        }
+    }
+
+    fn int_expr(value: i64) -> Expr {
+        Expr {
+            id: agam_ast::NodeId(0),
+            span: make_span(),
+            kind: ExprKind::IntLiteral(value),
+        }
+    }
+
+    fn assign_expr(name: &str, value: Expr) -> Expr {
+        Expr {
+            id: agam_ast::NodeId(0),
+            span: make_span(),
+            kind: ExprKind::Assign {
+                target: Box::new(ident_expr(name)),
+                value: Box::new(value),
+            },
+        }
+    }
+
     #[test]
     fn resolve_no_gpu_annotation() {
         let anns = vec![plain_annotation("test")];
@@ -500,6 +808,26 @@ mod tests {
         assert_eq!(config.threads_per_block, 256);
         assert_eq!(config.shared_memory_bytes, 0);
         assert_eq!(config.grid_dim, None);
+    }
+
+    #[test]
+    fn resolve_gpu_annotation_arguments() {
+        let anns = vec![gpu_annotation(vec![
+            assign_expr("threads", int_expr(128)),
+            assign_expr("shared", int_expr(64)),
+            assign_expr(
+                "grid",
+                Expr {
+                    id: agam_ast::NodeId(0),
+                    span: make_span(),
+                    kind: ExprKind::TupleLiteral(vec![int_expr(8), int_expr(1), int_expr(1)]),
+                },
+            ),
+        ])];
+        let config = resolve_gpu_config(&anns).unwrap().unwrap();
+        assert_eq!(config.threads_per_block, 128);
+        assert_eq!(config.shared_memory_bytes, 64);
+        assert_eq!(config.grid_dim, Some((8, 1, 1)));
     }
 
     #[test]
@@ -632,27 +960,44 @@ mod tests {
     fn gpu_param_abi_supports_256_and_512_bit_integer_names() {
         assert_eq!(
             GpuKernelParamAbi::scalar_from_name("i256"),
-            Some(GpuKernelParamAbi::I256)
+            Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I256))
         );
         assert_eq!(
             GpuKernelParamAbi::scalar_from_name("u256"),
-            Some(GpuKernelParamAbi::I256)
+            Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I256))
         );
         assert_eq!(
             GpuKernelParamAbi::scalar_from_name("i512"),
-            Some(GpuKernelParamAbi::I512)
+            Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I512))
         );
         assert_eq!(
             GpuKernelParamAbi::scalar_from_name("u512"),
-            Some(GpuKernelParamAbi::I512)
+            Some(GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I512))
         );
         assert_eq!(
-            GpuKernelParamAbi::I256.pointer_to(),
-            GpuKernelParamAbi::PtrI256
+            GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I256).pointer_to(),
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::I256,
+                depth: 1,
+            }
         );
         assert_eq!(
-            GpuKernelParamAbi::I512.pointer_to(),
-            GpuKernelParamAbi::PtrI512
+            GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::I512).pointer_to(),
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::I512,
+                depth: 1,
+            }
+        );
+        assert_eq!(
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::F32,
+                depth: 1,
+            }
+            .pointer_to(),
+            GpuKernelParamAbi::Pointer {
+                scalar: GpuKernelScalarAbi::F32,
+                depth: 2,
+            }
         );
     }
 }
