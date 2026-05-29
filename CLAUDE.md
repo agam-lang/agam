@@ -2,10 +2,8 @@
 
 > **This file is the single entrypoint.** Read this first. Everything you need for most tasks is here.
 > Only open `.agent/phases/details/` when you need the exact checklist for a specific phase.
-
 > **🤖 Unified Multi-AI Workflow:** Whether you are Gemini, Claude, Codex, or another AI, you are operating in a continuous, hand-off rotation. Read the existing context, respect the ongoing phase checklists, and do not invent your own workflows.
-
-> **🪨 Token Efficiency:** Follow `.agent/rules/token-efficiency.md`. Use caveman skill (full intensity) for terse output. If `graphify-out/GRAPH_REPORT.md` exists, read it before grepping raw files. Treat `graphify-out/graph.json` and `graphify-out/cache/` as generated artifacts, not durable review surfaces.
+> **🪨 Token Efficiency:** Follow `.agent/rules/token-efficiency.md`. Use caveman skill (full intensity) for terse output. Use the MCP Memory server for architectural tracking. Do not read massive files blindly; use progressive discovery.
 
 ---
 
@@ -34,7 +32,7 @@ AI, tensor, and numerical workflows are first-class language concerns — not li
 
 ## 3. Architecture
 
-```
+```text
 Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Native Binary
                                                          ↘ JIT Runtime
 ```
@@ -42,7 +40,7 @@ Source → Lexer → Parser → AST → Sema → HIR → MIR → Codegen → Nat
 ### Crate Map
 
 | Layer | Crates |
-|-------|--------|
+| --- | --- |
 | **Core** | `agam_errors`, `agam_lexer`, `agam_parser`, `agam_ast` |
 | **Middle** | `agam_sema` (resolver + type checker), `agam_hir`, `agam_mir` (with `agam_mir::opt`) |
 | **Backends** | `agam_codegen` (C/LLVM IR emit), `agam_jit` (Cranelift JIT) |
@@ -105,6 +103,7 @@ Physical layout: `crates/{core,middle,backends,runtime,tooling,experiments}/...`
 **Goal:** Keep parsed/typed/lowered state warm across edits; parallelize independent work.
 
 **Done:**
+
 - `WorkspaceSnapshot` + `WorkspaceSnapshotDiff` invalidation contract in `agam_pkg`
 - Foreground warm-state daemon loop with per-file AST/HIR/MIR caching
 - `DaemonSession` + `IncrementalPipeline` + manifest-aware cache invalidation
@@ -185,6 +184,7 @@ F6 (design principles, parallel) → F2 (type system) → F3 (object model) → 
 ## 6. Rules
 
 ### Code
+
 - Work in the **smallest responsible crate**. Avoid cross-crate churn.
 - Route failures through `agam_errors`. Preserve `SourceId`, `Span`, and debug metadata.
 - Avoid `.unwrap()` / `.expect()` in compiler passes.
@@ -192,17 +192,20 @@ F6 (design principles, parallel) → F2 (type system) → F3 (object model) → 
 - Optimization work requires **measured benchmarks**, not intuition.
 
 ### Language
+
 - Agam is **not** Python and **not** Rust. Use real `.agam` files as syntax references.
 - ML/tensor features are native compiler/runtime concerns, not wrappers.
 - New language features must strengthen simplicity, safety, performance, portability, or AI/ML usability.
 - **Design principles** from `docs/specification/design-principles.md` (dhātu naming, vibhakti roles, sandhi composition, pratyāhāra constraints) inform all API and type system decisions.
 
 ### Process
+
 - After major changes, commit locally. After a final milestone or substantial batch of changes, commit and push to GitHub.
 - If CLI, packaging, or platform support changes, update `README.md`, `docs/architecture/project-brief.md`, `info.md`, and `.agent/`.
 - Keep agent guidance in `.agent/`; root entrypoints (`CLAUDE.md`, `AGENTS.md`) are pointers, not competing sources.
 
 ### Build & Verify
+
 ```powershell
 cargo check --manifest-path Cargo.toml        # must pass
 cargo test --manifest-path Cargo.toml          # must pass
@@ -213,7 +216,7 @@ cargo fmt --manifest-path Cargo.toml -- --check  # should pass
 
 ## 7. Repo Layout
 
-```
+```text
 agam/
 ├── crates/
 │   ├── core/            # diagnostics, lexer, parser, AST
@@ -233,23 +236,13 @@ agam/
 ├── .agent/              # Agent-facing project guidance (see below)
 │   ├── phases/          # current.md, next.md, catalog.md, details/
 │   │   └── details/     # Per-phase implementation checklists
-│   ├── policy/          # Package ecosystem architecture, project overview
-│   ├── rules/           # Language guardrails, project structure rules
-│   ├── skills/          # caveman, caveman-compress, graphify, benchmark-guard, language-guard
-│   ├── include/         # Legacy shared context (now mostly in this file)
-│   └── test/            # Localized phase-work benchmark sources
-├── CLAUDE.md            # ← You are here
-├── AGENTS.md            # Universal agent entrypoint (mirrors this)
-├── Cargo.toml           # Workspace manifest
-└── README.md            # Public-facing project docs
-```
 
 ---
 
 ## 8. When To Read More
 
 | Question | Read |
-|----------|------|
+| --- | --- |
 | What exact work remains for a phase? | `.agent/phases/details/{phase}.md` |
 | What phase to build next? | `.agent/phases/next.md` |
 | Full phase history and catalog? | `.agent/phases/catalog.md` |
@@ -260,5 +253,5 @@ agam/
 | Type composition rules (sandhi table)? | `docs/specification/type-sandhi.md` |
 | Platform/SDK/LLVM toolchain details? | Run `agamc doctor` or read `README.md` |
 | Benchmark methodology? | `benchmarks/README.md` |
-| Architecture graph (if built)? | `graphify-out/GRAPH_REPORT.md` |
+| Architecture notes and deep-dives? | `.agent/wiki/` |
 | Token efficiency tools? | `.agent/rules/token-efficiency.md` |

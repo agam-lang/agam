@@ -15,7 +15,7 @@
 
 ## Architecture
 
-```
+```text
 Source → agam_lexer → agam_parser → agam_ast → agam_sema → agam_hir → agam_mir → agam_codegen/agam_jit
 ```
 
@@ -35,7 +35,7 @@ Physical layout: `crates/{core,middle,backends,runtime,tooling,experiments}/...`
 ## Repo Map
 
 | Path | Purpose |
-|------|---------|
+| --- | --- |
 | `crates/` | Layered Rust workspace grouped into `core/`, `middle/`, `backends/`, `runtime/`, `tooling/`, and `experiments/` |
 | `integrations/` | External integration packages outside the Rust workspace |
 | `fixtures/` | Smoke fixtures and generated examples moved out of the repo root |
@@ -47,25 +47,27 @@ Physical layout: `crates/{core,middle,backends,runtime,tooling,experiments}/...`
 | `.agent/phases/` | Active phase status, build order, per-phase checklists |
 | `.agent/policy/` | Package ecosystem architecture, project overview |
 | `.agent/rules/` | Language guardrails, structure rules |
-| `.agent/skills/` | `caveman`, `caveman-compress`, `graphify`, `benchmark-guard`, `language-guard` |
+| `.agent/skills/` | `caveman`, `caveman-compress`, `cargo-lens`, `spec-archiver`, `benchmark-guard`, `language-guard` |
+| `.agent/wiki/` | LLM Second Brain for architectural synthesis |
+| `.agent/evals/` | Verification templates for Evaluation-Driven Development |
 | `CLAUDE.md` | **Full self-contained briefing** (read this) |
 
 ## Active Skills
 
 | Skill | Purpose | Trigger |
-|-------|---------|---------|
+| --- | --- | --- |
 | `caveman` | ~75% output token reduction — **ALWAYS ON** | Auto-active / `/caveman` |
 | `caveman-compress` | ~46% input token reduction on context files | `/caveman:compress <file>` |
-| `graphify` | Codebase → knowledge graph for architecture nav | `/graphify [path]` |
+| `cargo-lens` | Extract compiler errors without dumping context | Auto on build failures |
+| `spec-archiver` | Safely archive completed specs | On spec completion |
 | `benchmark-guard` | Benchmark-driven validation for perf claims | Auto on optimization work |
 | `language-guard` | Prevent treating `.agam` as Python/Rust | Auto on syntax work |
 
 ## External Integrations
 
-- `claude-mem` — persistent memory layer. Use progressive disclosure before rereading old notes.
-- `graphify-out/GRAPH_REPORT.md` — cheaper than raw-file grep for architecture questions
-- `graphify-out/graph.json` and `graphify-out/cache/` — generated artifacts, not durable review surfaces
-- Codex uses `$caveman` / `$graphify` syntax (not `/`)
+- `claude-mem` / `@modelcontextprotocol/server-memory` — persistent memory layer. Use progressive disclosure before rereading old notes.
+- `.agent/wiki/` — query this directory for architecture notes rather than grepping raw files.
+- Codex uses `$caveman` syntax (not `/`)
 
 ## Deep Dives
 
