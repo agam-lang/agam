@@ -153,6 +153,23 @@ impl TypeChecker {
 
     fn check_function(&mut self, f: &FunctionDecl) {
         self.scopes.push_scope();
+
+        // Register generic type parameters (e.g. T, U) into scope so they
+        // resolve correctly when used in parameter types and the body.
+        for generic in &f.generics {
+            let _type_param_id = self.types.insert(Type::TypeParam(generic.name.name.clone()));
+            let bounds: Vec<TypeId> = generic
+                .bounds
+                .iter()
+                .map(|b| self.resolve_type_expr(b))
+                .collect();
+            let _ = self.scopes.declare(
+                generic.name.name.clone(),
+                crate::symbol::SymbolKind::TypeParam { bounds },
+                generic.name.span,
+            );
+        }
+
         for param in &f.params {
             let ty = self.resolve_type_expr(&param.ty);
             if let Some(name) = self.pattern_name(&param.pattern) {
@@ -388,17 +405,31 @@ impl TypeChecker {
                     let sym = self.scopes.get(sym_id);
                     match &sym.kind {
                         crate::symbol::SymbolKind::Variable { ty, .. } => *ty,
-                        crate::symbol::SymbolKind::Function { params, return_ty, generics, .. } => {
+                        crate::symbol::SymbolKind::Function {
+                            params,
+                            return_ty,
+                            generics,
+                            ..
+                        } => {
                             let mut subst = std::collections::HashMap::new();
                             for g in generics {
                                 subst.insert(g.clone(), self.types.fresh_var());
                             }
                             let mut inst_params = Vec::new();
                             for p in params {
-                                inst_params.push(self.engine.apply_substitution(*p, &subst, &mut self.types));
+                                inst_params.push(self.engine.apply_substitution(
+                                    *p,
+                                    &subst,
+                                    &mut self.types,
+                                ));
                             }
-                            let inst_ret = self.engine.apply_substitution(*return_ty, &subst, &mut self.types);
-                            self.types.insert(Type::Function { params: inst_params, ret: inst_ret })
+                            let inst_ret =
+                                self.engine
+                                    .apply_substitution(*return_ty, &subst, &mut self.types);
+                            self.types.insert(Type::Function {
+                                params: inst_params,
+                                ret: inst_ret,
+                            })
                         }
                         crate::symbol::SymbolKind::Constant { ty, .. } => *ty,
                         _ => self.types.fresh_var(),
@@ -414,7 +445,8 @@ impl TypeChecker {
                     if let Some(sym_id) = self.scopes.lookup(enum_name) {
                         let sym = self.scopes.get(sym_id);
                         if let crate::symbol::SymbolKind::Enum { variants, generics } = &sym.kind {
-                            if let Some(variant) = variants.iter().find(|v| v.name == *variant_name) {
+                            if let Some(variant) = variants.iter().find(|v| v.name == *variant_name)
+                            {
                                 let mut subst = std::collections::HashMap::new();
                                 let mut generic_args = Vec::new();
                                 for g in generics {
@@ -422,12 +454,15 @@ impl TypeChecker {
                                     subst.insert(g.clone(), ty_var);
                                     generic_args.push(ty_var);
                                 }
-                                
+
                                 let enum_base_ty = self.types.insert(Type::Named(sym_id));
                                 let enum_ty = if generic_args.is_empty() {
                                     enum_base_ty
                                 } else {
-                                    self.types.insert(Type::Generic { base: enum_base_ty, args: generic_args })
+                                    self.types.insert(Type::Generic {
+                                        base: enum_base_ty,
+                                        args: generic_args,
+                                    })
                                 };
 
                                 match &variant.fields {
@@ -435,11 +470,20 @@ impl TypeChecker {
                                     crate::symbol::VariantFieldKind::Tuple(field_tys) => {
                                         let mut param_tys = Vec::new();
                                         for ty in field_tys {
-                                            param_tys.push(self.engine.apply_substitution(*ty, &subst, &mut self.types));
+                                            param_tys.push(self.engine.apply_substitution(
+                                                *ty,
+                                                &subst,
+                                                &mut self.types,
+                                            ));
                                         }
-                                        return self.types.insert(Type::Function { params: param_tys, ret: enum_ty });
+                                        return self.types.insert(Type::Function {
+                                            params: param_tys,
+                                            ret: enum_ty,
+                                        });
                                     }
-                                    crate::symbol::VariantFieldKind::Struct(_) => return self.types.fresh_var(),
+                                    crate::symbol::VariantFieldKind::Struct(_) => {
+                                        return self.types.fresh_var();
+                                    }
                                 }
                             }
                         }
@@ -509,7 +553,7 @@ impl TypeChecker {
                         mutable: false,
                         inner: t,
                     }),
-                    UnaryOp::Deref => self.types.fresh_var(),
+                    UnaryOp::Deref => self.deref_result_type(t, expr.span),
                 }
             }
 
@@ -520,19 +564,22 @@ impl TypeChecker {
                 if let Some(builtin) = resolve_gpu_builtin_expr(callee) {
                     return self.infer_gpu_builtin_call(builtin, &arg_tys, expr.span);
                 }
-                
+
                 let ret_ty = self.types.fresh_var();
                 let expected_fn_ty = self.types.insert(Type::Function {
                     params: arg_tys,
                     ret: ret_ty,
                 });
-                
+
                 let context = if let ExprKind::Identifier(ident) = &callee.kind {
-                    format!("callee must be a function matching the provided arguments in call to '{}'", ident.name)
+                    format!(
+                        "callee must be a function matching the provided arguments in call to '{}'",
+                        ident.name
+                    )
                 } else {
                     "callee must be a function matching the provided arguments".to_string()
                 };
-                
+
                 self.engine.constrain(callee_ty, expected_fn_ty, context);
                 ret_ty
             }
@@ -850,8 +897,7 @@ impl TypeChecker {
                     kind: TypeExprKind::Named(base.clone()),
                     mode: te.mode,
                 });
-                let arg_ids: Vec<TypeId> =
-                    args.iter().map(|a| self.resolve_type_expr(a)).collect();
+                let arg_ids: Vec<TypeId> = args.iter().map(|a| self.resolve_type_expr(a)).collect();
                 self.types.insert(Type::Generic {
                     base: base_id,
                     args: arg_ids,
@@ -901,6 +947,20 @@ impl TypeChecker {
             | Type::Ptr { inner: element, .. } => Some(*element),
             Type::Ref { inner, .. } => self.index_element_type(*inner),
             _ => None,
+        }
+    }
+
+    fn deref_result_type(&mut self, object_ty: TypeId, span: Span) -> TypeId {
+        match self.types.get(object_ty) {
+            Type::Ptr { inner, .. } | Type::Ref { inner, .. } => *inner,
+            Type::Var(_) | Type::Any | Type::Error => self.types.fresh_var(),
+            _ => {
+                self.errors.push(TypeError {
+                    message: "dereference requires a pointer or reference operand".into(),
+                    span,
+                });
+                self.types.error()
+            }
         }
     }
 
@@ -1218,6 +1278,24 @@ mod tests {
     }
 
     #[test]
+    fn test_gpu_pointer_deref_typechecks_to_element_type() {
+        let tc = check_source("@gpu\nfn kern(input: *mut f32): let value: f32 = *input");
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_pointer_deref_rejects_non_pointer_operand() {
+        let tc = check_source("fn main(): let value = *1");
+        assert!(
+            tc.errors
+                .iter()
+                .any(|error| error.message.contains("dereference requires")),
+            "errors: {:?}",
+            tc.errors
+        );
+    }
+
+    #[test]
     fn test_gpu_reference_wrapped_buffer_access_typechecks_against_element_types() {
         let tc = check_source(
             "@gpu\nfn kern(input: &[f32], output: &mut [f32]) { let tid: i32 = agam.gpu.thread_id_x(); output[tid] = input[tid]; }",
@@ -1254,8 +1332,7 @@ mod tests {
 
     #[test]
     fn test_enum_with_tuple_variant_resolves() {
-        let tc =
-            check_source("enum Shape { Circle(f64), Rect(f64, f64) }\nfn main(): let x = 1");
+        let tc = check_source("enum Shape { Circle(f64), Rect(f64, f64) }\nfn main(): let x = 1");
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
     }
 
@@ -1270,31 +1347,28 @@ mod tests {
         // NOTE: Agam parser currently only supports struct literals via
         // dotted paths (module.Type { ... }), not bare Name { ... }.
         // This test uses colon-body to avoid the { ambiguity.
-        let tc = check_source(
-            "struct Point { x: i32, y: i32 }\nfn main(): let x = 1",
-        );
+        let tc = check_source("struct Point { x: i32, y: i32 }\nfn main(): let x = 1");
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
     }
 
     #[test]
     fn test_function_call_return_type_is_resolved() {
-        let tc = check_source("fn add(a: i32, b: i32) -> i32: return a + b\nfn main(): let x: i32 = add(1, 2)");
+        let tc = check_source(
+            "fn add(a: i32, b: i32) -> i32: return a + b\nfn main(): let x: i32 = add(1, 2)",
+        );
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
     }
 
     #[test]
     fn test_match_with_wildcard_is_exhaustive() {
-        let tc = check_source(
-            "fn main():\n    let c = 1\n    match c:\n        _ => 0",
-        );
+        let tc = check_source("fn main():\n    let c = 1\n    match c:\n        _ => 0");
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
     }
 
     #[test]
     fn test_trait_method_body_is_type_checked() {
-        let tc = check_source(
-            "trait Greet { fn hello(name: String) -> String }\nfn main(): let x = 1",
-        );
+        let tc =
+            check_source("trait Greet { fn hello(name: String) -> String }\nfn main(): let x = 1");
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
     }
 

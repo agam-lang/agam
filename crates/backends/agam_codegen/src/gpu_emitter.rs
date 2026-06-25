@@ -823,11 +823,64 @@ fn emit_kernel_instruction(
         Op::GetField { .. } | Op::Phi(_) | Op::Cast { .. } => {
             write!(out, "  ; unhandled GPU op: {:?}\n", instr.op).unwrap();
         }
-        Op::EnumConstruct { .. } | Op::EnumTag(_) | Op::EnumPayload { .. } => {
+        Op::EnumConstruct { tag, payload } => {
+            let ir_ty = kernel_value_type(layout, instr.result);
             write!(
                 out,
-                "  ; unsupported enum MIR op in GPU emitter: {:?}\n",
-                instr.op
+                "  %v{}_tag = insertvalue {} undef, i32 {}, 0\n",
+                id, ir_ty, tag
+            )
+            .unwrap();
+            let mut curr_val = format!("%v{}_tag", id);
+
+            if !payload.is_empty() {
+                for (i, p_val) in payload.iter().enumerate() {
+                    let p_ty = kernel_value_type(layout, *p_val);
+                    let next_val = if i == payload.len() - 1 {
+                        format!("%v{}", id)
+                    } else {
+                        format!("%v{}_p{}", id, i)
+                    };
+                    write!(
+                        out,
+                        "  {} = insertvalue {} {}, {} %v{}, {}\n",
+                        next_val,
+                        ir_ty,
+                        curr_val,
+                        p_ty,
+                        p_val.0,
+                        i + 1
+                    )
+                    .unwrap();
+                    curr_val = next_val;
+                }
+            } else {
+                write!(
+                    out,
+                    "  %v{} = bitcast {} {} to {}\n",
+                    id, ir_ty, curr_val, ir_ty
+                )
+                .unwrap();
+            }
+        }
+        Op::EnumTag(value) => {
+            let val_ty = kernel_value_type(layout, *value);
+            write!(
+                out,
+                "  %v{} = extractvalue {} %v{}, 0\n",
+                id, val_ty, value.0
+            )
+            .unwrap();
+        }
+        Op::EnumPayload { value, field_index } => {
+            let val_ty = kernel_value_type(layout, *value);
+            write!(
+                out,
+                "  %v{} = extractvalue {} %v{}, {}\n",
+                id,
+                val_ty,
+                value.0,
+                field_index + 1
             )
             .unwrap();
         }
@@ -1147,12 +1200,17 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_gpu_module(funcs: Vec<MirFunction>) -> MirModule {
-        MirModule { functions: funcs }
+        MirModule {
+            functions: funcs,
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
+        }
     }
 
     fn make_gpu_function(name: &str, threads: u32) -> MirFunction {
         MirFunction {
             name: name.into(),
+            generics: vec![],
             params: vec![],
             return_ty: agam_sema::symbol::TypeId(0),
             blocks: vec![BasicBlock {
@@ -1195,6 +1253,7 @@ mod tests {
         }
         MirFunction {
             name: name.into(),
+            generics: vec![],
             params: vec![],
             return_ty: agam_sema::symbol::TypeId(0),
             blocks: vec![BasicBlock {
@@ -1266,6 +1325,7 @@ mod tests {
         let module = MirModule {
             functions: vec![MirFunction {
                 name: "main".into(),
+                generics: vec![],
                 params: vec![],
                 return_ty: agam_sema::symbol::TypeId(0),
                 blocks: vec![],
@@ -1273,6 +1333,8 @@ mod tests {
                 target: TargetProfile::Default,
                 gpu_config: None,
             }],
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
         };
         assert!(emit_gpu_module(&module).is_none());
     }
@@ -1449,6 +1511,18 @@ mod tests {
         assert!(ir.contains("store float %v"));
         assert!(!ir.contains("unhandled GPU op: GetIndex"));
         assert!(!ir.contains("unhandled GPU op: StoreIndex"));
+    }
+
+    #[test]
+    fn lowers_gpu_pointer_deref_to_typed_zero_offset_load() {
+        let ir = emit_gpu_ir_from_source(
+            "@gpu\nfn kern(input: *mut f32, output: *mut f32) { let value: f32 = *input; output[0] = value; }",
+        );
+        assert!(ir.contains("define ptx_kernel void @__agam_gpu_kern(float* %p0, float* %p1)"));
+        assert!(ir.contains("getelementptr inbounds float, float*"));
+        assert!(ir.contains("load float, float* %v"));
+        assert!(!ir.contains("unhandled GPU op: GetIndex"));
+        assert!(!ir.contains("ERROR: cannot index non-pointer GPU value"));
     }
 
     #[test]

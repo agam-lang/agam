@@ -75,12 +75,70 @@ impl HirLowering {
 
     /// Lower a parsed AST module into HIR.
     pub fn lower_module(&mut self, module: &Module) -> HirModule {
+        let enum_layouts = Self::collect_enum_layouts(module);
+        let struct_layouts = Self::collect_struct_layouts(module);
         let functions = module
             .declarations
             .iter()
             .filter_map(|decl| self.lower_decl(decl))
             .collect();
-        HirModule { functions }
+        HirModule {
+            functions,
+            enum_layouts,
+            struct_layouts,
+        }
+    }
+
+    fn collect_enum_layouts(module: &Module) -> HashMap<String, HirEnumLayout> {
+        module
+            .declarations
+            .iter()
+            .filter_map(|decl| {
+                let DeclKind::Enum(enum_decl) = &decl.kind else {
+                    return None;
+                };
+                let variants = enum_decl
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(tag, variant)| HirEnumVariantLayout {
+                        name: variant.name.name.clone(),
+                        tag: tag as u32,
+                        has_payload: match &variant.fields {
+                            VariantFields::Unit => false,
+                            VariantFields::Tuple(fields) => !fields.is_empty(),
+                            VariantFields::Struct(fields) => !fields.is_empty(),
+                        },
+                    })
+                    .collect();
+                let layout = HirEnumLayout {
+                    name: enum_decl.name.name.clone(),
+                    variants,
+                };
+                Some((layout.name.clone(), layout))
+            })
+            .collect()
+    }
+
+    fn collect_struct_layouts(module: &Module) -> HashMap<String, HirStructLayout> {
+        module
+            .declarations
+            .iter()
+            .filter_map(|decl| {
+                let DeclKind::Struct(struct_decl) = &decl.kind else {
+                    return None;
+                };
+                let layout = HirStructLayout {
+                    name: struct_decl.name.name.clone(),
+                    fields: struct_decl
+                        .fields
+                        .iter()
+                        .map(|field| field.name.name.clone())
+                        .collect(),
+                };
+                Some((layout.name.clone(), layout))
+            })
+            .collect()
     }
 
     fn lower_decl(&mut self, decl: &Decl) -> Option<HirFunction> {
@@ -898,6 +956,10 @@ impl HirLowering {
     ) -> agam_sema::symbol::TypeId {
         match op {
             HirUnaryOp::Not => self.types.bool(),
+            HirUnaryOp::Deref => match self.types.get(operand.ty) {
+                Type::Ptr { inner, .. } | Type::Ref { inner, .. } => *inner,
+                _ => operand.ty,
+            },
             _ => operand.ty,
         }
     }
@@ -1209,6 +1271,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_lower_module_collects_nominal_layouts() {
+        let hir = lower_source(
+            "struct Point { x: i32, y: i32 }\nenum Color { Red, Green(i32), Rgb { r: i32, g: i32, b: i32 } }\nfn main(): return 0",
+        );
+
+        let point = hir
+            .struct_layouts
+            .get("Point")
+            .expect("expected Point layout");
+        assert_eq!(point.fields, vec!["x", "y"]);
+
+        let color = hir
+            .enum_layouts
+            .get("Color")
+            .expect("expected Color layout");
+        assert_eq!(color.variants.len(), 3);
+        assert_eq!(color.variants[0].name, "Red");
+        assert_eq!(color.variants[0].tag, 0);
+        assert!(!color.variants[0].has_payload);
+        assert_eq!(color.variants[1].name, "Green");
+        assert_eq!(color.variants[1].tag, 1);
+        assert!(color.variants[1].has_payload);
+        assert_eq!(color.variants[2].name, "Rgb");
+        assert_eq!(color.variants[2].tag, 2);
+        assert!(color.variants[2].has_payload);
+    }
+
     fn lower_source_with_diagnostics(source: &str) -> (HirModule, Vec<String>) {
         let source_id = SourceId(0);
         let mut lexer = Lexer::new(source, source_id);
@@ -1455,6 +1545,19 @@ mod tests {
             f.params[2].gpu_abi,
             GpuKernelParamAbi::Scalar(GpuKernelScalarAbi::F32)
         );
+    }
+
+    #[test]
+    fn test_gpu_pointer_deref_uses_pointee_type() {
+        let hir = lower_source("@gpu\nfn kern(input: *mut f32): let value: f32 = *input");
+        let builtins = TypeStore::new();
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Let {
+                value: Some(expr), ..
+            } => assert_eq!(expr.ty, builtins.f32()),
+            _ => panic!("expected let binding"),
+        }
     }
 
     #[test]

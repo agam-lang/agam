@@ -91,6 +91,15 @@ struct FunctionLayout {
     return_ty: JitType,
     value_types: HashMap<ValueId, JitType>,
     local_types: HashMap<String, JitType>,
+    enum_payload_slots: HashMap<ValueId, Vec<EnumPayloadSlot>>,
+    local_enum_payload_slots: HashMap<String, Vec<EnumPayloadSlot>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EnumPayloadSlot {
+    offset_bits: u16,
+    width_bits: u16,
+    ty: JitType,
 }
 
 #[derive(Default)]
@@ -663,6 +672,8 @@ const OPTIMIZED_CALL_CACHE_MIN_REPEATS: u16 = 2;
 const MAX_PENDING_CALL_CACHE_CANDIDATES: usize = 8;
 const MAX_PROFILED_CALL_CACHE_KEYS: usize = 64;
 const MAX_PROFILED_SCALAR_VALUES: usize = 16;
+const ENUM_PACK_BITS: u16 = 64;
+const ENUM_TAG_BITS: u16 = 32;
 
 pub fn run_main(module: &MirModule, args: &[String]) -> Result<i32, String> {
     run_main_with_options(module, args, JitOptions::default())
@@ -1127,14 +1138,34 @@ impl AgamJit {
             Op::InlineAsm { .. } => {
                 Err("Inline assembly is not supported by the Cranelift JIT slice".into())
             }
-            Op::EnumConstruct { .. } => {
-                Err("enum construction is not yet supported by the Cranelift JIT slice".into())
+            Op::EnumConstruct { tag, payload } => emit_enum_construct(
+                builder,
+                layout,
+                values,
+                instr.result,
+                *tag,
+                payload,
+                mem_flags,
+                pointer_type,
+            ),
+            Op::EnumTag(value) => {
+                let packed = enum_value_as_pack(
+                    builder,
+                    lookup_value(values, *value)?,
+                    value_type(layout, *value),
+                    pointer_type,
+                )?;
+                Ok(builder.ins().ireduce(types::I32, packed))
             }
-            Op::EnumTag(_) => {
-                Err("enum tag extraction is not yet supported by the Cranelift JIT slice".into())
-            }
-            Op::EnumPayload { .. } => Err(
-                "enum payload extraction is not yet supported by the Cranelift JIT slice".into(),
+            Op::EnumPayload { value, field_index } => emit_enum_payload(
+                builder,
+                layout,
+                values,
+                instr.result,
+                *value,
+                *field_index,
+                mem_flags,
+                pointer_type,
             ),
         }
     }
@@ -1222,11 +1253,90 @@ impl AgamJit {
                     predecessor_totals,
                 );
             }
-            Terminator::Switch { .. } => {
-                return Err(
-                    "MIR switch terminators are not yet supported by the Cranelift JIT slice"
-                        .into(),
-                );
+            Terminator::Switch {
+                discriminant,
+                cases,
+                default,
+            } => {
+                let discriminant_id = *discriminant;
+                let source_ty = value_type(layout, discriminant_id);
+                let compare_ty = if matches!(source_ty, JitType::Int { .. } | JitType::Bool) {
+                    source_ty
+                } else {
+                    JitType::Int {
+                        bits: 64,
+                        signed: true,
+                    }
+                };
+                let discriminant = self.coerce_value(
+                    builder,
+                    lookup_value(values, discriminant_id)?,
+                    source_ty,
+                    compare_ty,
+                    mem_flags,
+                )?;
+                let default_block = *blocks
+                    .get(default)
+                    .ok_or_else(|| format!("missing JIT switch default target {}", default.0))?;
+
+                if cases.is_empty() {
+                    builder.ins().jump(default_block, &[]);
+                    note_predecessor(
+                        builder,
+                        *default,
+                        default_block,
+                        seen_predecessors,
+                        predecessor_totals,
+                    );
+                    return Ok(());
+                }
+
+                for (index, (case_value, case_block_id)) in cases.iter().enumerate() {
+                    let case_block = *blocks.get(case_block_id).ok_or_else(|| {
+                        format!("missing JIT switch case target {}", case_block_id.0)
+                    })?;
+                    let case_constant = builder.ins().iconst(
+                        compare_ty.clif_type(self.module.target_config().pointer_type()),
+                        *case_value,
+                    );
+                    let matches = builder
+                        .ins()
+                        .icmp(IntCC::Equal, discriminant, case_constant);
+                    let is_last = index + 1 == cases.len();
+                    if is_last {
+                        builder
+                            .ins()
+                            .brif(matches, case_block, &[], default_block, &[]);
+                        note_predecessor(
+                            builder,
+                            *case_block_id,
+                            case_block,
+                            seen_predecessors,
+                            predecessor_totals,
+                        );
+                        note_predecessor(
+                            builder,
+                            *default,
+                            default_block,
+                            seen_predecessors,
+                            predecessor_totals,
+                        );
+                    } else {
+                        let next_case_block = builder.create_block();
+                        builder
+                            .ins()
+                            .brif(matches, case_block, &[], next_case_block, &[]);
+                        note_predecessor(
+                            builder,
+                            *case_block_id,
+                            case_block,
+                            seen_predecessors,
+                            predecessor_totals,
+                        );
+                        builder.seal_block(next_case_block);
+                        builder.switch_to_block(next_case_block);
+                    }
+                }
             }
             Terminator::Unreachable => {
                 builder
@@ -2157,6 +2267,8 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
         }),
         value_types: HashMap::new(),
         local_types: HashMap::new(),
+        enum_payload_slots: HashMap::new(),
+        local_enum_payload_slots: HashMap::new(),
     };
 
     for (index, param) in func.params.iter().enumerate() {
@@ -2178,7 +2290,12 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                 Op::ConstBool(_) => JitType::Bool,
                 Op::ConstString(_) => JitType::Str,
                 Op::Unit => JitType::Unit,
-                Op::Copy(value) => value_type(&layout, *value),
+                Op::Copy(value) => {
+                    if let Some(slots) = layout.enum_payload_slots.get(value).cloned() {
+                        layout.enum_payload_slots.insert(instr.result, slots);
+                    }
+                    value_type(&layout, *value)
+                }
                 Op::BinOp { op, left, right } => {
                     infer_binop_type(*op, value_type(&layout, *left), value_type(&layout, *right))
                 }
@@ -2195,22 +2312,35 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                         })
                     }
                 }
-                Op::LoadLocal(name) => layout
-                    .local_types
-                    .get(name)
-                    .copied()
-                    .or_else(|| infer_jit_type_from_type_id(instr.ty))
-                    .unwrap_or(JitType::Int {
-                        bits: 32,
-                        signed: true,
-                    }),
+                Op::LoadLocal(name) => {
+                    if let Some(slots) = layout.local_enum_payload_slots.get(name).cloned() {
+                        layout.enum_payload_slots.insert(instr.result, slots);
+                        enum_pack_type()
+                    } else {
+                        layout
+                            .local_types
+                            .get(name)
+                            .copied()
+                            .or_else(|| infer_jit_type_from_type_id(instr.ty))
+                            .unwrap_or(JitType::Int {
+                                bits: 32,
+                                signed: true,
+                            })
+                    }
+                }
                 Op::StoreLocal { name, value } => {
-                    let ty = layout
-                        .local_types
-                        .get(name)
-                        .copied()
-                        .or_else(|| infer_jit_type_from_type_id(instr.ty))
-                        .unwrap_or_else(|| value_type(&layout, *value));
+                    let ty = if let Some(slots) = layout.enum_payload_slots.get(value).cloned() {
+                        layout.local_enum_payload_slots.insert(name.clone(), slots);
+                        enum_pack_type()
+                    } else {
+                        layout.local_enum_payload_slots.remove(name);
+                        layout
+                            .local_types
+                            .get(name)
+                            .copied()
+                            .or_else(|| infer_jit_type_from_type_id(instr.ty))
+                            .unwrap_or_else(|| value_type(&layout, *value))
+                    };
                     layout.local_types.insert(name.clone(), ty);
                     ty
                 }
@@ -2226,25 +2356,46 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                 Op::GetField { object, .. } | Op::GetIndex { object, .. } => {
                     value_type(&layout, *object)
                 }
-                Op::Phi(entries) => entries
-                    .iter()
-                    .map(|(_, value)| value_type(&layout, *value))
-                    .reduce(merge_type)
+                Op::Phi(entries) => {
+                    if let Some(slots) = merged_enum_payload_slots(&layout, entries) {
+                        layout.enum_payload_slots.insert(instr.result, slots);
+                    }
+                    entries
+                        .iter()
+                        .map(|(_, value)| value_type(&layout, *value))
+                        .reduce(merge_type)
+                        .unwrap_or(JitType::Int {
+                            bits: 32,
+                            signed: true,
+                        })
+                }
+                Op::Cast { target_ty, value } => infer_jit_type_from_type_id(*target_ty)
+                    .unwrap_or_else(|| value_type(&layout, *value)),
+                Op::EnumConstruct { payload, .. } => {
+                    let slots = enum_payload_slots_from_values(&layout, payload);
+                    layout.enum_payload_slots.insert(instr.result, slots);
+                    enum_pack_type()
+                }
+                Op::EnumTag(_) => JitType::Int {
+                    bits: 32,
+                    signed: true,
+                },
+                Op::EnumPayload { value, field_index } => layout
+                    .enum_payload_slots
+                    .get(value)
+                    .and_then(|slots| slots.get(*field_index as usize).copied())
+                    .map(|slot| slot.ty)
+                    .or_else(|| infer_jit_type_from_type_id(instr.ty))
                     .unwrap_or(JitType::Int {
                         bits: 32,
                         signed: true,
                     }),
-                Op::Cast { target_ty, value } => infer_jit_type_from_type_id(*target_ty)
-                    .unwrap_or_else(|| value_type(&layout, *value)),
                 Op::EffectPerform { .. }
                 | Op::HandleWith { .. }
                 | Op::GpuKernelLaunch { .. }
                 | Op::GpuSharedAlloc { .. }
                 | Op::GpuIntrinsic { .. }
-                | Op::InlineAsm { .. }
-                | Op::EnumConstruct { .. }
-                | Op::EnumTag(_)
-                | Op::EnumPayload { .. } => JitType::Int {
+                | Op::InlineAsm { .. } => JitType::Int {
                     bits: 32,
                     signed: true,
                 },
@@ -2371,6 +2522,65 @@ fn merge_type(left: JitType, right: JitType) -> JitType {
         }
     } else {
         left
+    }
+}
+
+fn enum_pack_type() -> JitType {
+    JitType::Int {
+        bits: ENUM_PACK_BITS,
+        signed: false,
+    }
+}
+
+fn enum_payload_slots_from_values(
+    layout: &FunctionLayout,
+    payload: &[ValueId],
+) -> Vec<EnumPayloadSlot> {
+    let mut offset_bits = ENUM_TAG_BITS;
+    payload
+        .iter()
+        .map(|value| {
+            let ty = value_type(layout, *value);
+            let width_bits = enum_payload_slot_width(ty);
+            let slot = EnumPayloadSlot {
+                offset_bits,
+                width_bits,
+                ty,
+            };
+            offset_bits = offset_bits.saturating_add(width_bits);
+            slot
+        })
+        .collect()
+}
+
+fn merged_enum_payload_slots(
+    layout: &FunctionLayout,
+    entries: &[(BlockId, ValueId)],
+) -> Option<Vec<EnumPayloadSlot>> {
+    let mut iter = entries
+        .iter()
+        .filter_map(|(_, value)| layout.enum_payload_slots.get(value));
+    let first = iter.next()?.clone();
+    if iter.all(|slots| slots == &first) {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+fn enum_payload_slot_width(ty: JitType) -> u16 {
+    let bits = match ty {
+        JitType::Int { bits, .. } => bits,
+        JitType::Bool => 8,
+        JitType::Float32 => 32,
+        JitType::Float64 => 64,
+        JitType::Str | JitType::OpaquePtr => 64,
+        JitType::Unit => 0,
+    };
+    if bits == 0 {
+        0
+    } else {
+        bits.clamp(32, ENUM_PACK_BITS)
     }
 }
 
@@ -2554,6 +2764,232 @@ fn emit_unop(
         }
         MirUnOp::BitNot => builder.ins().bnot(operand),
     })
+}
+
+fn emit_enum_construct(
+    builder: &mut FunctionBuilder<'_>,
+    layout: &FunctionLayout,
+    values: &HashMap<ValueId, Value>,
+    result: ValueId,
+    tag: u32,
+    payload: &[ValueId],
+    mem_flags: cranelift_codegen::ir::MemFlags,
+    pointer_type: ClifType,
+) -> Result<Value, String> {
+    let mut packed = builder.ins().iconst(types::I64, i64::from(tag));
+    let fallback_slots = enum_payload_slots_from_values(layout, payload);
+    let slots = layout
+        .enum_payload_slots
+        .get(&result)
+        .map(Vec::as_slice)
+        .unwrap_or(fallback_slots.as_slice());
+
+    for (index, payload_id) in payload.iter().enumerate() {
+        let Some(slot) = slots.get(index).copied() else {
+            continue;
+        };
+        if slot.width_bits == 0 {
+            continue;
+        }
+        if slot.offset_bits.saturating_add(slot.width_bits) > ENUM_PACK_BITS {
+            return Err(format!(
+                "enum payload field {index} exceeds the current 64-bit JIT enum representation"
+            ));
+        }
+
+        let payload_value = lookup_value(values, *payload_id)?;
+        let payload_ty = value_type(layout, *payload_id);
+        let bits = enum_payload_value_to_bits(
+            builder,
+            payload_value,
+            payload_ty,
+            slot.width_bits,
+            mem_flags,
+            pointer_type,
+        )?;
+        let shifted = if slot.offset_bits == 0 {
+            bits
+        } else {
+            builder.ins().ishl_imm(bits, i64::from(slot.offset_bits))
+        };
+        packed = builder.ins().bor(packed, shifted);
+    }
+
+    Ok(packed)
+}
+
+fn emit_enum_payload(
+    builder: &mut FunctionBuilder<'_>,
+    layout: &FunctionLayout,
+    values: &HashMap<ValueId, Value>,
+    result: ValueId,
+    value: ValueId,
+    field_index: u32,
+    mem_flags: cranelift_codegen::ir::MemFlags,
+    pointer_type: ClifType,
+) -> Result<Value, String> {
+    let result_ty = value_type(layout, result);
+    let fallback_slot = EnumPayloadSlot {
+        offset_bits: ENUM_TAG_BITS + (field_index as u16).saturating_mul(32),
+        width_bits: enum_payload_slot_width(result_ty),
+        ty: result_ty,
+    };
+    let slot = layout
+        .enum_payload_slots
+        .get(&value)
+        .and_then(|slots| slots.get(field_index as usize).copied())
+        .unwrap_or(fallback_slot);
+    if slot.width_bits == 0 {
+        return Ok(default_value(builder, result_ty, pointer_type));
+    }
+    if slot.offset_bits.saturating_add(slot.width_bits) > ENUM_PACK_BITS {
+        return Err(format!(
+            "enum payload field {field_index} exceeds the current 64-bit JIT enum representation"
+        ));
+    }
+
+    let packed = enum_value_as_pack(
+        builder,
+        lookup_value(values, value)?,
+        value_type(layout, value),
+        pointer_type,
+    )?;
+    let shifted = if slot.offset_bits == 0 {
+        packed
+    } else {
+        builder.ins().ushr_imm(packed, i64::from(slot.offset_bits))
+    };
+    let bits = mask_low_bits(builder, shifted, slot.width_bits);
+    enum_bits_to_payload_value(builder, bits, result_ty, mem_flags, pointer_type)
+}
+
+fn enum_payload_value_to_bits(
+    builder: &mut FunctionBuilder<'_>,
+    value: Value,
+    ty: JitType,
+    width_bits: u16,
+    mem_flags: cranelift_codegen::ir::MemFlags,
+    pointer_type: ClifType,
+) -> Result<Value, String> {
+    let raw = match ty {
+        JitType::Float32 => {
+            let bits = builder.ins().bitcast(types::I32, mem_flags, value);
+            builder.ins().uextend(types::I64, bits)
+        }
+        JitType::Float64 => {
+            let bits = builder.ins().bitcast(types::I64, mem_flags, value);
+            bits
+        }
+        JitType::Str | JitType::OpaquePtr => {
+            let pointer_bits = pointer_type.bits() as u16;
+            normalize_int(
+                builder,
+                value,
+                JitType::Int {
+                    bits: pointer_bits,
+                    signed: false,
+                },
+                ENUM_PACK_BITS,
+                false,
+            )
+        }
+        JitType::Unit => builder.ins().iconst(types::I64, 0),
+        JitType::Bool | JitType::Int { .. } => {
+            normalize_int(builder, value, ty, ENUM_PACK_BITS, false)
+        }
+    };
+    Ok(mask_low_bits(builder, raw, width_bits))
+}
+
+fn enum_bits_to_payload_value(
+    builder: &mut FunctionBuilder<'_>,
+    bits: Value,
+    ty: JitType,
+    mem_flags: cranelift_codegen::ir::MemFlags,
+    pointer_type: ClifType,
+) -> Result<Value, String> {
+    Ok(match ty {
+        JitType::Float32 => {
+            let raw = builder.ins().ireduce(types::I32, bits);
+            builder.ins().bitcast(types::F32, mem_flags, raw)
+        }
+        JitType::Float64 => {
+            let raw = builder.ins().ireduce(types::I64, bits);
+            builder.ins().bitcast(types::F64, mem_flags, raw)
+        }
+        JitType::Str | JitType::OpaquePtr => {
+            let pointer_bits = pointer_type.bits() as u16;
+            normalize_int(
+                builder,
+                bits,
+                JitType::Int {
+                    bits: ENUM_PACK_BITS,
+                    signed: false,
+                },
+                pointer_bits,
+                false,
+            )
+        }
+        JitType::Unit => default_value(builder, ty, pointer_type),
+        JitType::Bool | JitType::Int { .. } => {
+            let (target_bits, signed) = ty.int_spec().unwrap_or((32, true));
+            normalize_int(
+                builder,
+                bits,
+                JitType::Int {
+                    bits: ENUM_PACK_BITS,
+                    signed: false,
+                },
+                target_bits,
+                signed,
+            )
+        }
+    })
+}
+
+fn enum_value_as_pack(
+    builder: &mut FunctionBuilder<'_>,
+    value: Value,
+    ty: JitType,
+    pointer_type: ClifType,
+) -> Result<Value, String> {
+    Ok(match ty {
+        JitType::Int {
+            bits: ENUM_PACK_BITS,
+            ..
+        } => value,
+        JitType::Bool | JitType::Unit | JitType::Int { .. } => {
+            normalize_int(builder, value, ty, ENUM_PACK_BITS, false)
+        }
+        JitType::Str | JitType::OpaquePtr => {
+            let pointer_bits = pointer_type.bits() as u16;
+            normalize_int(
+                builder,
+                value,
+                JitType::Int {
+                    bits: pointer_bits,
+                    signed: false,
+                },
+                ENUM_PACK_BITS,
+                false,
+            )
+        }
+        JitType::Float32 | JitType::Float64 => {
+            return Err("floating-point values cannot be decoded as JIT enum packs".into());
+        }
+    })
+}
+
+fn mask_low_bits(builder: &mut FunctionBuilder<'_>, value: Value, width_bits: u16) -> Value {
+    if width_bits >= ENUM_PACK_BITS {
+        value
+    } else if width_bits == 0 {
+        builder.ins().iconst(types::I64, 0)
+    } else {
+        let shift = i64::from(ENUM_PACK_BITS - width_bits);
+        let shifted = builder.ins().ishl_imm(value, shift);
+        builder.ins().ushr_imm(shifted, shift)
+    }
 }
 
 fn emit_cast(
@@ -3390,6 +3826,7 @@ extern "C" fn rt_specialization_enabled(slot: i32, specialization: i32) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agam_sema::symbol::TypeId;
     use std::collections::HashMap;
 
     fn specialization_registry(
@@ -3482,9 +3919,162 @@ fn main() -> i32:
         mir
     }
 
+    fn manual_module(functions: Vec<MirFunction>) -> MirModule {
+        MirModule {
+            functions,
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
+        }
+    }
+
+    fn manual_function(name: &str, return_ty: TypeId, blocks: Vec<BasicBlock>) -> MirFunction {
+        MirFunction {
+            name: name.to_string(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_ty,
+            entry: BlockId(0),
+            blocks,
+            target: Default::default(),
+            gpu_config: None,
+        }
+    }
+
+    fn i32_ty() -> TypeId {
+        TypeId(4)
+    }
+
+    fn any_ty() -> TypeId {
+        TypeId(7)
+    }
+
     #[test]
     fn test_jit_returns_main_result() {
         assert_eq!(run_source("fn main(): return 42", &[]), 42);
+    }
+
+    #[test]
+    fn test_jit_extracts_enum_tag_from_packed_enum() {
+        let module = manual_module(vec![manual_function(
+            "main",
+            i32_ty(),
+            vec![BasicBlock {
+                id: BlockId(0),
+                instructions: vec![
+                    Instruction {
+                        result: ValueId(0),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(99),
+                    },
+                    Instruction {
+                        result: ValueId(1),
+                        ty: any_ty(),
+                        op: Op::EnumConstruct {
+                            tag: 5,
+                            payload: vec![ValueId(0)],
+                        },
+                    },
+                    Instruction {
+                        result: ValueId(2),
+                        ty: i32_ty(),
+                        op: Op::EnumTag(ValueId(1)),
+                    },
+                ],
+                terminator: Terminator::Return(ValueId(2)),
+            }],
+        )]);
+
+        assert_eq!(run_main(&module, &[]).expect("jit run failed"), 5);
+    }
+
+    #[test]
+    fn test_jit_extracts_i32_enum_payload_from_packed_enum() {
+        let module = manual_module(vec![manual_function(
+            "payload",
+            i32_ty(),
+            vec![BasicBlock {
+                id: BlockId(0),
+                instructions: vec![
+                    Instruction {
+                        result: ValueId(0),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(-7),
+                    },
+                    Instruction {
+                        result: ValueId(1),
+                        ty: any_ty(),
+                        op: Op::EnumConstruct {
+                            tag: 2,
+                            payload: vec![ValueId(0)],
+                        },
+                    },
+                    Instruction {
+                        result: ValueId(2),
+                        ty: i32_ty(),
+                        op: Op::EnumPayload {
+                            value: ValueId(1),
+                            field_index: 0,
+                        },
+                    },
+                ],
+                terminator: Terminator::Return(ValueId(2)),
+            }],
+        )]);
+
+        let value = run_function(&module, "payload", &[]).expect("jit run failed");
+        assert_eq!(value, JitValue::Int(-7));
+    }
+
+    #[test]
+    fn test_jit_switch_terminator_selects_matching_case() {
+        let module = manual_module(vec![manual_function(
+            "main",
+            i32_ty(),
+            vec![
+                BasicBlock {
+                    id: BlockId(0),
+                    instructions: vec![Instruction {
+                        result: ValueId(0),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(2),
+                    }],
+                    terminator: Terminator::Switch {
+                        discriminant: ValueId(0),
+                        cases: vec![(1, BlockId(1)), (2, BlockId(2))],
+                        default: BlockId(3),
+                    },
+                },
+                BasicBlock {
+                    id: BlockId(1),
+                    instructions: vec![Instruction {
+                        result: ValueId(1),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(10),
+                    }],
+                    terminator: Terminator::Return(ValueId(1)),
+                },
+                BasicBlock {
+                    id: BlockId(2),
+                    instructions: vec![Instruction {
+                        result: ValueId(2),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(20),
+                    }],
+                    terminator: Terminator::Return(ValueId(2)),
+                },
+                BasicBlock {
+                    id: BlockId(3),
+                    instructions: vec![Instruction {
+                        result: ValueId(3),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(30),
+                    }],
+                    terminator: Terminator::Return(ValueId(3)),
+                },
+            ],
+        )]);
+
+        assert_eq!(run_main(&module, &[]).expect("jit run failed"), 20);
     }
 
     #[test]

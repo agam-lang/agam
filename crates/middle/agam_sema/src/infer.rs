@@ -328,11 +328,17 @@ impl InferenceEngine {
             }
             Type::Ref { mutable, inner } => {
                 let inner_sub = self.apply_substitution(inner, subst, store);
-                store.insert(Type::Ref { mutable, inner: inner_sub })
+                store.insert(Type::Ref {
+                    mutable,
+                    inner: inner_sub,
+                })
             }
             Type::Ptr { mutable, inner } => {
                 let inner_sub = self.apply_substitution(inner, subst, store);
-                store.insert(Type::Ptr { mutable, inner: inner_sub })
+                store.insert(Type::Ptr {
+                    mutable,
+                    inner: inner_sub,
+                })
             }
             Type::Optional(inner) => {
                 let inner_sub = self.apply_substitution(inner, subst, store);
@@ -341,7 +347,10 @@ impl InferenceEngine {
             Type::Result { ok, err } => {
                 let ok_sub = self.apply_substitution(ok, subst, store);
                 let err_sub = self.apply_substitution(err, subst, store);
-                store.insert(Type::Result { ok: ok_sub, err: err_sub })
+                store.insert(Type::Result {
+                    ok: ok_sub,
+                    err: err_sub,
+                })
             }
             Type::Slice(inner) => {
                 let inner_sub = self.apply_substitution(inner, subst, store);
@@ -349,21 +358,39 @@ impl InferenceEngine {
             }
             Type::Array { element, size } => {
                 let elem_sub = self.apply_substitution(element, subst, store);
-                store.insert(Type::Array { element: elem_sub, size })
+                store.insert(Type::Array {
+                    element: elem_sub,
+                    size,
+                })
             }
             Type::Tuple(elems) => {
-                let elems_sub = elems.iter().map(|&e| self.apply_substitution(e, subst, store)).collect();
+                let elems_sub = elems
+                    .iter()
+                    .map(|&e| self.apply_substitution(e, subst, store))
+                    .collect();
                 store.insert(Type::Tuple(elems_sub))
             }
             Type::Function { params, ret } => {
-                let params_sub = params.iter().map(|&p| self.apply_substitution(p, subst, store)).collect();
+                let params_sub = params
+                    .iter()
+                    .map(|&p| self.apply_substitution(p, subst, store))
+                    .collect();
                 let ret_sub = self.apply_substitution(ret, subst, store);
-                store.insert(Type::Function { params: params_sub, ret: ret_sub })
+                store.insert(Type::Function {
+                    params: params_sub,
+                    ret: ret_sub,
+                })
             }
             Type::Generic { base, args } => {
                 let base_sub = self.apply_substitution(base, subst, store);
-                let args_sub = args.iter().map(|&a| self.apply_substitution(a, subst, store)).collect();
-                store.insert(Type::Generic { base: base_sub, args: args_sub })
+                let args_sub = args
+                    .iter()
+                    .map(|&a| self.apply_substitution(a, subst, store))
+                    .collect();
+                store.insert(Type::Generic {
+                    base: base_sub,
+                    args: args_sub,
+                })
             }
             _ => resolved,
         }

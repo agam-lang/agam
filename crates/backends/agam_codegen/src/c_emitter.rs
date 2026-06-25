@@ -875,48 +875,25 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
                 .join(", ");
             writeln!(
                 out,
-                "  /* unsupported enum construct: tag={} payload=[{}] */",
-                tag, payload_desc
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "  {} {} = {};",
+                "  {} {} = {{ .tag = {}, .payload = {{ {} }} }};",
                 result_ty.name(),
                 v,
-                result_ty.default_value()
+                tag,
+                payload_desc
             )
             .unwrap();
         }
         Op::EnumTag(value) => {
-            writeln!(
-                out,
-                "  /* unsupported enum tag extraction from __v{} */",
-                value.0
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "  {} {} = {};",
-                result_ty.name(),
-                v,
-                result_ty.default_value()
-            )
-            .unwrap();
+            writeln!(out, "  {} {} = __v{}.tag;", result_ty.name(), v, value.0).unwrap();
         }
         Op::EnumPayload { value, field_index } => {
             writeln!(
                 out,
-                "  /* unsupported enum payload extraction: __v{} field {} */",
-                value.0, field_index
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "  {} {} = {};",
+                "  {} {} = __v{}.payload.f{};",
                 result_ty.name(),
                 v,
-                result_ty.default_value()
+                value.0,
+                field_index
             )
             .unwrap();
         }

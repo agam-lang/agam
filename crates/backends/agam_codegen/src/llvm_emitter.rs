@@ -2065,7 +2065,11 @@ impl LlvmEmitter {
             .copied()
             .unwrap_or_default();
         let mut fn_attr_suffix = format_function_attrs(attrs);
-        if layout.return_ty.float_spec().is_some() || func.params.iter().any(|param| infer_llvm_type_from_type_id(param.ty).map_or(false, |t| t.float_spec().is_some())) {
+        if layout.return_ty.float_spec().is_some()
+            || func.params.iter().any(|param| {
+                infer_llvm_type_from_type_id(param.ty).map_or(false, |t| t.float_spec().is_some())
+            })
+        {
             if fn_attr_suffix.is_empty() {
                 fn_attr_suffix = " \"denormal_fpenv\"".to_string();
             } else {
@@ -2597,19 +2601,77 @@ impl LlvmEmitter {
                     ValueRef::new(result_ty, result_ty.default_value(), result_sign),
                 );
             }
-            Op::EnumConstruct { .. } => {
-                return Err(
-                    "LLVM backend does not yet support enum construction MIR lowering".into(),
+            Op::EnumConstruct { tag, payload } => {
+                let ir_ty = result_ty.ir();
+                writeln!(
+                    out,
+                    "  %v{}_tag = insertvalue {} undef, i32 {}, 0",
+                    instr.result.0, ir_ty, tag
+                )
+                .unwrap();
+                let mut curr_val = format!("%v{}_tag", instr.result.0);
+
+                if !payload.is_empty() {
+                    for (i, p_val) in payload.iter().enumerate() {
+                        let p_ty = values.get(p_val).map(|v| v.ty.ir()).unwrap_or("i8*");
+                        let next_val = if i == payload.len() - 1 {
+                            format!("%v{}", instr.result.0)
+                        } else {
+                            format!("%v{}_p{}", instr.result.0, i)
+                        };
+                        writeln!(
+                            out,
+                            "  {} = insertvalue {} {}, {} %v{}, {}",
+                            next_val,
+                            ir_ty,
+                            curr_val,
+                            p_ty,
+                            p_val.0,
+                            i + 1
+                        )
+                        .unwrap();
+                        curr_val = next_val;
+                    }
+                } else {
+                    writeln!(
+                        out,
+                        "  %v{} = bitcast {} {} to {}",
+                        instr.result.0, ir_ty, curr_val, ir_ty
+                    )
+                    .unwrap();
+                }
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, format!("%v{}", instr.result.0), result_sign),
                 );
             }
-            Op::EnumTag(_) => {
-                return Err(
-                    "LLVM backend does not yet support enum tag extraction MIR lowering".into(),
+            Op::EnumTag(value) => {
+                let val_ty = values.get(value).map(|v| v.ty.ir()).unwrap_or("i8*");
+                writeln!(
+                    out,
+                    "  %v{} = extractvalue {} %v{}, 0",
+                    instr.result.0, val_ty, value.0
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, format!("%v{}", instr.result.0), result_sign),
                 );
             }
-            Op::EnumPayload { .. } => {
-                return Err(
-                    "LLVM backend does not yet support enum payload extraction MIR lowering".into(),
+            Op::EnumPayload { value, field_index } => {
+                let val_ty = values.get(value).map(|v| v.ty.ir()).unwrap_or("i8*");
+                writeln!(
+                    out,
+                    "  %v{} = extractvalue {} %v{}, {}",
+                    instr.result.0,
+                    val_ty,
+                    value.0,
+                    field_index + 1
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, format!("%v{}", instr.result.0), result_sign),
                 );
             }
         }

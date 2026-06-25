@@ -1142,6 +1142,18 @@ impl Parser {
                     },
                 })
             }
+            TokenKind::Star => {
+                self.advance();
+                let operand = self.parse_expression(15)?;
+                Ok(Expr {
+                    id,
+                    span: tok.span,
+                    kind: ExprKind::Unary {
+                        op: UnaryOp::Deref,
+                        operand: Box::new(operand),
+                    },
+                })
+            }
             TokenKind::Amp => {
                 self.advance();
                 let operand = self.parse_expression(15)?;
@@ -1728,11 +1740,33 @@ impl Parser {
         match tok.kind {
             TokenKind::Identifier => {
                 self.advance();
+                let name = Ident::new(&tok.lexeme, tok.span);
+                if self.eat(TokenKind::LParen) {
+                    let mut fields = Vec::new();
+                    while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                        fields.push(self.parse_pattern()?);
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    return Ok(Pattern {
+                        id,
+                        span: tok.span,
+                        kind: PatternKind::Variant {
+                            path: Path {
+                                segments: vec![name],
+                                span: tok.span,
+                            },
+                            fields,
+                        },
+                    });
+                }
                 Ok(Pattern {
                     id,
                     span: tok.span,
                     kind: PatternKind::Identifier {
-                        name: Ident::new(&tok.lexeme, tok.span),
+                        name,
                         mutable: false,
                     },
                 })
@@ -1899,6 +1933,18 @@ mod tests {
     fn test_index() {
         let expr = parse_expr("arr[0]");
         assert!(matches!(expr.kind, ExprKind::Index { .. }));
+    }
+
+    #[test]
+    fn test_unary_deref() {
+        let expr = parse_expr("*ptr");
+        assert!(matches!(
+            expr.kind,
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                ..
+            }
+        ));
     }
 
     #[test]

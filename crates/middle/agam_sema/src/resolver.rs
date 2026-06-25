@@ -64,7 +64,8 @@ impl Resolver {
                 let ret_ty = self.types.fresh_var();
                 let param_tys: Vec<TypeId> =
                     f.params.iter().map(|_| self.types.fresh_var()).collect();
-                let generics: Vec<String> = f.generics.iter().map(|g| g.name.name.clone()).collect();
+                let generics: Vec<String> =
+                    f.generics.iter().map(|g| g.name.name.clone()).collect();
                 if let Err(prev) = self.scopes.declare(
                     f.name.name.clone(),
                     SymbolKind::Function {
@@ -111,10 +112,7 @@ impl Resolver {
                                 fields
                                     .iter()
                                     .map(|f| {
-                                        (
-                                            f.name.name.clone(),
-                                            self.resolve_type_expr_to_id(&f.ty),
-                                        )
+                                        (f.name.name.clone(), self.resolve_type_expr_to_id(&f.ty))
                                     })
                                     .collect(),
                             ),

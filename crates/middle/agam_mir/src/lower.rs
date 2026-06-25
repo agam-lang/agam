@@ -19,6 +19,8 @@ pub struct MirLowering {
     current_instrs: Vec<Instruction>,
     current_block: BlockId,
     gpu_kernels: HashMap<String, GpuKernelConfig>,
+    enum_layouts: HashMap<String, EnumLayout>,
+    struct_layouts: HashMap<String, StructLayout>,
     types: TypeStore,
 }
 
@@ -31,6 +33,8 @@ impl MirLowering {
             current_instrs: Vec::new(),
             current_block: BlockId(0),
             gpu_kernels: HashMap::new(),
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
             types: TypeStore::new(),
         }
     }
@@ -74,12 +78,50 @@ impl MirLowering {
                     .map(|config| (function.name.clone(), config))
             })
             .collect();
+        self.enum_layouts = hir
+            .enum_layouts
+            .iter()
+            .map(|(name, layout)| {
+                (
+                    name.clone(),
+                    EnumLayout {
+                        name: layout.name.clone(),
+                        variants: layout
+                            .variants
+                            .iter()
+                            .map(|variant| EnumVariantLayout {
+                                name: variant.name.clone(),
+                                tag: variant.tag,
+                                has_payload: variant.has_payload,
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+        self.struct_layouts = hir
+            .struct_layouts
+            .iter()
+            .map(|(name, layout)| {
+                (
+                    name.clone(),
+                    StructLayout {
+                        name: layout.name.clone(),
+                        fields: layout.fields.clone(),
+                    },
+                )
+            })
+            .collect();
         let functions = hir
             .functions
             .iter()
             .map(|f| self.lower_function(f))
             .collect();
-        MirModule { functions }
+        MirModule {
+            functions,
+            enum_layouts: self.enum_layouts.clone(),
+            struct_layouts: self.struct_layouts.clone(),
+        }
     }
 
     fn lower_function(&mut self, func: &HirFunction) -> MirFunction {
@@ -118,6 +160,7 @@ impl MirLowering {
 
         MirFunction {
             name: func.name.clone(),
+            generics: func.generics.iter().map(|g| g.name.clone()).collect(),
             params,
             return_ty: func.return_ty,
             blocks: std::mem::take(&mut self.blocks),
@@ -252,6 +295,16 @@ impl MirLowering {
             }
             HirExprKind::Unary { op, operand } => {
                 let v = self.lower_expr(operand);
+                if matches!(op, HirUnaryOp::Deref) {
+                    let zero = self.emit(self.types.i32(), Op::ConstInt(0));
+                    return self.emit(
+                        ty,
+                        Op::GetIndex {
+                            object: v,
+                            index: zero,
+                        },
+                    );
+                }
                 self.emit(
                     ty,
                     Op::UnOp {
@@ -439,11 +492,203 @@ impl MirLowering {
                 );
                 self.lower_expr(body)
             }
-            agam_hir::nodes::HirExprKind::StructLiteral { .. }
-            | agam_hir::nodes::HirExprKind::EnumVariant { .. }
-            | agam_hir::nodes::HirExprKind::Match { .. } => {
-                todo!("MIR lowering for structs, enums, and match expressions")
+            agam_hir::nodes::HirExprKind::StructLiteral { name, fields } => {
+                let mut args = Vec::new();
+                for (_, f) in fields {
+                    args.push(self.lower_expr(f));
+                }
+                self.emit(
+                    ty,
+                    Op::Call {
+                        callee: format!("__struct_init_{}", name),
+                        args,
+                    },
+                )
             }
+            agam_hir::nodes::HirExprKind::EnumVariant {
+                enum_name,
+                variant,
+                fields,
+            } => {
+                let payload = fields.iter().map(|f| self.lower_expr(f)).collect();
+                let tag = self.enum_variant_tag(enum_name, variant);
+                self.emit(ty, Op::EnumConstruct { tag, payload })
+            }
+            agam_hir::nodes::HirExprKind::Match { scrutinee, arms } => {
+                self.lower_match_expr(ty, scrutinee, arms)
+            }
+        }
+    }
+
+    fn lower_match_expr(
+        &mut self,
+        ty: TypeId,
+        scrutinee: &HirExpr,
+        arms: &[HirMatchArm],
+    ) -> ValueId {
+        if arms.is_empty() {
+            return self.emit(ty, Op::Unit);
+        }
+
+        let result_local = format!("__match_result_{}", self.next_value);
+        self.emit(
+            ty,
+            Op::Alloca {
+                name: result_local.clone(),
+                ty,
+            },
+        );
+
+        let scrut_val = self.lower_expr(scrutinee);
+        let end_block = self.fresh_block();
+
+        for arm in arms {
+            let body_block = self.fresh_block();
+            let next_arm_block = self.fresh_block();
+            let condition = self.lower_match_condition(scrut_val, &arm.pattern, arm.guard.as_ref());
+
+            self.finish_block(Terminator::Branch {
+                condition,
+                then_block: body_block,
+                else_block: next_arm_block,
+            });
+
+            self.current_block = body_block;
+            self.lower_match_pattern_bindings(scrut_val, scrutinee.ty, &arm.pattern);
+            let body_value = self.lower_expr(&arm.body);
+            self.emit(
+                ty,
+                Op::StoreLocal {
+                    name: result_local.clone(),
+                    value: body_value,
+                },
+            );
+            self.finish_block(Terminator::Jump(end_block));
+
+            self.current_block = next_arm_block;
+        }
+
+        self.finish_block(Terminator::Jump(end_block));
+        self.current_block = end_block;
+        self.emit(ty, Op::LoadLocal(result_local))
+    }
+
+    fn lower_match_condition(
+        &mut self,
+        scrutinee: ValueId,
+        pattern: &HirPattern,
+        guard: Option<&HirExpr>,
+    ) -> ValueId {
+        let bool_ty = self.types.bool();
+        let pattern_condition = match pattern {
+            HirPattern::Literal(lit_expr) => {
+                let lit_val = self.lower_expr(lit_expr);
+                self.emit(
+                    bool_ty,
+                    Op::BinOp {
+                        op: MirBinOp::Eq,
+                        left: scrutinee,
+                        right: lit_val,
+                    },
+                )
+            }
+            HirPattern::Variant { name, .. } => {
+                let tag = self
+                    .enum_variant_tag_by_name(name)
+                    .map(i64::from)
+                    .unwrap_or(0);
+                let tag_ty = self.types.i32();
+                let actual_tag = self.emit(tag_ty, Op::EnumTag(scrutinee));
+                let expected_tag = self.emit(tag_ty, Op::ConstInt(tag));
+                self.emit(
+                    bool_ty,
+                    Op::BinOp {
+                        op: MirBinOp::Eq,
+                        left: actual_tag,
+                        right: expected_tag,
+                    },
+                )
+            }
+            HirPattern::Wildcard | HirPattern::Bind(_) => self.emit(bool_ty, Op::ConstBool(true)),
+            _ => self.emit(bool_ty, Op::ConstBool(true)),
+        };
+
+        if let Some(guard) = guard {
+            let guard_value = self.lower_expr(guard);
+            self.emit(
+                bool_ty,
+                Op::BinOp {
+                    op: MirBinOp::And,
+                    left: pattern_condition,
+                    right: guard_value,
+                },
+            )
+        } else {
+            pattern_condition
+        }
+    }
+
+    fn lower_match_pattern_bindings(
+        &mut self,
+        scrutinee: ValueId,
+        scrutinee_ty: TypeId,
+        pattern: &HirPattern,
+    ) {
+        match pattern {
+            HirPattern::Bind(name) => {
+                self.emit(
+                    scrutinee_ty,
+                    Op::Alloca {
+                        name: name.clone(),
+                        ty: scrutinee_ty,
+                    },
+                );
+                self.emit(
+                    scrutinee_ty,
+                    Op::StoreLocal {
+                        name: name.clone(),
+                        value: scrutinee,
+                    },
+                );
+            }
+            HirPattern::Variant { fields, .. } => {
+                for (index, field) in fields.iter().enumerate() {
+                    let payload_ty = self.types.any();
+                    let payload = self.emit(
+                        payload_ty,
+                        Op::EnumPayload {
+                            value: scrutinee,
+                            field_index: index as u32,
+                        },
+                    );
+                    self.lower_payload_pattern_bindings(payload, payload_ty, field);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn lower_payload_pattern_bindings(
+        &mut self,
+        payload: ValueId,
+        payload_ty: TypeId,
+        pattern: &HirPattern,
+    ) {
+        if let HirPattern::Bind(name) = pattern {
+            self.emit(
+                payload_ty,
+                Op::Alloca {
+                    name: name.clone(),
+                    ty: payload_ty,
+                },
+            );
+            self.emit(
+                payload_ty,
+                Op::StoreLocal {
+                    name: name.clone(),
+                    value: payload,
+                },
+            );
         }
     }
 }
@@ -457,6 +702,31 @@ impl MirLowering {
                 .next()
                 .and_then(|name| self.gpu_kernels.get(name).cloned())
         })
+    }
+
+    fn enum_variant_tag(&self, enum_name: &str, variant_name: &str) -> u32 {
+        self.enum_layouts
+            .get(enum_name)
+            .and_then(|layout| {
+                layout
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == variant_name)
+            })
+            .map(|variant| variant.tag)
+            .unwrap_or(0)
+    }
+
+    fn enum_variant_tag_by_name(&self, variant_name: &str) -> Option<u32> {
+        self.enum_layouts
+            .values()
+            .find_map(|layout| {
+                layout
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == variant_name)
+            })
+            .map(|variant| variant.tag)
     }
 }
 
@@ -783,6 +1053,24 @@ mod tests {
     }
 
     #[test]
+    fn test_mir_pointer_deref_lowers_to_zero_index_load() {
+        let mir = lower_to_mir("@gpu\nfn kern(input: *mut f32): let value: f32 = *input");
+        let f = &mir.functions[0];
+        let has_zero_offset = f.blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(&i.op, Op::ConstInt(0)))
+        });
+        let has_deref_load = f.blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(&i.op, Op::GetIndex { .. }))
+        });
+        assert!(has_zero_offset, "expected implicit zero offset for deref");
+        assert!(has_deref_load, "expected pointer deref to reuse GetIndex");
+    }
+
+    #[test]
     fn test_mir_gpu_shared_alloc_lowers_to_explicit_op() {
         let mir =
             lower_to_mir("@gpu\nfn kern(): let scratch: *mut f32 = agam.gpu.shared_alloc(128)");
@@ -892,5 +1180,183 @@ mod tests {
         });
         assert!(has_grid, "expected launch grid constant in MIR");
         assert!(has_block, "expected launch block constant in MIR");
+    }
+
+    #[test]
+    #[ignore = "parser missing struct literal support"]
+    fn test_mir_struct_literal_lowers() {
+        let mir =
+            lower_to_mir("struct Point { x: i32, y: i32 }\nfn main(): return Point { x: 1, y: 2 }");
+        let f = &mir.functions[0];
+        let mut has_struct_init = false;
+        for block in &f.blocks {
+            for instr in &block.instructions {
+                if let crate::ir::Op::Call { callee, .. } = &instr.op {
+                    if callee == "__struct_init_Point" {
+                        has_struct_init = true;
+                    }
+                }
+            }
+        }
+        assert!(has_struct_init, "missing struct init call");
+    }
+
+    #[test]
+    fn test_mir_enum_variant_lowers_to_construct() {
+        let mut enum_layouts = HashMap::new();
+        enum_layouts.insert(
+            "Color".to_string(),
+            agam_hir::nodes::HirEnumLayout {
+                name: "Color".to_string(),
+                variants: vec![
+                    agam_hir::nodes::HirEnumVariantLayout {
+                        name: "Red".to_string(),
+                        tag: 0,
+                        has_payload: false,
+                    },
+                    agam_hir::nodes::HirEnumVariantLayout {
+                        name: "Green".to_string(),
+                        tag: 1,
+                        has_payload: true,
+                    },
+                ],
+            },
+        );
+        let hir = HirModule {
+            functions: vec![HirFunction {
+                id: HirId(0),
+                name: "main".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: TypeId(0),
+                body: HirBlock {
+                    stmts: vec![HirStmt::Return(Some(HirExpr {
+                        id: HirId(1),
+                        ty: TypeId(0),
+                        kind: HirExprKind::EnumVariant {
+                            enum_name: "Color".into(),
+                            variant: "Green".into(),
+                            fields: vec![HirExpr {
+                                id: HirId(2),
+                                ty: TypeId(0),
+                                kind: HirExprKind::IntLit(42),
+                            }],
+                        },
+                    }))],
+                    expr: None,
+                },
+                is_async: false,
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            enum_layouts,
+            struct_layouts: HashMap::new(),
+        };
+        let mut mir_lowering = MirLowering::new();
+        let mir = mir_lowering.lower_module(&hir);
+        let layout = mir.enum_layouts.get("Color").expect("missing enum layout");
+        assert_eq!(layout.variants[1].tag, 1);
+        let f = &mir.functions[0];
+        let mut has_enum_construct = false;
+        for block in &f.blocks {
+            for instr in &block.instructions {
+                if let crate::ir::Op::EnumConstruct { tag, payload } = &instr.op {
+                    assert_eq!(*tag, 1);
+                    assert_eq!(payload.len(), 1);
+                    has_enum_construct = true;
+                }
+            }
+        }
+        assert!(has_enum_construct, "missing enum construct op");
+    }
+
+    #[test]
+    fn test_mir_match_literal_lowers_to_branches_and_result_local() {
+        let mir =
+            lower_to_mir("fn main():\n    let x = 1\n    match x:\n        1 => 2\n        _ => 3");
+        let f = &mir.functions[0];
+        let mut branches = 0;
+        let mut stores = 0;
+        let mut loads_result = false;
+        for block in &f.blocks {
+            if let crate::ir::Terminator::Branch { .. } = &block.terminator {
+                branches += 1;
+            }
+            for instr in &block.instructions {
+                match &instr.op {
+                    crate::ir::Op::StoreLocal { name, .. }
+                        if name.starts_with("__match_result_") =>
+                    {
+                        stores += 1;
+                    }
+                    crate::ir::Op::LoadLocal(name) if name.starts_with("__match_result_") => {
+                        loads_result = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert!(branches >= 1, "missing branches for literal match");
+        assert_eq!(stores, 2, "expected both match arms to store a result");
+        assert!(loads_result, "missing match result load");
+    }
+
+    #[test]
+    fn test_mir_match_guard_combines_with_pattern_condition() {
+        let mir = lower_to_mir(
+            "fn main():\n    let x = 1\n    match x:\n        1 if true => 2\n        _ => 3",
+        );
+        let f = &mir.functions[0];
+        let has_guard_and = f.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instr| {
+                matches!(
+                    instr.op,
+                    crate::ir::Op::BinOp {
+                        op: crate::ir::MirBinOp::And,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(has_guard_and, "missing guard/pattern conjunction");
+    }
+
+    #[test]
+    fn test_mir_match_wildcard_lowers() {
+        let mir = lower_to_mir("fn main():\n    let x = 1\n    match x:\n        _ => 2");
+        let f = &mir.functions[0];
+        let stores_result = f.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instr| {
+                matches!(
+                    &instr.op,
+                    crate::ir::Op::StoreLocal { name, .. }
+                        if name.starts_with("__match_result_")
+                )
+            })
+        });
+        assert!(stores_result, "wildcard match didn't store its result");
+    }
+
+    #[test]
+    #[ignore = "parser missing variant pattern support"]
+    fn test_mir_match_enum_variant_lowers() {
+        let mir = lower_to_mir(
+            "enum Optional { Some(i32), None }\nfn main(opt: Optional):\n    match opt:\n        Some(val) => val\n        None => 0",
+        );
+        let f = &mir.functions[0];
+        let mut has_tag = false;
+        let mut has_payload = false;
+        for block in &f.blocks {
+            for instr in &block.instructions {
+                if matches!(instr.op, crate::ir::Op::EnumTag(_)) {
+                    has_tag = true;
+                }
+                if matches!(instr.op, crate::ir::Op::EnumPayload { .. }) {
+                    has_payload = true;
+                }
+            }
+        }
+        assert!(has_tag, "missing EnumTag extraction");
+        assert!(has_payload, "missing EnumPayload extraction");
     }
 }

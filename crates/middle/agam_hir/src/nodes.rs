@@ -6,6 +6,8 @@
 //! - Unique IDs for every node.
 //! - Generic parameters preserved for monomorphization.
 
+use std::collections::HashMap;
+
 use agam_sema::gpu::{GpuKernelConfig, GpuKernelParamAbi};
 use agam_sema::symbol::TypeId;
 use agam_sema::target::TargetProfile;
@@ -18,6 +20,27 @@ pub struct HirId(pub u32);
 #[derive(Debug)]
 pub struct HirModule {
     pub functions: Vec<HirFunction>,
+    pub enum_layouts: HashMap<String, HirEnumLayout>,
+    pub struct_layouts: HashMap<String, HirStructLayout>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirEnumLayout {
+    pub name: String,
+    pub variants: Vec<HirEnumVariantLayout>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirEnumVariantLayout {
+    pub name: String,
+    pub tag: u32,
+    pub has_payload: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirStructLayout {
+    pub name: String,
+    pub fields: Vec<String>,
 }
 
 /// A generic parameter in HIR (resolved from AST generic params).

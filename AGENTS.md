@@ -30,6 +30,8 @@ Physical layout: `crates/{core,middle,backends,runtime,tooling,experiments}/...`
 - Work in the smallest responsible crate. Preserve spans and diagnostics.
 - Route failures through `agam_errors`; no `.unwrap()` in compiler passes.
 - Optimization requires measured benchmarks, not intuition.
+- When making architectural or syntax decisions, log ergonomics vs. security tradeoffs in `.agent/wiki/ergonomics-and-security.md`. Ensure strict security is always the highest priority while pushing for `@lang.base` usability.
+- Focus on closing gaps in ecosystem parity (packages, LSP, garbage collection, and error diagnostics) as tracked in `.agent/wiki/future-ecosystem-and-tooling.md`.
 - After major changes, commit locally. After a final milestone or substantial batch of changes, commit and push to GitHub.
 
 ## Repo Map
