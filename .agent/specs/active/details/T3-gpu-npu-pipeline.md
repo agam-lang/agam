@@ -1,0 +1,58 @@
+# Phase T3-gpu-npu-pipeline � GPU and NPU Integration (@gpu Kernel Pipeline)
+
+**Status:** partial (Basic NVPTX pipeline, host-device transfer helpers, and shared-memory lowering complete; advanced capabilities pending)
+
+## Scope
+
+Native GPU kernel compilation pipeline for Agam, targeting NVPTX64 (CUDA), including advanced capabilities like shared memory, multi-dimensional thread intrinsics, rich array types, and host-device synchronization.
+
+## Deliverables
+
+### Semantic Layer (`agam_sema::gpu`)
+- [x] `GpuKernelConfig` struct: threads_per_block, block_dim, shared_memory_bytes, grid_dim
+- [x] `resolve_gpu_config()`: extracts `@gpu(...)` annotation parameters
+- [x] `validate_gpu_kernel_body()`: rejects heap, effects, recursion, strings in kernels
+- [x] `GpuKernelError` diagnostic enum with Display
+- [x] Validate launch dimensions: positive `threads/grid/block` components and max supported threads-per-block.
+- [x] Add built-in resolution for `agam::gpu::thread_id_x`, `agam::gpu::barrier`, etc.
+- [ ] Update GPU validation to permit pointer/array math and shared memory allocations.
+
+### IR Propagation
+- [x] `HirFunction.gpu_config: Option<GpuKernelConfig>`
+- [x] `MirFunction.gpu_config: Option<GpuKernelConfig>` (serde-defaulted)
+- [x] `Op::GpuKernelLaunch` MIR variant for host-side kernel invocation
+- [x] `Op::StoreIndex` MIR variant for indexed GPU buffer writes
+- [x] All 4 MIR optimization passes updated (constant_fold, dce, inline, loop_unroll)
+- [x] All codegen backends updated (C emitter, LLVM emitter, JIT)
+- [x] Add `Op::GpuIntrinsic` to MIR for thread indices, block dims, and sync barriers.
+
+### GPU Codegen Backend (`agam_codegen::gpu_emitter`)
+- [x] NVPTX64 target triple and data layout emission
+- [x] `ptx_kernel` calling convention for kernel entry points
+- [x] NVVM thread intrinsic declarations (tid, ctaid, ntid, barrier)
+- [x] `!nvvm.annotations` metadata for kernel identification
+- [x] CUDA library linkage metadata (cudart, libnvvm, nvcc, nvptxcompiler)
+- [x] Host-side CUDA runtime API declarations (cudaLaunchKernel, cudaMalloc, etc.)
+- [x] Extreme throughput optimization (zero-alloc formatting, pre-allocated buffers)
+- [x] Map `Op::GpuIntrinsic` to NVVM intrinsic calls.
+- [x] Support LLVM pointer types (`float*`, `i32*`) for kernel parameters (arrays/buffers).
+- [x] Lower indexed pointer/array kernel access (`input[idx]`, `output[idx] = value`) to NVPTX `getelementptr` + load/store.
+- [x] Lower source pointer dereference (`*ptr`) through typed MIR zero-offset indexing into NVPTX `getelementptr` + load.
+- [x] Map `agam::gpu::shared_alloc` to `addrspace(3)` LLVM allocations.
+- [x] Map GPU math builtins (`agam::gpu::sin`, `agam::gpu::cos`, `agam::gpu::sqrt`, `agam::gpu::exp`) to hardware NVVM fast-math intrinsics.
+
+### Host-Device API
+- [x] Add `gpu_malloc`, `gpu_free`, `gpu_memcpy_to_device`, and `gpu_memcpy_to_host` to standard library.
+- [x] Lower host API calls to CUDA runtime API declarations in the host LLVM module.
+
+### CUDA Library Linkage
+- [x] `CudaLinkage` struct: paths for cudart, libnvvm, nvcc, libnvptxcompiler_static
+- [x] `emit_host_cuda_declarations()`: extern declarations for host LLVM module
+- [x] Linker flags: `-lcudart -lnvvm -lnvptxcompiler_static`
+
+## Test Results
+- 29+ GPU-focused tests across HIR/MIR/sema/codegen
+- 713+ total tests pass, 0 failures, 0 regressions
+- Benchmarks: 58.2 µs/iter for 1k-instruction kernel (522 MB/s IR throughput)
+
+

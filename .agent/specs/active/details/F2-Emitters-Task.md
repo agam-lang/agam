@@ -1,0 +1,18 @@
+- [x] Phase F2: Type System Completion
+  - [x] Component 1: MIR Lowering
+    - [x] Add enum_layouts and struct_layouts to MirModule in ir.rs
+    - [x] Implement MIR lowering for StructLiteral, EnumVariant, Match in lower.rs
+    - [x] Fix MIR module instantiations in tests to include layout fields
+  - [x] Component 2: C Backend
+    - [x] Implement Tagged Unions layout in c_emitter.rs
+    - [x] Lower EnumConstruct to C struct initialization
+    - [x] Lower EnumTag/EnumPayload to C field accesses
+  - [x] Component 3: LLVM Backend
+    - [x] Lower EnumConstruct to LLVM insertvalue
+    - [x] Lower EnumTag/EnumPayload to LLVM extractvalue
+  - [x] Component 4: JIT Backend
+  - [x] Component 5: Struct / Enum representation across targets
+    - [x] Implement Tagged Unions layout in gpu_emitter.rs
+    - [x] Lower EnumConstruct to GPU LLVM insertvalue
+    - [x] Lower EnumTag/EnumPayload to GPU LLVM extractvalue
+  - [x] Component 6: Full verification of backend tests

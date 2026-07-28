@@ -37,6 +37,22 @@ Thumbs.db
 # AI tracking
 .agent/*
 !.agent/README.md
+!.agent/specs/
+!.agent/specs/**
+!.agent/phases/
+!.agent/phases/**
+!.agent/evals/
+!.agent/evals/**
+!.agent/wiki/
+!.agent/wiki/**
+!.agent/rules/
+!.agent/rules/**
+!.agent/skills/
+!.agent/skills/**
+!.agent/policy/
+!.agent/policy/**
+!.agent/include/
+!.agent/include/**
 /benchmarks/results/reports/*
 !/benchmarks/results/reports/.gitkeep
 /benchmarks/results/plots/*
