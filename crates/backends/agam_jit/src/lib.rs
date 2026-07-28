@@ -2390,8 +2390,6 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                         bits: 32,
                         signed: true,
                     }),
-                Op::Cast { target_ty, value } => infer_jit_type_from_type_id(*target_ty)
-                    .unwrap_or_else(|| value_type(&layout, *value)),
                 Op::EffectPerform { .. }
                 | Op::HandleWith { .. }
                 | Op::GpuKernelLaunch { .. }

@@ -364,5 +364,12 @@ mod tests {
                 err: types.str()
             }
         );
+
+        // Deduplication / interning checks:
+        let opt_i32_again = types.option(types.i32());
+        assert_eq!(opt_i32, opt_i32_again);
+
+        let res_i32_str_again = types.result(types.i32(), types.str());
+        assert_eq!(res_i32_str, res_i32_str_again);
     }
 }
