@@ -1,0 +1,67 @@
+name: Performance regression
+description: Report a measurable compiler, runtime, or benchmark regression
+title: "[perf] "
+labels:
+  - performance
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for measured regressions. Keep the report tied to a concrete workload,
+        baseline, and command.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What got slower, larger, or more memory-hungry?
+    validations:
+      required: true
+  - type: textarea
+    id: workload
+    attributes:
+      label: Workload
+      description: Which benchmark, source file, or command exposes the regression?
+      placeholder: |
+        Suite:
+        Benchmark or file:
+        Backend:
+        Optimization level:
+    validations:
+      required: true
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Baseline vs current
+      description: Include old result, new result, and how it was measured
+      placeholder: |
+        Baseline:
+        Current:
+        Delta:
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction command
+      description: Exact command or script used to capture the regression
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Host environment
+      description: Host OS, CPU, RAM, Rust, Python, LLVM, backend, and any profile/config details
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Benchmark output, profiler notes, flamegraphs, plots, or commit range
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I compared against a concrete baseline instead of intuition
+        - label: I included the exact workload and command
+        - label: I checked the benchmark methodology or documented why it does not apply

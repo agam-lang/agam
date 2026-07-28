@@ -9,9 +9,13 @@
 *.swo
 __pycache__/
 *.pyc
-crates/agam_ffi/python/dist/
-crates/agam_ffi/python/build/
-crates/agam_ffi/python/*.egg-info/
+integrations/python/.venv/
+integrations/python/dist/
+integrations/python/build/
+integrations/python/src/*.egg-info/
+integrations/python/**/__pycache__/
+integrations/python/.pytest_cache/
+integrations/python/.mypy_cache/
 
 # OS
 .DS_Store
@@ -24,6 +28,11 @@ Thumbs.db
 /dist/
 /CLAUDE.local.md
 /.claude/settings.local.json
+/graphify-out/cache/
+/graphify-out/*.json
+/scratch/*
+!/scratch/README.md
+/fixtures/c-backend-smoke/*.exe
 
 # AI tracking
 .agent/*

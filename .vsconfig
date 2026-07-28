@@ -1,0 +1,32 @@
+{
+  "version": "1.0",
+  "components": [
+    "Microsoft.VisualStudio.Workload.NativeDesktop",
+    "Microsoft.VisualStudio.Workload.NativeCrossPlat",
+    "Microsoft.VisualStudio.Workload.Python",
+    "Microsoft.VisualStudio.Workload.VisualStudioExtension",
+    "Microsoft.VisualStudio.Workload.NativeGame",
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "Microsoft.VisualStudio.Component.VC.Llvm.Clang",
+    "Microsoft.VisualStudio.Component.VC.Llvm.ClangToolset",
+    "Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang",
+    "Microsoft.VisualStudio.Component.VC.ASAN",
+    "Microsoft.VisualStudio.Component.VC.CMake.Project",
+    "Microsoft.VisualStudio.Component.VC.DiagnosticTools",
+    "Microsoft.VisualStudio.Component.CppBuildInsights",
+    "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+    "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit",
+    "Microsoft.VisualStudio.Component.Vcpkg",
+    "Component.MDD.Linux",
+    "Component.Linux.CMake",
+    "Microsoft.Component.PythonTools",
+    "Microsoft.VisualStudio.Component.HLSL",
+    "Microsoft.VisualStudio.Component.Graphics.Tools",
+    "Component.Unreal.Ide",
+    "Component.Unreal.Debugger",
+    "Component.Android.NDK.R27C",
+    "Component.Incredibuild",
+    "Component.IncredibuildMenu",
+    "Microsoft.VisualStudio.Component.VSSDK"
+  ]
+}

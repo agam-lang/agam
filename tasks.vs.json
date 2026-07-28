@@ -1,0 +1,210 @@
+{
+  "version": "0.2.1",
+  "tasks": [
+    {
+      "taskName": "Agam: Build Driver",
+      "appliesTo": "/Cargo.toml",
+      "type": "launch",
+      "contextType": "build",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "cargo-build-driver"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: Clean Workspace",
+      "appliesTo": "/Cargo.toml",
+      "type": "launch",
+      "contextType": "clean",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "cargo-clean"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: Rebuild Driver",
+      "appliesTo": "/Cargo.toml",
+      "type": "launch",
+      "contextType": "rebuild",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "cargo-rebuild-driver"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: VS Status",
+      "appliesTo": "/Cargo.toml",
+      "type": "default",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "status"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: Doctor",
+      "appliesTo": "/Cargo.toml",
+      "type": "default",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "doctor"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: Cargo Check",
+      "appliesTo": "/Cargo.toml",
+      "type": "default",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "cargo-check"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: Cargo Test",
+      "appliesTo": "/Cargo.toml",
+      "type": "default",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "cargo-test"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: Cargo Fmt Check",
+      "appliesTo": "/Cargo.toml",
+      "type": "default",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "cargo-fmt-check"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: LLVM Smoke",
+      "appliesTo": "/Cargo.toml",
+      "type": "default",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "llvm-smoke"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: Build Selected File",
+      "appliesTo": "*.agam",
+      "type": "default",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "build-agam-file",
+        "-Path",
+        "${file}"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    },
+    {
+      "taskName": "Agam: Run Selected File",
+      "appliesTo": "*.agam",
+      "type": "default",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceRoot}\\devops\\scripts\\vs2026-dev.ps1",
+        "-Task",
+        "run-agam-file",
+        "-Path",
+        "${file}"
+      ],
+      "envVars": {
+        "VSCMD_START_DIR": "\"${workspaceRoot}\""
+      }
+    }
+  ]
+}

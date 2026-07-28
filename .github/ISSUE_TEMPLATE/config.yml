@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Support and usage questions
+    url: https://github.com/agam-lang/agam/blob/main/SUPPORT.md
+    about: Read the support routing guide before opening an issue.
+  - name: Security reporting policy
+    url: https://github.com/agam-lang/agam/blob/main/SECURITY.md
+    about: Follow the non-public path for security-sensitive reports.
+  - name: Public roadmap
+    url: https://github.com/agam-lang/agam/blob/main/ROADMAP.md
+    about: Check the current public priorities before proposing new directions.
+  - name: Contributor guide
+    url: https://github.com/agam-lang/agam/blob/main/CONTRIBUTING.md
+    about: Review the local workflow and verification expectations for changes.

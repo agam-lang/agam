@@ -1,0 +1,15 @@
+[package]
+name = "agam_hir"
+description = "High-level intermediate representation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+agam_ast = { workspace = true }
+agam_errors = { workspace = true }
+agam_sema = { workspace = true }
+
+[dev-dependencies]
+agam_lexer = { workspace = true }
+agam_parser = { workspace = true }

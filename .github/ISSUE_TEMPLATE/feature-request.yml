@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a language, runtime, tooling, packaging, or workflow improvement
+title: "[feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for concrete proposals. Keep the problem statement clear and grounded in the current repo.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What concrete pain point or missing capability are you addressing?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should Agam do instead?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals
+      description: What is intentionally not part of this proposal?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impacted areas
+      description: Language surface, sema, MIR, codegen, runtime, packaging, docs, CI, integrations, etc.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Proposal quality
+      options:
+        - label: This request is grounded in the current repo, not only a future idea
+        - label: I checked the roadmap and existing issues first
+        - label: I described tradeoffs or alternatives
