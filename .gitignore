@@ -37,32 +37,6 @@ Thumbs.db
 # AI tracking
 .agent/*
 !.agent/README.md
-!.agent/include/
-!.agent/include/**
-!.agent/rules/
-!.agent/rules/**
-!.agent/commands/
-!.agent/commands/**
-!.agent/agents/
-!.agent/agents/**
-!.agent/policy/
-!.agent/policy/**
-!.agent/phases/
-!.agent/phases/**
-!.agent/skills/
-!.agent/skills/**
-!.agent/research/
-!.agent/research/**
-!.agent/tests/
-!.agent/tests/README.md
-!.agent/test/
-!.agent/test/**
-
-# Benchmark workspace outputs
-/benchmarks/results/raw/*
-!/benchmarks/results/raw/.gitkeep
-/benchmarks/results/aggregated/*
-!/benchmarks/results/aggregated/.gitkeep
 /benchmarks/results/reports/*
 !/benchmarks/results/reports/.gitkeep
 /benchmarks/results/plots/*
