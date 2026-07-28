@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use agam_sema::symbol::TypeId;
 use agam_sema::types::{Type, TypeStore};
 
-use crate::ir::{BasicBlock, Instruction, MirFunction, MirModule, Op, Terminator};
+use crate::ir::{BasicBlock, Instruction, MirFunction, MirModule, Op};
 
 /// A concrete instantiation key: function name + type arguments.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

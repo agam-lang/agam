@@ -65,7 +65,11 @@ impl MirLowering {
             .iter()
             .map(|f| self.lower_function(f))
             .collect();
-        MirModule { functions }
+        MirModule {
+            functions,
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
+        }
     }
 
     fn lower_function(&mut self, func: &HirFunction) -> MirFunction {
@@ -104,6 +108,7 @@ impl MirLowering {
 
         MirFunction {
             name: func.name.clone(),
+            generics: vec![],
             params,
             return_ty: func.return_ty,
             blocks: std::mem::take(&mut self.blocks),
@@ -405,6 +410,10 @@ impl MirLowering {
                 );
                 self.lower_expr(body)
             }
+
+            HirExprKind::StructLiteral { .. }
+            | HirExprKind::EnumVariant { .. }
+            | HirExprKind::Match { .. } => self.emit(ty, Op::Unit),
         }
     }
 }

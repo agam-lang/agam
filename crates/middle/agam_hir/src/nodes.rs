@@ -6,6 +6,8 @@
 //! - Unique IDs for every node.
 //! - Generic parameters preserved for monomorphization.
 
+use std::collections::HashMap;
+
 use agam_sema::gpu::{GpuKernelConfig, GpuKernelParamAbi};
 use agam_sema::symbol::TypeId;
 use agam_sema::target::TargetProfile;

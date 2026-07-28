@@ -79,7 +79,11 @@ impl HirLowering {
             .iter()
             .filter_map(|decl| self.lower_decl(decl))
             .collect();
-        HirModule { functions }
+        HirModule {
+            functions,
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
+        }
     }
 
     fn lower_decl(&mut self, decl: &Decl) -> Option<HirFunction> {
@@ -133,6 +137,7 @@ impl HirLowering {
         let lowered = HirFunction {
             id: self.fresh_id(),
             name: f.name.name.clone(),
+            generics: vec![],
             params,
             return_ty: f
                 .return_type

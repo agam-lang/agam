@@ -618,6 +618,9 @@ fn analyze_function(
                         | Op::GpuKernelLaunch { .. }
                         | Op::GpuSharedAlloc { .. }
                         | Op::GpuIntrinsic { .. }
+                        | Op::EnumConstruct { .. }
+                        | Op::EnumTag(_)
+                        | Op::EnumPayload { .. }
                         | Op::InlineAsm { .. } => default_sign_for_type(result_ty),
                     };
 
@@ -2470,9 +2473,7 @@ impl LlvmEmitter {
             } => {
                 let grid_ref = get_value(values, *grid)?;
                 let block_ref = get_value(values, *block)?;
-                let grid_ref = self.coerce_value(out, &grid_ref, llvm_i64_type())?;
-                let block_ref = self.coerce_value(out, &block_ref, llvm_i64_type())?;
-                let kernel_symbol = gpu_kernel_symbol(kernel_name);
+                let kernel_symbol = format!("agam_gpu_kernel_{}", kernel_name);
                 self.register_external_decl(
                     &kernel_symbol,
                     &format!("declare void @{}()", kernel_symbol),
@@ -2490,12 +2491,6 @@ impl LlvmEmitter {
                 values.insert(
                     instr.result,
                     ValueRef::new(result_ty, result_name.clone(), result_sign),
-                );
-            }
-            Op::GpuSharedAlloc { .. } => {
-                return Err(
-                    "LLVM backend does not lower GPU shared-memory allocations outside the NVPTX emitter"
-                        .into(),
                 );
             }
             Op::GpuSharedAlloc { .. } => {

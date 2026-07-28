@@ -734,35 +734,6 @@ impl Resolver {
         }
     }
 
-    fn resolve_array_type_size(&mut self, size_expr: &Expr) -> Option<usize> {
-        let mut evaluator = ConstEvaluator::new();
-        match evaluator.eval_expect_int(size_expr) {
-            Some(size) if size >= 0 => Some(size as usize),
-            Some(_) => {
-                self.errors.push(ResolveError {
-                    message: "array size must be non-negative".into(),
-                    span: size_expr.span,
-                });
-                None
-            }
-            None => {
-                let message = evaluator
-                    .errors
-                    .into_iter()
-                    .next()
-                    .map(|err| err.message)
-                    .unwrap_or_else(|| {
-                        "array size must be a compile-time integer expression".into()
-                    });
-                self.errors.push(ResolveError {
-                    message,
-                    span: size_expr.span,
-                });
-                None
-            }
-        }
-    }
-
     /// Extract the simple name from a pattern (for binding purposes).
     fn pattern_name(&self, pattern: &agam_ast::pattern::Pattern) -> Option<String> {
         match &pattern.kind {

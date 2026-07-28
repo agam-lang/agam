@@ -797,7 +797,12 @@ fn emit_kernel_instruction(
                 .unwrap();
             }
         }
-        Op::GetField { .. } | Op::Phi(_) | Op::Cast { .. } => {
+        Op::GetField { .. }
+        | Op::Phi(_)
+        | Op::Cast { .. }
+        | Op::EnumConstruct { .. }
+        | Op::EnumTag(_)
+        | Op::EnumPayload { .. } => {
             write!(out, "  ; unhandled GPU op: {:?}\n", instr.op).unwrap();
         }
     }
@@ -873,7 +878,7 @@ fn emit_kernel_terminator(out: &mut String, term: &Terminator) {
             )
             .unwrap();
         }
-        Terminator::Unreachable => {
+        Terminator::Unreachable | Terminator::Switch { .. } => {
             out.push_str("  unreachable\n");
         }
     }

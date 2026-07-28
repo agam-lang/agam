@@ -370,10 +370,6 @@ fn emit_tensor_prelude(out: &mut String) {
 }
 
 fn emit_gpu_host_prelude(out: &mut String) {
-    out.push_str(include_str!("../runtime/gpu_host_prelude.c"));
-}
-
-fn emit_gpu_host_prelude(out: &mut String) {
     out.push_str(
         r#"/* ── Agam GPU Host Runtime ─────────────────── */
 void* agam_gpu_malloc(agam_int size_bytes) {
@@ -853,24 +849,6 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
                 block.0,
                 arg_strs.join(", "),
                 shared_memory_bytes
-            )
-            .unwrap();
-            writeln!(
-                out,
-                "  {} {} = 0; /* kernel launch result */",
-                result_ty.name(),
-                v
-            )
-            .unwrap();
-        }
-        Op::GpuSharedAlloc { element_abi, count } => {
-            writeln!(
-                out,
-                "  {} {} = 0; /* GPU shared alloc {:?}[__v{}] lowers only through the NVPTX emitter */",
-                result_ty.name(),
-                v,
-                element_abi,
-                count.0
             )
             .unwrap();
             writeln!(
