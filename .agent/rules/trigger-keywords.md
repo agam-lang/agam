@@ -12,6 +12,8 @@ When the user enters any of the following trigger keywords in conversation, all 
 | **`"Fix Error"`** or **`"Debug Issue"`** | Inspect un-truncated error logs and tracebacks, identify underlying root causes, apply code fix, and run Stream 0 post-feature verification. | **Stream 0 / 1** |
 | **`"Run Tests"`** or **`"Verify All"`** | Execute `cargo check` and `cargo test` across all 27 workspace crates to verify cross-backend equivalence (LLVM / NVPTX / C / JIT). | **Stream 0** |
 | **`"Weekend Sync"`** or **`"Horizon Review"`** | Execute Stream 2 frontier research synthesis: analyze latest AI/compiler developments (e.g., MiniTriton, Kimi K3), update master specs, and archive digest. | **Stream 2** |
+| **`"Run Benchmark"`** or **`"Bench Target"`** | Trigger benchmark execution (`benchmark-guard` skill), profile compilation throughput (MB/s IR), measure execution latency, and compare against reference baselines. | **Stream 0 / 1** |
+| **`"Recommend Feature"`** or **`"Suggest Feature"`** | Analyze current compiler capability gaps, evaluate T0–T6 catalog, and provide AI-driven strategic feature recommendations based on industry trends (e.g. MiniTriton, Hopper TMA, async I/O). | **Stream 2 (Frontier Horizon Sync)** |
 | **`"Status Report"`** or **`"Check Status"`** | Render current phase progress, active tier state, backend matrix status, and recent `execution.log` entries. | **System** |
 | **`"Handoff"`** or **`"Update Handoff"`** | Refresh `.agent/memory/handoff.md` with current branch, commit hash, active tier, and next instruction for incoming AI agents. | **System** |
 
