@@ -7,7 +7,7 @@ When the user enters any of the following trigger keywords in conversation, all 
 | Trigger Keyword | Operational Action | Stream |
 | :--- | :--- | :--- |
 | **`"Continue Development"`** or **`"Next Task"`** | Read `.agent/specs/active/next.md`, pick up the highest priority uncompleted feature (currently `T0-type-system`), and resume coding across Technical Tiers (T0–T6). | **Stream 1 (Technical Tiers T0–T6)** |
-| **`"Start Debug"`** or **`"Run Stream 0"`** | Execute full Stream 0 verification: `cargo check`, unit/integration tests, multi-backend checks, diagnostic checks,telemetry data or running autonomous fuzzing loops, update `execution.log`, git commit & `git push`. | **Stream 0 (Assurance & Debug)** |
+| **`"Start Debug"`** or **`"Run Stream 0"`** | Execute full Stream 0 debugging & assurance: scan codebase for edge-case bugs, add new unit tests, apply fixes, run `cargo check` & `cargo test`, update `execution.log`, git commit & `git push`.  | **Stream 0 (Assurance & Debug)** |
 | **`"Start Build [Phase]"`** or **`"Construct [Phase]"`** | Begin active code development for the specified Technical Tier (e.g. `T0-type-system`) following pipeline discipline (AST → HIR → MIR → Codegen). | **Stream 1 (Technical Tiers T0–T6)** |
 | **`"Fix Error"`** or **`"Debug Issue"`** | Inspect un-truncated error logs and tracebacks, identify underlying root causes, apply code fix, and run Stream 0 post-feature verification. | **Stream 0 / 1** |
 | **`"Run Tests"`** or **`"Verify All"`** | Execute `cargo check` and `cargo test` across all 27 workspace crates to verify cross-backend equivalence (LLVM / NVPTX / C / JIT). | **Stream 0** |
