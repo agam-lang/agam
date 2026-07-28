@@ -6,9 +6,9 @@ When the user enters any of the following trigger keywords in conversation, all 
 
 | Trigger Keyword | Operational Action | Stream |
 | :--- | :--- | :--- |
-| **`"Continue Development"`** or **`"Next Task"`** | Read `.agent/specs/active/next.md`, pick up the highest priority uncompleted feature (currently `T0-type-system`), and resume Stream 1 coding. | **Stream 1** |
-| **`"Start Debug"`** or **`"Run Stream 0"`** | Execute full Stream 0 verification: `cargo check`, unit/integration tests, multi-backend checks, diagnostic checks, update `execution.log`, git commit & `git push`. | **Stream 0** |
-| **`"Start Build [Phase]"`** or **`"Construct [Phase]"`** | Begin active code development for the specified Technical Tier (e.g. `T0-type-system`) following pipeline discipline (AST → HIR → MIR → Codegen). | **Stream 1** |
+| **`"Continue Development"`** or **`"Next Task"`** | Read `.agent/specs/active/next.md`, pick up the highest priority uncompleted feature (currently `T0-type-system`), and resume coding across Technical Tiers (T0–T6). | **Stream 1 (Technical Tiers T0–T6)** |
+| **`"Start Debug"`** or **`"Run Stream 0"`** | Execute full Stream 0 verification: `cargo check`, unit/integration tests, multi-backend checks, diagnostic checks, update `execution.log`, git commit & `git push`. | **Stream 0 (Assurance & Debug)** |
+| **`"Start Build [Phase]"`** or **`"Construct [Phase]"`** | Begin active code development for the specified Technical Tier (e.g. `T0-type-system`) following pipeline discipline (AST → HIR → MIR → Codegen). | **Stream 1 (Technical Tiers T0–T6)** |
 | **`"Fix Error"`** or **`"Debug Issue"`** | Inspect un-truncated error logs and tracebacks, identify underlying root causes, apply code fix, and run Stream 0 post-feature verification. | **Stream 0 / 1** |
 | **`"Run Tests"`** or **`"Verify All"`** | Execute `cargo check` and `cargo test` across all 27 workspace crates to verify cross-backend equivalence (LLVM / NVPTX / C / JIT). | **Stream 0** |
 | **`"Weekend Sync"`** or **`"Horizon Review"`** | Execute Stream 2 frontier research synthesis: analyze latest AI/compiler developments (e.g., MiniTriton, Kimi K3), update master specs, and archive digest. | **Stream 2** |
