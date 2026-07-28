@@ -53,6 +53,8 @@ Thumbs.db
 !.agent/policy/**
 !.agent/include/
 !.agent/include/**
+!.agent/memory/
+!.agent/memory/**
 /benchmarks/results/reports/*
 !/benchmarks/results/reports/.gitkeep
 /benchmarks/results/plots/*
