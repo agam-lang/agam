@@ -235,7 +235,15 @@ impl TypeStore {
         TypeId(20)
     }
 
-    /// Create a fresh type variable for inference.
+    pub fn option(&mut self, inner: TypeId) -> TypeId {
+        self.insert(Type::Optional(inner))
+    }
+
+    pub fn result(&mut self, ok: TypeId, err: TypeId) -> TypeId {
+        self.insert(Type::Result { ok, err })
+    }
+
+    /// Allocate a fresh type variable for inference.
     pub fn fresh_var(&mut self) -> TypeId {
         let var_id = self.types.len() as u32;
         self.insert(Type::Var(var_id))
@@ -339,6 +347,22 @@ mod tests {
         assert_eq!(
             builtin_type_by_id(TypeId(24)),
             Some(Type::UInt(IntSize::I512))
+        );
+    }
+
+    #[test]
+    fn test_option_and_result_types() {
+        let mut types = TypeStore::new();
+        let opt_i32 = types.option(types.i32());
+        assert_eq!(types.get(opt_i32), &Type::Optional(types.i32()));
+
+        let res_i32_str = types.result(types.i32(), types.str());
+        assert_eq!(
+            types.get(res_i32_str),
+            &Type::Result {
+                ok: types.i32(),
+                err: types.str()
+            }
         );
     }
 }
