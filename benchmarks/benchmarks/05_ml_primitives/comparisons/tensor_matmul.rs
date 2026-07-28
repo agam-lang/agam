@@ -1,3 +1,5 @@
+const DEFAULT_SIZE: i64 = 96;
+
 fn matmul_score(size: i64) -> i64 {
     let mut total = 0;
     for row in 0..size {
@@ -13,6 +15,9 @@ fn matmul_score(size: i64) -> i64 {
 }
 
 fn main() {
-    println!("{}", matmul_score(48));
+    let size = std::env::args()
+        .nth(1)
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_SIZE);
+    println!("{}", matmul_score(size));
 }
-

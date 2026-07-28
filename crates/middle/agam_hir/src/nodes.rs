@@ -4,6 +4,7 @@
 //! - Resolved types on every expression.
 //! - Desugared control flow.
 //! - Unique IDs for every node.
+//! - Generic parameters preserved for monomorphization.
 
 use agam_sema::gpu::{GpuKernelConfig, GpuKernelParamAbi};
 use agam_sema::symbol::TypeId;
@@ -17,6 +18,34 @@ pub struct HirId(pub u32);
 #[derive(Debug)]
 pub struct HirModule {
     pub functions: Vec<HirFunction>,
+    pub enum_layouts: HashMap<String, HirEnumLayout>,
+    pub struct_layouts: HashMap<String, HirStructLayout>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirEnumLayout {
+    pub name: String,
+    pub variants: Vec<HirEnumVariantLayout>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirEnumVariantLayout {
+    pub name: String,
+    pub tag: u32,
+    pub has_payload: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirStructLayout {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+/// A generic parameter in HIR (resolved from AST generic params).
+#[derive(Debug, Clone)]
+pub struct HirGenericParam {
+    pub name: String,
+    pub bounds: Vec<String>,
 }
 
 /// A HIR function.
@@ -24,6 +53,7 @@ pub struct HirModule {
 pub struct HirFunction {
     pub id: HirId,
     pub name: String,
+    pub generics: Vec<HirGenericParam>,
     pub params: Vec<HirParam>,
     pub return_ty: TypeId,
     pub body: HirBlock,
@@ -74,10 +104,46 @@ pub enum HirStmt {
         then_branch: HirBlock,
         else_branch: Option<HirBlock>,
     },
+    /// Match expression lowered to statement.
+    Match {
+        scrutinee: HirExpr,
+        arms: Vec<HirMatchArm>,
+    },
     /// Break (with optional value).
     Break(Option<HirExpr>),
     /// Continue.
     Continue,
+}
+
+/// A match arm in HIR.
+#[derive(Debug)]
+pub struct HirMatchArm {
+    pub pattern: HirPattern,
+    pub guard: Option<HirExpr>,
+    pub body: HirExpr,
+}
+
+/// Simplified pattern in HIR (after desugaring).
+#[derive(Debug)]
+pub enum HirPattern {
+    /// Wildcard or variable binding.
+    Wildcard,
+    /// Variable binding with a name.
+    Bind(String),
+    /// Literal match.
+    Literal(HirExpr),
+    /// Tuple destructure.
+    Tuple(Vec<HirPattern>),
+    /// Enum variant: `Some(x)`, `None`
+    Variant {
+        name: String,
+        fields: Vec<HirPattern>,
+    },
+    /// Struct destructure: `Point { x, y }`
+    Struct {
+        name: String,
+        fields: Vec<(String, HirPattern)>,
+    },
 }
 
 /// HIR expressions — all have a resolved type.
@@ -142,8 +208,26 @@ pub enum HirExprKind {
     Array(Vec<HirExpr>),
     Tuple(Vec<HirExpr>),
 
+    // ── Struct / Enum construction ──
+    /// Struct literal: `Point { x: 1, y: 2 }`
+    StructLiteral {
+        name: String,
+        fields: Vec<(String, HirExpr)>,
+    },
+    /// Enum variant construction: `Some(42)`, `None`
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        fields: Vec<HirExpr>,
+    },
+
     // ── Control flow ──
     Block(HirBlock),
+    /// Match expression (produces a value).
+    Match {
+        scrutinee: Box<HirExpr>,
+        arms: Vec<HirMatchArm>,
+    },
 
     // ── Cast ──
     Cast {

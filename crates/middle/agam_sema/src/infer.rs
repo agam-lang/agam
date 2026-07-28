@@ -208,6 +208,12 @@ impl InferenceEngine {
             // Optionals.
             (Type::Optional(a), Type::Optional(b)) => self.unify(*a, *b, store),
 
+            // Results.
+            (Type::Result { ok: ok1, err: err1 }, Type::Result { ok: ok2, err: err2 }) => {
+                self.unify(*ok1, *ok2, store)?;
+                self.unify(*err1, *err2, store)
+            }
+
             // Slices.
             (Type::Slice(a), Type::Slice(b)) => self.unify(*a, *b, store),
 
@@ -285,6 +291,9 @@ impl InferenceEngine {
                 Ok(())
             }
 
+            // Generic type parameters (from a generic struct/fn definition).
+            (Type::TypeParam(a), Type::TypeParam(b)) if a == b => Ok(()),
+
             // Trait objects.
             (Type::DynTrait(a), Type::DynTrait(b)) if a == b => Ok(()),
 
@@ -300,7 +309,97 @@ impl InferenceEngine {
     pub fn resolve(&mut self, id: TypeId) -> TypeId {
         self.uf.find(id)
     }
+
+    pub fn apply_substitution(
+        &mut self,
+        ty: TypeId,
+        subst: &SubstitutionMap,
+        store: &mut TypeStore,
+    ) -> TypeId {
+        let resolved = self.resolve(ty);
+        let ty_val = store.get(resolved).clone();
+        match ty_val {
+            Type::TypeParam(name) => {
+                if let Some(&concrete) = subst.get(&name) {
+                    concrete
+                } else {
+                    resolved
+                }
+            }
+            Type::Ref { mutable, inner } => {
+                let inner_sub = self.apply_substitution(inner, subst, store);
+                store.insert(Type::Ref {
+                    mutable,
+                    inner: inner_sub,
+                })
+            }
+            Type::Ptr { mutable, inner } => {
+                let inner_sub = self.apply_substitution(inner, subst, store);
+                store.insert(Type::Ptr {
+                    mutable,
+                    inner: inner_sub,
+                })
+            }
+            Type::Optional(inner) => {
+                let inner_sub = self.apply_substitution(inner, subst, store);
+                store.insert(Type::Optional(inner_sub))
+            }
+            Type::Result { ok, err } => {
+                let ok_sub = self.apply_substitution(ok, subst, store);
+                let err_sub = self.apply_substitution(err, subst, store);
+                store.insert(Type::Result {
+                    ok: ok_sub,
+                    err: err_sub,
+                })
+            }
+            Type::Slice(inner) => {
+                let inner_sub = self.apply_substitution(inner, subst, store);
+                store.insert(Type::Slice(inner_sub))
+            }
+            Type::Array { element, size } => {
+                let elem_sub = self.apply_substitution(element, subst, store);
+                store.insert(Type::Array {
+                    element: elem_sub,
+                    size,
+                })
+            }
+            Type::Tuple(elems) => {
+                let elems_sub = elems
+                    .iter()
+                    .map(|&e| self.apply_substitution(e, subst, store))
+                    .collect();
+                store.insert(Type::Tuple(elems_sub))
+            }
+            Type::Function { params, ret } => {
+                let params_sub = params
+                    .iter()
+                    .map(|&p| self.apply_substitution(p, subst, store))
+                    .collect();
+                let ret_sub = self.apply_substitution(ret, subst, store);
+                store.insert(Type::Function {
+                    params: params_sub,
+                    ret: ret_sub,
+                })
+            }
+            Type::Generic { base, args } => {
+                let base_sub = self.apply_substitution(base, subst, store);
+                let args_sub = args
+                    .iter()
+                    .map(|&a| self.apply_substitution(a, subst, store))
+                    .collect();
+                store.insert(Type::Generic {
+                    base: base_sub,
+                    args: args_sub,
+                })
+            }
+            _ => resolved,
+        }
+    }
 }
+
+/// A substitution map for generic type parameters.
+/// Maps type parameter names to their concrete type instantiations.
+pub type SubstitutionMap = std::collections::HashMap<String, TypeId>;
 
 #[cfg(test)]
 mod tests {

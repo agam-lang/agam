@@ -59,6 +59,7 @@ mod tests {
         let mut module = MirModule {
             functions: vec![MirFunction {
                 name: "main".into(),
+                generics: Vec::new(),
                 params: Vec::new(),
                 return_ty: TypeId(0),
                 blocks: Vec::new(),
@@ -66,6 +67,8 @@ mod tests {
                 target: Default::default(),
                 gpu_config: None,
             }],
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
         };
 
         let (escape, promotion) = run_escape_and_promote(&mut module, &CalleePurityInfo);

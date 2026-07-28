@@ -119,6 +119,7 @@ Each benchmark run should produce:
 - human-readable Markdown reports
 - metadata that makes reruns reproducible
 - explicit platform/backend/target identity in every row
+- runtime debug payloads such as stdout hashes and previews when output parity matters
 
 ## Reader Scorecard
 

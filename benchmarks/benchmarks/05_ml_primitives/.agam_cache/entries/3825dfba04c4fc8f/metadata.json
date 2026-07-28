@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "3825dfba04c4fc8f",
+  "key": {
+    "source_hash": "475ee1a565f319e7",
+    "semantic_hash": "f80d2eb00147d262",
+    "backend": "Llvm",
+    "opt_level": 3,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=native;llvm_wsl_allowed=false;llvm_clang=C:\\Program Files\\LLVM\\bin\\clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
+  },
+  "artifact_kind": "NativeBinary",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\benchmarks\\05_ml_primitives\\tensor_matmul.agam",
+  "artifact_name": "agam_llvm_o3_call_cache_off.exe",
+  "bytes": 162816,
+  "created_unix_ms": 1777996662253,
+  "last_used_unix_ms": 1777996662808
+}

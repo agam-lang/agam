@@ -126,7 +126,7 @@ impl Parser {
         self.skip_newlines();
         let span_start = self.peek().span.start;
         let vis = self.parse_visibility();
-        let annotations = self.parse_annotations();
+        let annotations = self.parse_annotations()?;
 
         let kind = match self.peek_kind() {
             TokenKind::Fn | TokenKind::Async => {
@@ -140,8 +140,18 @@ impl Parser {
             TokenKind::Impl => DeclKind::Impl(self.parse_impl_decl()?),
             TokenKind::Mod => DeclKind::Module(self.parse_module_decl(vis)?),
             TokenKind::Use | TokenKind::Import => DeclKind::Use(self.parse_use_decl(vis)?),
+            TokenKind::Type => {
+                let (name, generics, ty) = self.parse_type_alias_decl()?;
+                DeclKind::TypeAlias {
+                    name,
+                    generics,
+                    ty,
+                    visibility: vis,
+                }
+            }
             TokenKind::Effect => DeclKind::Effect(self.parse_effect_decl(vis)?),
             TokenKind::Handle => DeclKind::Handler(self.parse_handler_decl()?),
+            TokenKind::Constraint => DeclKind::Constraint(self.parse_constraint_decl(vis)?),
             _ => {
                 let stmt = self.parse_statement()?;
                 return Ok(Decl {
@@ -183,7 +193,7 @@ impl Parser {
         }
     }
 
-    fn parse_annotations(&mut self) -> Vec<Annotation> {
+    fn parse_annotations(&mut self) -> Result<Vec<Annotation>, ParseError> {
         let mut anns = Vec::new();
         while self.peek_kind() == TokenKind::At {
             let start = self.peek().span.start;
@@ -191,6 +201,7 @@ impl Parser {
 
             let mut name_parts = Vec::new();
             let mut end_span = start;
+            let mut args = Vec::new();
 
             while self.peek_kind() == TokenKind::Identifier {
                 let t = self.advance().clone();
@@ -204,6 +215,16 @@ impl Parser {
                 }
             }
 
+            if self.eat(TokenKind::LParen) {
+                while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                    args.push(self.parse_expression(0)?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                end_span = self.expect(TokenKind::RParen)?.span.end;
+            }
+
             if !name_parts.is_empty() {
                 let name = Ident::new(
                     name_parts.join("."),
@@ -211,13 +232,54 @@ impl Parser {
                 );
                 anns.push(Annotation {
                     name,
-                    args: vec![],
+                    args,
                     span: Span::new(self.peek().span.source_id, start, end_span),
                 });
             }
             self.skip_newlines();
         }
-        anns
+        Ok(anns)
+    }
+
+    fn parse_generic_params(&mut self) -> Result<Vec<GenericParam>, ParseError> {
+        let mut params = Vec::new();
+        if self.eat(TokenKind::Lt) {
+            while self.peek_kind() != TokenKind::Gt && !self.at_end() {
+                let name_tok = self.expect(TokenKind::Identifier)?;
+                let name = Ident::new(&name_tok.lexeme, name_tok.span);
+
+                let mut bounds = Vec::new();
+                if self.eat(TokenKind::Colon) {
+                    bounds.push(self.parse_type_expr()?);
+                    while self.eat(TokenKind::Plus) {
+                        bounds.push(self.parse_type_expr()?);
+                    }
+                }
+
+                let default = if self.eat(TokenKind::Eq) {
+                    Some(self.parse_type_expr()?)
+                } else {
+                    None
+                };
+
+                params.push(GenericParam {
+                    name,
+                    bounds,
+                    default,
+                    span: Span::new(
+                        name_tok.span.source_id,
+                        name_tok.span.start,
+                        self.peek().span.end,
+                    ),
+                });
+
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::Gt)?;
+        }
+        Ok(params)
     }
 
     fn parse_function_decl(
@@ -229,6 +291,8 @@ impl Parser {
         let fn_tok = self.expect(TokenKind::Fn)?;
         let name_tok = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(&name_tok.lexeme, name_tok.span);
+
+        let generics = self.parse_generic_params()?;
 
         self.expect(TokenKind::LParen)?;
         let params = self.parse_param_list()?;
@@ -248,7 +312,7 @@ impl Parser {
 
         Ok(FunctionDecl {
             name,
-            generics: vec![],
+            generics,
             params,
             return_type,
             body,
@@ -303,6 +367,7 @@ impl Parser {
         self.advance(); // struct/class
         let name_tok = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(&name_tok.lexeme, name_tok.span);
+        let generics = self.parse_generic_params()?;
         self.eat(TokenKind::Colon);
         self.skip_newlines();
         let mut fields = Vec::new();
@@ -337,7 +402,7 @@ impl Parser {
         self.eat(TokenKind::RBrace);
         Ok(StructDecl {
             name,
-            generics: vec![],
+            generics,
             fields,
             visibility: vis,
             annotations,
@@ -349,6 +414,7 @@ impl Parser {
         self.advance(); // enum
         let name_tok = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(&name_tok.lexeme, name_tok.span);
+        let generics = self.parse_generic_params()?;
         self.eat(TokenKind::Colon);
         self.skip_newlines();
         self.eat(TokenKind::LBrace);
@@ -367,6 +433,32 @@ impl Parser {
                 }
                 self.expect(TokenKind::RParen)?;
                 VariantFields::Tuple(types)
+            } else if self.eat(TokenKind::LBrace) {
+                let mut struct_fields = Vec::new();
+                self.skip_newlines();
+                while self.peek_kind() == TokenKind::Identifier
+                    || self.peek_kind() == TokenKind::Pub
+                {
+                    let fvis = self.parse_visibility();
+                    let fname_tok = self.expect(TokenKind::Identifier)?;
+                    let fname = Ident::new(&fname_tok.lexeme, fname_tok.span);
+                    self.expect(TokenKind::Colon)?;
+                    let fty = self.parse_type_expr()?;
+                    struct_fields.push(FieldDecl {
+                        name: fname,
+                        ty: fty,
+                        default: None,
+                        visibility: fvis,
+                        span: fname_tok.span,
+                    });
+                    self.eat(TokenKind::Comma);
+                    self.skip_newlines();
+                    if self.peek_kind() == TokenKind::RBrace {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RBrace)?;
+                VariantFields::Struct(struct_fields)
             } else {
                 VariantFields::Unit
             };
@@ -381,7 +473,7 @@ impl Parser {
         self.eat(TokenKind::RBrace);
         Ok(EnumDecl {
             name,
-            generics: vec![],
+            generics,
             variants,
             visibility: vis,
             span: name_tok.span,
@@ -392,6 +484,7 @@ impl Parser {
         self.advance(); // trait
         let name_tok = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(&name_tok.lexeme, name_tok.span);
+        let generics = self.parse_generic_params()?;
         self.eat(TokenKind::Colon);
         self.skip_newlines();
         self.eat(TokenKind::LBrace);
@@ -405,7 +498,7 @@ impl Parser {
         self.eat(TokenKind::RBrace);
         Ok(TraitDecl {
             name,
-            generics: vec![],
+            generics,
             super_traits: vec![],
             items,
             visibility: vis,
@@ -415,6 +508,7 @@ impl Parser {
 
     fn parse_impl_decl(&mut self) -> Result<ImplDecl, ParseError> {
         let start = self.advance().span; // impl
+        let generics = self.parse_generic_params()?;
         let target = self.parse_type_expr()?;
         self.eat(TokenKind::Colon);
         self.skip_newlines();
@@ -430,7 +524,7 @@ impl Parser {
         }
         self.eat(TokenKind::RBrace);
         Ok(ImplDecl {
-            generics: vec![],
+            generics,
             trait_path: None,
             target_type: target,
             items,
@@ -467,6 +561,43 @@ impl Parser {
             items: None,
             visibility: vis,
             span: start,
+        })
+    }
+
+    fn parse_type_alias_decl(
+        &mut self,
+    ) -> Result<(Ident, Vec<GenericParam>, TypeExpr), ParseError> {
+        self.advance(); // type
+        let name_tok = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(&name_tok.lexeme, name_tok.span);
+        let generics = self.parse_generic_params()?;
+        self.expect(TokenKind::Eq)?;
+        let ty = self.parse_type_expr()?;
+        self.eat(TokenKind::Semicolon);
+        self.skip_newlines();
+        Ok((name, generics, ty))
+    }
+
+    /// Parse `constraint Name = Trait1 + Trait2 + ...`
+    fn parse_constraint_decl(&mut self, vis: Visibility) -> Result<ConstraintDecl, ParseError> {
+        let start = self.advance().span; // constraint
+        let name_tok = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(&name_tok.lexeme, name_tok.span);
+        self.expect(TokenKind::Eq)?;
+
+        let mut bounds = Vec::new();
+        bounds.push(self.parse_type_expr()?);
+        while self.eat(TokenKind::Plus) {
+            bounds.push(self.parse_type_expr()?);
+        }
+        self.eat(TokenKind::Semicolon);
+        self.skip_newlines();
+
+        Ok(ConstraintDecl {
+            name,
+            bounds,
+            visibility: vis,
+            span: Span::new(start.source_id, start.start, self.peek().span.end),
         })
     }
 
@@ -942,9 +1073,34 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
-                let expr = self.parse_expression(0)?;
-                self.expect(TokenKind::RParen)?;
-                Ok(expr)
+                if self.peek_kind() == TokenKind::RParen {
+                    self.advance();
+                    Ok(Expr {
+                        id,
+                        span: tok.span,
+                        kind: ExprKind::TupleLiteral(Vec::new()),
+                    })
+                } else {
+                    let first = self.parse_expression(0)?;
+                    if self.eat(TokenKind::Comma) {
+                        let mut elements = vec![first];
+                        while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                            elements.push(self.parse_expression(0)?);
+                            if !self.eat(TokenKind::Comma) {
+                                break;
+                            }
+                        }
+                        self.expect(TokenKind::RParen)?;
+                        Ok(Expr {
+                            id,
+                            span: tok.span,
+                            kind: ExprKind::TupleLiteral(elements),
+                        })
+                    } else {
+                        self.expect(TokenKind::RParen)?;
+                        Ok(first)
+                    }
+                }
             }
             TokenKind::LBracket => {
                 self.advance();
@@ -982,6 +1138,18 @@ impl Parser {
                     span: tok.span,
                     kind: ExprKind::Unary {
                         op: UnaryOp::Not,
+                        operand: Box::new(operand),
+                    },
+                })
+            }
+            TokenKind::Star => {
+                self.advance();
+                let operand = self.parse_expression(15)?;
+                Ok(Expr {
+                    id,
+                    span: tok.span,
+                    kind: ExprKind::Unary {
+                        op: UnaryOp::Deref,
                         operand: Box::new(operand),
                     },
                 })
@@ -1068,8 +1236,78 @@ impl Parser {
                     },
                 })
             }
+            TokenKind::Match => self.parse_match_expr(),
             _ => Err(self.error(format!("expected expression, found {:?}", tok.kind))),
         }
+    }
+
+    fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
+        let start = self.advance().span; // match
+        let scrutinee = self.parse_expression(0)?;
+
+        let mut arms = Vec::new();
+        let end_span;
+
+        if self.eat(TokenKind::Colon) {
+            self.skip_newlines();
+            // Optional indent
+            let has_indent = self.eat(TokenKind::Indent);
+            while self.peek_kind() != TokenKind::Dedent && !self.at_end() {
+                let pat = self.parse_pattern()?;
+                let guard = if self.eat(TokenKind::If) {
+                    Some(self.parse_expression(0)?)
+                } else {
+                    None
+                };
+                self.expect(TokenKind::FatArrow)?;
+                let body = self.parse_expression(0)?;
+                arms.push(MatchArm {
+                    pattern: pat,
+                    guard,
+                    span: body.span,
+                    body,
+                });
+                self.eat(TokenKind::Comma);
+                self.skip_newlines();
+            }
+            if has_indent {
+                end_span = self.expect(TokenKind::Dedent)?.span;
+            } else {
+                end_span = arms.last().map(|a| a.span).unwrap_or(start);
+            }
+        } else {
+            self.skip_newlines();
+            self.expect(TokenKind::LBrace)?;
+            self.skip_newlines();
+            while self.peek_kind() != TokenKind::RBrace && !self.at_end() {
+                let pat = self.parse_pattern()?;
+                let guard = if self.eat(TokenKind::If) {
+                    Some(self.parse_expression(0)?)
+                } else {
+                    None
+                };
+                self.expect(TokenKind::FatArrow)?;
+                let body = self.parse_expression(0)?;
+                arms.push(MatchArm {
+                    pattern: pat,
+                    guard,
+                    span: body.span,
+                    body,
+                });
+                self.eat(TokenKind::Comma);
+                self.skip_newlines();
+            }
+            end_span = self.expect(TokenKind::RBrace)?.span;
+        }
+
+        Ok(Expr {
+            id: self.node_id(),
+            span: Span::new(start.source_id, start.start, end_span.end),
+            kind: ExprKind::Match {
+                scrutinee: Box::new(scrutinee),
+                arms,
+            },
+        })
     }
 
     fn infix_binding_power(&self) -> Option<(u8, Assoc)> {
@@ -1373,20 +1611,18 @@ impl Parser {
 
         match tok.kind {
             TokenKind::Identifier => {
-                self.advance();
+                let path = self.parse_path()?;
+
                 // Handle `Any` as the universal dynamic type
-                if tok.lexeme == "Any" {
+                if path.segments.len() == 1 && path.segments[0].name == "Any" {
                     return Ok(TypeExpr {
                         id,
-                        span: tok.span,
+                        span: path.span,
                         kind: TypeExprKind::Any,
                         mode: TypeMode::Dynamic,
                     });
                 }
-                let path = Path {
-                    segments: vec![Ident::new(&tok.lexeme, tok.span)],
-                    span: tok.span,
-                };
+
                 if self.peek_kind() == TokenKind::Lt {
                     self.advance();
                     let mut args = Vec::new();
@@ -1396,17 +1632,17 @@ impl Parser {
                             break;
                         }
                     }
-                    self.expect(TokenKind::Gt)?;
+                    let gt = self.expect(TokenKind::Gt)?;
                     Ok(TypeExpr {
                         id,
-                        span: tok.span,
+                        span: Span::new(path.span.source_id, path.span.start, gt.span.end),
                         kind: TypeExprKind::Generic { base: path, args },
                         mode: TypeMode::Static,
                     })
                 } else {
                     Ok(TypeExpr {
                         id,
-                        span: tok.span,
+                        span: path.span,
                         kind: TypeExprKind::Named(path),
                         mode: TypeMode::Static,
                     })
@@ -1504,11 +1740,33 @@ impl Parser {
         match tok.kind {
             TokenKind::Identifier => {
                 self.advance();
+                let name = Ident::new(&tok.lexeme, tok.span);
+                if self.eat(TokenKind::LParen) {
+                    let mut fields = Vec::new();
+                    while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                        fields.push(self.parse_pattern()?);
+                        if !self.eat(TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                    self.expect(TokenKind::RParen)?;
+                    return Ok(Pattern {
+                        id,
+                        span: tok.span,
+                        kind: PatternKind::Variant {
+                            path: Path {
+                                segments: vec![name],
+                                span: tok.span,
+                            },
+                            fields,
+                        },
+                    });
+                }
                 Ok(Pattern {
                     id,
                     span: tok.span,
                     kind: PatternKind::Identifier {
-                        name: Ident::new(&tok.lexeme, tok.span),
+                        name,
                         mutable: false,
                     },
                 })
@@ -1678,6 +1936,18 @@ mod tests {
     }
 
     #[test]
+    fn test_unary_deref() {
+        let expr = parse_expr("*ptr");
+        assert!(matches!(
+            expr.kind,
+            ExprKind::Unary {
+                op: UnaryOp::Deref,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn test_array_literal() {
         let expr = parse_expr("[1, 2, 3]");
         if let ExprKind::ArrayLiteral(elems) = &expr.kind {
@@ -1770,6 +2040,21 @@ mod tests {
         } else {
             panic!("not function");
         }
+    }
+
+    #[test]
+    fn test_parse_annotation_arguments() {
+        let module =
+            parse_src("@gpu(threads = 128, shared = 64, grid = (8, 1, 1))\nfn kern(): return 0");
+        let DeclKind::Function(f) = &module.declarations[0].kind else {
+            panic!("expected function");
+        };
+        assert_eq!(f.annotations.len(), 1);
+        assert_eq!(f.annotations[0].args.len(), 3);
+        let ExprKind::Assign { value, .. } = &f.annotations[0].args[2].kind else {
+            panic!("expected grid assignment");
+        };
+        assert!(matches!(value.kind, ExprKind::TupleLiteral(_)));
     }
 
     #[test]

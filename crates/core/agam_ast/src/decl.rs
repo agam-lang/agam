@@ -76,6 +76,9 @@ pub enum DeclKind {
 
     /// Handler: `handle io_handler for IO { fn read() -> String: resume("hello") }`
     Handler(HandlerDecl),
+
+    /// Constraint shorthand (pratyāhāra): `constraint Sortable = Ord + Eq + Clone`
+    Constraint(ConstraintDecl),
 }
 
 /// Visibility modifier.
@@ -273,5 +276,16 @@ pub struct HandlerClause {
     pub op_name: Ident,
     pub params: Vec<Ident>,
     pub body: Expr,
+    pub span: Span,
+}
+
+/// Constraint shorthand declaration (pratyāhāra-inspired):
+/// `constraint Sortable = Ord + Eq + Clone`
+#[derive(Debug, Clone)]
+pub struct ConstraintDecl {
+    pub name: Ident,
+    /// The constituent trait bounds.
+    pub bounds: Vec<TypeExpr>,
+    pub visibility: Visibility,
     pub span: Span,
 }

@@ -460,6 +460,10 @@ fn analyze_function(
                 Op::GpuSharedAlloc { .. } => LlvmType::default_int(),
                 Op::GpuIntrinsic { .. } => LlvmType::default_int(),
                 Op::InlineAsm { .. } => LlvmType::default_int(),
+                Op::EnumConstruct { .. } | Op::EnumPayload { .. } => {
+                    infer_llvm_type_from_type_id(instr.ty).unwrap_or_else(LlvmType::default_int)
+                }
+                Op::EnumTag(_) => LlvmType::default_int(),
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -2037,7 +2041,18 @@ impl LlvmEmitter {
             .get(&func.name)
             .copied()
             .unwrap_or_default();
-        let fn_attr_suffix = format_function_attrs(attrs);
+        let mut fn_attr_suffix = format_function_attrs(attrs);
+        if layout.return_ty.float_spec().is_some()
+            || func.params.iter().any(|param| {
+                infer_llvm_type_from_type_id(param.ty).map_or(false, |t| t.float_spec().is_some())
+            })
+        {
+            if fn_attr_suffix.is_empty() {
+                fn_attr_suffix = " \"denormal_fpenv\"".to_string();
+            } else {
+                fn_attr_suffix.push_str(" \"denormal_fpenv\"");
+            }
+        }
         let is_main = func.name == "main" && specialization.is_none();
 
         // Emit target profile annotation
@@ -2183,7 +2198,7 @@ impl LlvmEmitter {
             Op::ConstFloat(val) => {
                 values.insert(
                     instr.result,
-                    ValueRef::new(result_ty, format!("{val}"), result_sign),
+                    ValueRef::new(result_ty, format!("f0x{:016X}", val.to_bits()), result_sign),
                 );
             }
             Op::ConstBool(val) => {
@@ -2450,12 +2465,19 @@ impl LlvmEmitter {
                 kernel_name,
                 grid,
                 block,
+                shared_memory_bytes,
                 args,
             } => {
-                // GPU kernel launches are handled by the separate GPU module.
-                // In the host module, emit a CUDA runtime API call stub.
                 let grid_ref = get_value(values, *grid)?;
                 let block_ref = get_value(values, *block)?;
+                let grid_ref = self.coerce_value(out, &grid_ref, llvm_i64_type())?;
+                let block_ref = self.coerce_value(out, &block_ref, llvm_i64_type())?;
+                let kernel_symbol = gpu_kernel_symbol(kernel_name);
+                self.register_external_decl(
+                    &kernel_symbol,
+                    &format!("declare void @{}()", kernel_symbol),
+                );
+                let kernel_ptr = format!("%tmp{}", self.fresh_temp_id());
                 writeln!(
                     out,
                     "  ; GPU kernel launch: {}<<<{}, {}>>> ({} args)",
@@ -2467,7 +2489,13 @@ impl LlvmEmitter {
                 .unwrap();
                 values.insert(
                     instr.result,
-                    ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                    ValueRef::new(result_ty, result_name.clone(), result_sign),
+                );
+            }
+            Op::GpuSharedAlloc { .. } => {
+                return Err(
+                    "LLVM backend does not lower GPU shared-memory allocations outside the NVPTX emitter"
+                        .into(),
                 );
             }
             Op::GpuSharedAlloc { .. } => {
@@ -2499,6 +2527,79 @@ impl LlvmEmitter {
                 values.insert(
                     instr.result,
                     ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                );
+            }
+            Op::EnumConstruct { tag, payload } => {
+                let ir_ty = result_ty.ir();
+                writeln!(
+                    out,
+                    "  %v{}_tag = insertvalue {} undef, i32 {}, 0",
+                    instr.result.0, ir_ty, tag
+                )
+                .unwrap();
+                let mut curr_val = format!("%v{}_tag", instr.result.0);
+
+                if !payload.is_empty() {
+                    for (i, p_val) in payload.iter().enumerate() {
+                        let p_ty = values.get(p_val).map(|v| v.ty.ir()).unwrap_or("i8*");
+                        let next_val = if i == payload.len() - 1 {
+                            format!("%v{}", instr.result.0)
+                        } else {
+                            format!("%v{}_p{}", instr.result.0, i)
+                        };
+                        writeln!(
+                            out,
+                            "  {} = insertvalue {} {}, {} %v{}, {}",
+                            next_val,
+                            ir_ty,
+                            curr_val,
+                            p_ty,
+                            p_val.0,
+                            i + 1
+                        )
+                        .unwrap();
+                        curr_val = next_val;
+                    }
+                } else {
+                    writeln!(
+                        out,
+                        "  %v{} = bitcast {} {} to {}",
+                        instr.result.0, ir_ty, curr_val, ir_ty
+                    )
+                    .unwrap();
+                }
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, format!("%v{}", instr.result.0), result_sign),
+                );
+            }
+            Op::EnumTag(value) => {
+                let val_ty = values.get(value).map(|v| v.ty.ir()).unwrap_or("i8*");
+                writeln!(
+                    out,
+                    "  %v{} = extractvalue {} %v{}, 0",
+                    instr.result.0, val_ty, value.0
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, format!("%v{}", instr.result.0), result_sign),
+                );
+            }
+            Op::EnumPayload { value, field_index } => {
+                let val_ty = values.get(value).map(|v| v.ty.ir()).unwrap_or("i8*");
+                writeln!(
+                    out,
+                    "  %v{} = extractvalue {} %v{}, {}",
+                    instr.result.0,
+                    val_ty,
+                    value.0,
+                    field_index + 1
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, format!("%v{}", instr.result.0), result_sign),
                 );
             }
         }
@@ -2992,6 +3093,25 @@ impl LlvmEmitter {
                 )
                 .unwrap();
             }
+            Terminator::Switch {
+                discriminant,
+                cases,
+                default,
+            } => {
+                let discr = get_value(values, *discriminant)?;
+                let discr = self.coerce_value(out, &discr, LlvmType::default_int())?;
+                let cases = cases
+                    .iter()
+                    .map(|(value, target)| format!("i64 {}, label %block_{}", value, target.0))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                writeln!(
+                    out,
+                    "  switch i64 {}, label %block_{} [ {} ]",
+                    discr.repr, default.0, cases
+                )
+                .unwrap();
+            }
             Terminator::Unreachable => {
                 writeln!(out, "  unreachable").unwrap();
             }
@@ -3151,6 +3271,28 @@ impl LlvmEmitter {
                     value.repr.clone(),
                     infer_cast_sign(value.ty, target, value.sign),
                 ));
+            }
+            (LlvmType::OpaquePtr, LlvmType::Int(int_ty)) => {
+                writeln!(
+                    out,
+                    "  {} = ptrtoaddr {} {} to {}",
+                    temp,
+                    value.ty.ir(),
+                    value.repr,
+                    int_ty.ir()
+                )
+                .unwrap();
+            }
+            (LlvmType::Int(int_ty), LlvmType::OpaquePtr) => {
+                writeln!(
+                    out,
+                    "  {} = inttoptr {} {} to {}",
+                    temp,
+                    int_ty.ir(),
+                    value.repr,
+                    target.ir()
+                )
+                .unwrap();
             }
             _ => {
                 return Err(format!(

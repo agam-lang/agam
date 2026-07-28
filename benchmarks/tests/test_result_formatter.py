@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,10 @@ class ResultFormatterTests(unittest.TestCase):
                 "delta_percent": None,
                 "time_complexity": "O(phi^n)",
                 "space_complexity": "O(n)",
+                "stdout_preview": "55",
+                "stderr_preview": "",
+                "stdout_hashes": ["hash-fast"],
+                "stdout_mismatch_detected": False,
             },
             {
                 "platform": "win11",
@@ -43,6 +48,10 @@ class ResultFormatterTests(unittest.TestCase):
                 "delta_percent": None,
                 "time_complexity": "O(phi^n)",
                 "space_complexity": "O(n)",
+                "stdout_preview": "55",
+                "stderr_preview": "",
+                "stdout_hashes": ["hash-slow"],
+                "stdout_mismatch_detected": False,
             },
         ]
         memory = [
@@ -142,10 +151,13 @@ class ResultFormatterTests(unittest.TestCase):
                 root / "aggregated",
                 root / "reports",
             )
+            raw_rows = json.loads((root / "raw" / "performance.json").read_text(encoding="utf-8"))
             with (root / "aggregated" / "scorecard_summary.csv").open(encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
 
         self.assertEqual(len(rows), 2)
+        self.assertEqual(raw_rows[0]["stdout_preview"], "55")
+        self.assertEqual(raw_rows[0]["stdout_hashes"], ["hash-fast"])
         self.assertEqual(rows[0]["target_id"], "fast")
         self.assertEqual(rows[0]["winner"], "True")
         self.assertGreater(float(rows[0]["overall_score"]), float(rows[1]["overall_score"]))

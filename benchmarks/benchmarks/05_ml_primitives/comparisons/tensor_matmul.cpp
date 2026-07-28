@@ -1,4 +1,7 @@
 #include <iostream>
+#include <cstdlib>
+
+static constexpr long long DEFAULT_SIZE = 96;
 
 static long long matmul_score(long long size) {
     long long total = 0;
@@ -14,7 +17,8 @@ static long long matmul_score(long long size) {
     return total;
 }
 
-int main() {
-    std::cout << matmul_score(48) << '\n';
+int main(int argc, char** argv) {
+    const long long size = argc > 1 ? std::strtoll(argv[1], nullptr, 10) : DEFAULT_SIZE;
+    std::cout << matmul_score(size) << '\n';
     return 0;
 }

@@ -3,10 +3,12 @@
 //! These are the *resolved* types used during type checking, distinct
 //! from the AST's `TypeExpr` which is a syntactic representation.
 
+use std::collections::HashMap;
+
 use crate::symbol::{SymbolId, TypeId};
 
 /// A resolved type in Agam's type system.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     // ── Primitives ──
     /// Signed integers: i8, i16, i32, i64, i128, i256, i512, isize
@@ -39,12 +41,16 @@ pub enum Type {
     Ptr { mutable: bool, inner: TypeId },
     /// Optional: T?
     Optional(TypeId),
+    /// Result: Result<T, E>
+    Result { ok: TypeId, err: TypeId },
 
     // ── Named / User-defined ──
     /// A named type referencing its symbol: struct, enum, type alias
     Named(SymbolId),
     /// A generic instantiation: Vec<i32>, HashMap<String, i32>
     Generic { base: TypeId, args: Vec<TypeId> },
+    /// A generic type parameter from a definition: `T`
+    TypeParam(String),
 
     // ── Functions ──
     /// Function type: fn(A, B) -> C
@@ -66,7 +72,7 @@ pub enum Type {
 }
 
 /// Integer size variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IntSize {
     I8,
     I16,
@@ -79,7 +85,7 @@ pub enum IntSize {
 }
 
 /// Floating-point size variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloatSize {
     F32,
     F64,
@@ -89,13 +95,20 @@ pub enum FloatSize {
 ///
 /// Types are interned: each unique type gets exactly one `TypeId`.
 /// This makes type comparison O(1) by ID instead of structural.
+///
+/// Uses a `HashMap` dedup index for O(1) amortized insert lookups
+/// (previously O(n) linear scan — quadratic on real programs).
 pub struct TypeStore {
     types: Vec<Type>,
+    dedup: HashMap<Type, TypeId>,
 }
 
 impl TypeStore {
     pub fn new() -> Self {
-        let mut store = Self { types: Vec::new() };
+        let mut store = Self {
+            types: Vec::new(),
+            dedup: HashMap::new(),
+        };
         // Pre-populate with well-known primitives so they have stable IDs.
         store.insert(Type::Unit); // TypeId(0)
         store.insert(Type::Bool); // TypeId(1)
@@ -126,14 +139,15 @@ impl TypeStore {
     }
 
     /// Insert a new type, returning its ID.
+    ///
+    /// O(1) amortized via HashMap dedup — duplicate types return the
+    /// existing ID without allocating.
     pub fn insert(&mut self, ty: Type) -> TypeId {
-        // Simple linear scan for dedup; good enough for now.
-        for (i, existing) in self.types.iter().enumerate() {
-            if *existing == ty {
-                return TypeId(i as u32);
-            }
+        if let Some(&id) = self.dedup.get(&ty) {
+            return id;
         }
         let id = TypeId(self.types.len() as u32);
+        self.dedup.insert(ty.clone(), id);
         self.types.push(ty);
         id
     }

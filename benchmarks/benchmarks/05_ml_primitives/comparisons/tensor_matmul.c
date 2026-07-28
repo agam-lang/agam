@@ -1,4 +1,7 @@
 #include <stdio.h>
+#include <stdlib.h>
+
+static const long long DEFAULT_SIZE = 96;
 
 static long long matmul_score(long long size) {
     long long total = 0;
@@ -14,7 +17,8 @@ static long long matmul_score(long long size) {
     return total;
 }
 
-int main(void) {
-    printf("%lld\n", matmul_score(48));
+int main(int argc, char** argv) {
+    const long long size = argc > 1 ? strtoll(argv[1], NULL, 10) : DEFAULT_SIZE;
+    printf("%lld\n", matmul_score(size));
     return 0;
 }

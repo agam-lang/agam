@@ -11,4 +11,5 @@
 pub mod analysis;
 pub mod ir;
 pub mod lower;
+pub mod monomorphize;
 pub mod opt;

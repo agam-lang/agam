@@ -3,6 +3,10 @@
 //! A `Symbol` represents a named entity (variable, function, type, module)
 //! that has been declared in the program. Symbols carry resolved type
 //! information and metadata used by later compiler passes.
+//!
+//! Enum variants carry full field info (`EnumVariantInfo`) to support
+//! type-checked pattern matching, exhaustiveness checking, and
+//! constructor resolution.
 
 use agam_errors::Span;
 use serde::{Deserialize, Serialize};
@@ -21,11 +25,15 @@ pub enum SymbolKind {
         params: Vec<TypeId>,
         return_ty: TypeId,
         is_async: bool,
+        generics: Vec<String>,
     },
     /// A struct type declaration.
     Struct { fields: Vec<(String, TypeId)> },
-    /// An enum type declaration.
-    Enum { variants: Vec<String> },
+    /// An enum type declaration with full variant detail.
+    Enum {
+        variants: Vec<EnumVariantInfo>,
+        generics: Vec<String>,
+    },
     /// A trait declaration.
     Trait { methods: Vec<String> },
     /// A module.
@@ -36,6 +44,8 @@ pub enum SymbolKind {
     Constant { ty: TypeId },
     /// A generic type parameter.
     TypeParam { bounds: Vec<TypeId> },
+    /// A constraint shorthand (pratyāhāra): `constraint Sortable = Ord + Eq + Clone`.
+    Constraint { bounds: Vec<TypeId> },
 }
 
 /// Unique identifier for an internal resolved type.
@@ -57,4 +67,22 @@ pub struct Symbol {
     pub depth: u32,
     /// Whether this symbol has been referenced (for dead-code warnings).
     pub used: bool,
+}
+
+/// Detailed information about an enum variant for type checking.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariantInfo {
+    pub name: String,
+    pub fields: VariantFieldKind,
+}
+
+/// The kind of fields an enum variant carries.
+#[derive(Debug, Clone, PartialEq)]
+pub enum VariantFieldKind {
+    /// No fields: `None`, `Red`
+    Unit,
+    /// Positional fields: `Some(T)`, `Ok(T)`
+    Tuple(Vec<TypeId>),
+    /// Named fields: `Variant { x: i32, y: i32 }`
+    Struct(Vec<(String, TypeId)>),
 }

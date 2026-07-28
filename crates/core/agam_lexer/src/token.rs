@@ -112,6 +112,8 @@ pub enum TokenKind {
     Resume,
     /// `perform` — perform an effect operation
     Perform,
+    /// `constraint` — pratyāhāra constraint shorthand
+    Constraint,
 
     // ── Operators ────────────────────────────────────────
     /// `+`
@@ -278,6 +280,7 @@ impl TokenKind {
                 | TokenKind::Handle
                 | TokenKind::Resume
                 | TokenKind::Perform
+                | TokenKind::Constraint
                 | TokenKind::True
                 | TokenKind::False
         )
@@ -376,6 +379,7 @@ pub fn lookup_keyword(ident: &str) -> Option<TokenKind> {
         "handle" => Some(TokenKind::Handle),
         "resume" => Some(TokenKind::Resume),
         "perform" => Some(TokenKind::Perform),
+        "constraint" => Some(TokenKind::Constraint),
         "true" => Some(TokenKind::True),
         "false" => Some(TokenKind::False),
         _ => None,

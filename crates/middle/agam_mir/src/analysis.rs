@@ -270,6 +270,7 @@ mod tests {
                 .enumerate()
                 .map(|(index, name)| MirFunction {
                     name: (*name).into(),
+                    generics: Vec::new(),
                     params: Vec::new(),
                     return_ty: TypeId(0),
                     blocks: Vec::new(),
@@ -278,12 +279,15 @@ mod tests {
                     gpu_config: None,
                 })
                 .collect(),
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
         }
     }
 
     fn function_with_calls(name: &str, callees: &[&str]) -> MirFunction {
         MirFunction {
             name: name.into(),
+            generics: Vec::new(),
             params: Vec::new(),
             return_ty: TypeId(0),
             blocks: vec![BasicBlock {
@@ -388,6 +392,8 @@ mod tests {
     fn semantic_rejections_mark_clock_based_functions_impure() {
         let module = MirModule {
             functions: vec![function_with_calls("nowish", &["clock"])],
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
         };
 
         let reasons = semantic_call_cache_rejection_reasons(&module);
@@ -407,6 +413,8 @@ mod tests {
                 function_with_calls("arg_count", &["argc"]),
                 function_with_calls("outer", &["arg_count"]),
             ],
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
         };
 
         let reasons = semantic_call_cache_rejection_reasons(&module);
@@ -422,6 +430,8 @@ mod tests {
                 function_with_calls("nowish", &["clock"]),
                 function_with_calls("outer", &["nowish"]),
             ],
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
         };
 
         let reasons = semantic_call_cache_rejection_reasons(&module);

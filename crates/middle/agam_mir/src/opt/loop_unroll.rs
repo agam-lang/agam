@@ -117,19 +117,25 @@ fn collect_predecessors(function: &MirFunction) -> HashMap<BlockId, Vec<BlockId>
     let mut predecessors: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
 
     for block in &function.blocks {
-        match block.terminator {
+        match &block.terminator {
             Terminator::Jump(target) => {
-                predecessors.entry(target).or_default().push(block.id);
+                predecessors.entry(*target).or_default().push(block.id);
             }
             Terminator::Branch {
                 then_block,
                 else_block,
                 ..
             } => {
-                predecessors.entry(then_block).or_default().push(block.id);
-                predecessors.entry(else_block).or_default().push(block.id);
+                predecessors.entry(*then_block).or_default().push(block.id);
+                predecessors.entry(*else_block).or_default().push(block.id);
             }
             Terminator::Return(_) | Terminator::ReturnVoid | Terminator::Unreachable => {}
+            Terminator::Switch { default, cases, .. } => {
+                predecessors.entry(*default).or_default().push(block.id);
+                for (_, target) in cases {
+                    predecessors.entry(*target).or_default().push(block.id);
+                }
+            }
         }
     }
 
@@ -424,11 +430,13 @@ fn clone_op(op: &Op, value_map: &HashMap<ValueId, ValueId>) -> Op {
             kernel_name,
             grid,
             block,
+            shared_memory_bytes,
             args,
         } => Op::GpuKernelLaunch {
             kernel_name: kernel_name.clone(),
             grid: remap_value(*grid, value_map),
             block: remap_value(*block, value_map),
+            shared_memory_bytes: *shared_memory_bytes,
             args: args
                 .iter()
                 .map(|arg| remap_value(*arg, value_map))
@@ -456,6 +464,15 @@ fn clone_op(op: &Op, value_map: &HashMap<ValueId, ValueId>) -> Op {
                 .iter()
                 .map(|arg| remap_value(*arg, value_map))
                 .collect(),
+        },
+        Op::EnumConstruct { tag, payload } => Op::EnumConstruct {
+            tag: *tag,
+            payload: payload.iter().map(|v| remap_value(*v, value_map)).collect(),
+        },
+        Op::EnumTag(v) => Op::EnumTag(remap_value(*v, value_map)),
+        Op::EnumPayload { value, field_index } => Op::EnumPayload {
+            value: remap_value(*value, value_map),
+            field_index: *field_index,
         },
     }
 }

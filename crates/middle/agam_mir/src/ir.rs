@@ -17,6 +17,10 @@ pub struct BlockId(pub u32);
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MirFunction {
     pub name: String,
+    /// Generic type parameter names (e.g. `["T", "U"]`).
+    /// Empty for non-generic functions.
+    #[serde(default)]
+    pub generics: Vec<String>,
     pub params: Vec<MirParam>,
     pub return_ty: TypeId,
     pub blocks: Vec<BasicBlock>,
@@ -142,6 +146,8 @@ pub enum Op {
         kernel_name: String,
         grid: ValueId,
         block: ValueId,
+        #[serde(default)]
+        shared_memory_bytes: u32,
         args: Vec<ValueId>,
     },
 
@@ -163,6 +169,15 @@ pub enum Op {
         constraints: String,
         args: Vec<ValueId>,
     },
+
+    // ── Tagged Union (Enum) Operations ──
+    /// Construct an enum variant: tag + optional payload.
+    /// `EnumConstruct { tag: 0, payload: [v1] }` → `Some(v1)`
+    EnumConstruct { tag: u32, payload: Vec<ValueId> },
+    /// Extract the tag from a tagged union value.
+    EnumTag(ValueId),
+    /// Extract the payload of a tagged union (after tag check).
+    EnumPayload { value: ValueId, field_index: u32 },
 }
 
 /// Specialized hardware intrinsics for the GPU.
@@ -233,12 +248,40 @@ pub enum Terminator {
         then_block: BlockId,
         else_block: BlockId,
     },
+    /// Multi-way branch for match/switch on an integer tag.
+    /// Maps tag values to target blocks, with a default fallthrough.
+    Switch {
+        discriminant: ValueId,
+        cases: Vec<(i64, BlockId)>,
+        default: BlockId,
+    },
     /// Unreachable (after diverging expressions like `panic!`).
     Unreachable,
 }
 
-/// A complete MIR module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumLayout {
+    pub name: String,
+    pub variants: Vec<EnumVariantLayout>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumVariantLayout {
+    pub name: String,
+    pub tag: u32,
+    pub has_payload: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StructLayout {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
+/// A complete MIR module containing functions.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MirModule {
     pub functions: Vec<MirFunction>,
+    pub enum_layouts: std::collections::HashMap<String, EnumLayout>,
+    pub struct_layouts: std::collections::HashMap<String, StructLayout>,
 }

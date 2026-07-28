@@ -16,7 +16,7 @@ use agam_errors::Span;
 
 use crate::consteval::ConstEvaluator;
 use crate::scope::ScopeStack;
-use crate::symbol::{SymbolKind, TypeId};
+use crate::symbol::{EnumVariantInfo, SymbolKind, TypeId, VariantFieldKind};
 use crate::types::TypeStore;
 
 /// Errors produced during name resolution.
@@ -64,12 +64,15 @@ impl Resolver {
                 let ret_ty = self.types.fresh_var();
                 let param_tys: Vec<TypeId> =
                     f.params.iter().map(|_| self.types.fresh_var()).collect();
+                let generics: Vec<String> =
+                    f.generics.iter().map(|g| g.name.name.clone()).collect();
                 if let Err(prev) = self.scopes.declare(
                     f.name.name.clone(),
                     SymbolKind::Function {
                         params: param_tys,
                         return_ty: ret_ty,
                         is_async: f.is_async,
+                        generics,
                     },
                     f.span,
                 ) {
@@ -94,10 +97,38 @@ impl Resolver {
                         .declare(s.name.name.clone(), SymbolKind::Struct { fields }, s.span);
             }
             DeclKind::Enum(e) => {
-                let variants = e.variants.iter().map(|v| v.name.name.clone()).collect();
-                let _ =
-                    self.scopes
-                        .declare(e.name.name.clone(), SymbolKind::Enum { variants }, e.span);
+                let variants: Vec<EnumVariantInfo> = e
+                    .variants
+                    .iter()
+                    .map(|v| {
+                        let fields = match &v.fields {
+                            VariantFields::Unit => VariantFieldKind::Unit,
+                            VariantFields::Tuple(tys) => VariantFieldKind::Tuple(
+                                tys.iter()
+                                    .map(|t| self.resolve_type_expr_to_id(t))
+                                    .collect(),
+                            ),
+                            VariantFields::Struct(fields) => VariantFieldKind::Struct(
+                                fields
+                                    .iter()
+                                    .map(|f| {
+                                        (f.name.name.clone(), self.resolve_type_expr_to_id(&f.ty))
+                                    })
+                                    .collect(),
+                            ),
+                        };
+                        EnumVariantInfo {
+                            name: v.name.name.clone(),
+                            fields,
+                        }
+                    })
+                    .collect();
+                let generics = e.generics.iter().map(|g| g.name.name.clone()).collect();
+                let _ = self.scopes.declare(
+                    e.name.name.clone(),
+                    SymbolKind::Enum { variants, generics },
+                    e.span,
+                );
             }
             DeclKind::Trait(t) => {
                 let methods = t
@@ -123,6 +154,18 @@ impl Resolver {
                     name.name.clone(),
                     SymbolKind::TypeAlias { target },
                     ty.span,
+                );
+            }
+            DeclKind::Constraint(c) => {
+                let bounds: Vec<TypeId> = c
+                    .bounds
+                    .iter()
+                    .map(|b| self.resolve_type_expr_to_id(b))
+                    .collect();
+                let _ = self.scopes.declare(
+                    c.name.name.clone(),
+                    SymbolKind::Constraint { bounds },
+                    c.span,
                 );
             }
             // Use/Import and Impl handled elsewhere
@@ -624,7 +667,70 @@ impl Resolver {
                 // Return the base type ID while type system learns refinement predicates
                 self.resolve_type_expr_to_id(base)
             }
-            _ => self.types.fresh_var(),
+            TypeExprKind::Result { ok, err } => {
+                let ok_id = self.resolve_type_expr_to_id(ok);
+                let err_id = self.resolve_type_expr_to_id(err);
+                self.types.insert(crate::types::Type::Result {
+                    ok: ok_id,
+                    err: err_id,
+                })
+            }
+            TypeExprKind::DynTrait(inner) => {
+                let inner_id = self.resolve_type_expr_to_id(inner);
+                // In reality, this requires a symbol ID for the trait,
+                // but for now we might map it to a fresh var or generic representation
+                // if it's not a direct named trait.
+                if let crate::types::Type::Named(sym) = self.types.get(inner_id).clone() {
+                    self.types.insert(crate::types::Type::DynTrait(sym))
+                } else {
+                    self.types.error()
+                }
+            }
+            TypeExprKind::Generic { base, args } => {
+                let base_id = self.resolve_type_expr_to_id(&TypeExpr {
+                    id: te.id,
+                    span: te.span,
+                    kind: TypeExprKind::Named(base.clone()),
+                    mode: te.mode,
+                });
+                let arg_ids: Vec<TypeId> = args
+                    .iter()
+                    .map(|a| self.resolve_type_expr_to_id(a))
+                    .collect();
+                self.types.insert(crate::types::Type::Generic {
+                    base: base_id,
+                    args: arg_ids,
+                })
+            }
+        }
+    }
+
+    fn resolve_array_type_size(&mut self, size_expr: &Expr) -> Option<usize> {
+        let mut evaluator = ConstEvaluator::new();
+        match evaluator.eval_expect_int(size_expr) {
+            Some(size) if size >= 0 => Some(size as usize),
+            Some(_) => {
+                self.errors.push(ResolveError {
+                    message: "array size must be non-negative".into(),
+                    span: size_expr.span,
+                });
+                None
+            }
+            None => {
+                let message = evaluator
+                    .errors
+                    .into_iter()
+                    .next()
+                    .map(|err| err.message)
+                    .unwrap_or_else(|| {
+                        "array size must be a compile-time integer expression".into()
+                    });
+                self.errors.push(ResolveError {
+                    message,
+                    span: size_expr.span,
+                });
+                None
+            }
         }
     }
 
@@ -673,6 +779,7 @@ impl Resolver {
                     params,
                     return_ty,
                     is_async: false,
+                    generics: Vec::new(),
                 },
                 Span::dummy(),
             );

@@ -3663,6 +3663,8 @@ mod tests {
             runtime: portable_runtime_manifest(RuntimeBackend::Jit, true),
             mir: MirModule {
                 functions: Vec::new(),
+                enum_layouts: std::collections::HashMap::new(),
+                struct_layouts: std::collections::HashMap::new(),
             },
         };
 
