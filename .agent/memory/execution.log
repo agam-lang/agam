@@ -13,3 +13,4 @@
 [2026-07-28 21:40:00 IST] [FEATURE] Kickoff Phase T0-type-system — Added Option<T> and Result<T, E> arena constructors to TypeStore.
 [2026-07-28 21:42:00 IST] [GIT_PUSH] Pushed commit e8f7115 to origin/main — TypeStore Option/Result constructors.
 [2026-07-28 21:45:00 IST] [SYSTEM] Added trigger-keywords rule (.agent/rules/trigger-keywords.md) and execution log (.agent/memory/execution.log).
+[2026-07-28 21:46:00 IST] [GIT_PUSH] Pushed commit b8ede37 to origin/main — Clarified Technical Tiers T0-T6 trigger keywords and full workspace sync.
