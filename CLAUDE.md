@@ -1,7 +1,7 @@
 # Agam Compiler — Agent Briefing
 
 > **This file is the single entrypoint.** Read this first. Everything you need for most tasks is here.
-> Only open `.agent/phases/details/` when you need the exact checklist for a specific phase.
+> Only open `.agent/specs/active/details/` when you need the exact checklist for a specific phase.
 > **🤖 Unified Multi-AI Workflow:** Whether you are Gemini, Claude, Codex, or another AI, you are operating in a continuous, hand-off rotation. Read the existing context, respect the ongoing phase checklists, and do not invent your own workflows.
 
 > **🪨 Token Efficiency:** Follow `.agent/rules/token-efficiency.md`. Use caveman skill (full intensity) for terse output. If `graphify-out/GRAPH_REPORT.md` exists, read it before grepping raw files. Treat `graphify-out/graph.json` and `graphify-out/cache/` as generated artifacts, not durable review surfaces.
