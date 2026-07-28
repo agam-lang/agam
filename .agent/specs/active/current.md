@@ -12,6 +12,12 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 - ✅ The earlier “TypeStore O(n) interning” and “extract C runtime” items are already complete in-tree, so they are no longer active blockers
 - ⬜ The next real compiler gap is not the build itself; it is semantic completeness: `agam_mir::lower` still has `todo!` paths for struct literals, enum variants, and `match` lowering, and backend enum-layout/codegen remains incomplete
 
+## Dual-Track Parallel Framework
+
+Development operates across two synchronized parallel tracks:
+- **Track A — Prime Tier 0 (Test, Debug & Quality Infrastructure):** Continuous test creation, multi-span diagnostic analysis, edge-case debugging, SSA invariant verification, and cross-backend equivalence testing (LLVM / C / JIT).
+- **Track B — Prime Tier 1 (System Architecture & Tile-IR Engine):** MiniTriton-inspired Block/Tile-IR GPU engine, Model Context Protocol server (`agamc mcp serve`), hardware Tensor Core lowering, and language surface evolution.
+
 ## Active Workstreams
 
 | Phase | Status | Focus | Detail |

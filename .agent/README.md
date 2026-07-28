@@ -19,9 +19,16 @@
 
 | Path | Purpose |
 |------|---------| 
-| `phases/current.md` | Active workstreams and tier roadmap |
-| `phases/next.md` | Build priority order |
-| `phases/details/` | Per-phase implementation checklists |
+| `specs/active/current.md` | Active workstreams and Dual-Track Parallel Framework |
+| `specs/active/next.md` | Execution priority order (Prime Tier 0 + Prime Tier 1) |
+| `specs/active/catalog.md` | Master 88-phase blueprint catalog |
+| `specs/active/details/` | Per-phase specification checklists & plans |
 | `policy/` | Package ecosystem architecture, project overview |
 | `rules/` | Token efficiency, language guardrails, project structure |
 | `skills/` | caveman, graphify, benchmark-guard, language-guard |
+| `wiki/` | Architecture deep-dives, dependency maps, and design records |
+
+## Dual-Track Parallel Framework
+
+- **Prime Tier 0 (Test, Debug & Quality Infrastructure):** Continuous test creation, multi-span diagnostic analysis, edge-case debugging, SSA invariant checks, and cross-backend equivalence (LLVM / C / JIT).
+- **Prime Tier 1 (Architecture & System Expansion):** MiniTriton-inspired Block/Tile-IR GPU engine, MCP server (`agamc mcp serve`), hardware Tensor Core lowering, and language surface evolution.
