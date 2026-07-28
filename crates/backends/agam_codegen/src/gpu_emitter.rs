@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use agam_mir::ir::{
     GpuIntrinsicKind, MirBinOp, MirFunction, MirModule, MirParam, MirUnOp, Op, Terminator, ValueId,
 };
-use agam_sema::gpu::GpuKernelParamAbi;
+use agam_sema::gpu::{GpuKernelParamAbi, GpuMemoryType};
 use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 
 // ── Static boilerplate (zero-allocation, compiled into .rodata) ──
@@ -291,8 +291,13 @@ fn emit_cuda_linkage_comment(out: &mut String, linkage: &CudaLinkage) {
     out.push('\n');
 }
 
+#[allow(dead_code)]
 struct KernelLayout {
-    param_types: Vec<&'static str>,
+    param_types: Vec<String>,
+    /// Per-param memory type annotations (None = default/unqualified).
+    param_memory_types: Vec<Option<GpuMemoryType>>,
+    /// Per-param restrict hints.
+    param_restrict: Vec<bool>,
     value_types: HashMap<ValueId, &'static str>,
     local_types: HashMap<String, &'static str>,
 }
@@ -319,11 +324,21 @@ fn kernel_ir_type_from_type_id(ty: agam_sema::symbol::TypeId) -> &'static str {
     }
 }
 
-fn kernel_param_type(param: &MirParam) -> &'static str {
-    match param.gpu_abi {
+fn kernel_param_type(param: &MirParam) -> String {
+    let base_ty: &str = match param.gpu_abi {
         GpuKernelParamAbi::OpaquePtr => kernel_ir_type_from_type_id(param.ty),
         abi => abi.llvm_ir(),
+    };
+    // If a memory type is set and this is a pointer param, qualify with address space
+    if let Some(mem_type) = param.memory_type {
+        if param.gpu_abi.is_pointer() {
+            // Strip the trailing `*`, insert addrspace, re-add `*`
+            if let Some(pointee) = base_ty.strip_suffix('*') {
+                return format!("{}{}*", pointee.trim_end(), mem_type.llvm_addrspace_suffix());
+            }
+        }
     }
+    base_ty.to_string()
 }
 
 fn can_skip_kernel_layout(func: &MirFunction) -> bool {
@@ -347,6 +362,8 @@ fn analyze_kernel_layout(func: &MirFunction) -> KernelLayout {
     if can_skip_kernel_layout(func) {
         return KernelLayout {
             param_types: Vec::new(),
+            param_memory_types: Vec::new(),
+            param_restrict: Vec::new(),
             value_types: HashMap::new(),
             local_types: HashMap::new(),
         };
@@ -354,14 +371,18 @@ fn analyze_kernel_layout(func: &MirFunction) -> KernelLayout {
 
     let mut layout = KernelLayout {
         param_types: func.params.iter().map(kernel_param_type).collect(),
+        param_memory_types: func.params.iter().map(|p| p.memory_type).collect(),
+        param_restrict: vec![false; func.params.len()],
         value_types: HashMap::new(),
         local_types: HashMap::new(),
     };
 
     for (index, param) in func.params.iter().enumerate() {
-        let ty = layout.param_types.get(index).copied().unwrap_or("i32");
-        layout.value_types.insert(param.value, ty);
-        layout.local_types.insert(param.name.clone(), ty);
+        let ty = layout.param_types.get(index).map(|s| s.as_str()).unwrap_or("i32");
+        // Leak into 'static so existing code using &'static str works
+        let ty_static: &'static str = Box::leak(ty.to_string().into_boxed_str());
+        layout.value_types.insert(param.value, ty_static);
+        layout.local_types.insert(param.name.clone(), ty_static);
     }
 
     for block in &func.blocks {
@@ -429,7 +450,14 @@ fn is_pointer_ir(ty: &str) -> bool {
 
 fn pointee_ir_type(ty: &str) -> Option<&str> {
     let base = ty.strip_suffix('*')?.trim_end();
-    Some(base.strip_suffix(" addrspace(3)").unwrap_or(base))
+    // Strip any address space qualifier to get the pointee element type
+    let stripped = base
+        .strip_suffix(" addrspace(1)")
+        .or_else(|| base.strip_suffix(" addrspace(3)"))
+        .or_else(|| base.strip_suffix(" addrspace(4)"))
+        .or_else(|| base.strip_suffix(" addrspace(5)"))
+        .unwrap_or(base);
+    Some(stripped)
 }
 
 fn default_value_for_ir(ty: &str) -> &'static str {
@@ -443,7 +471,11 @@ fn default_value_for_ir(ty: &str) -> &'static str {
 
 fn emit_kernel_param_bindings(out: &mut String, func: &MirFunction, layout: &KernelLayout) {
     for (index, param) in func.params.iter().enumerate() {
-        let ty = layout.param_types.get(index).copied().unwrap_or("i32");
+        let ty = layout.param_types.get(index).map(|s| s.as_str()).unwrap_or("i32");
+        // Emit memory type comment for qualified pointers
+        if let Some(mem_type) = param.memory_type {
+            write!(out, "  ; memory_type: {:?}\n", mem_type).unwrap();
+        }
         out.push_str("  %local_");
         push_sanitized(out, &param.name);
         out.push_str(" = alloca ");
@@ -543,12 +575,17 @@ fn emit_kernel_function(out: &mut String, func: &MirFunction) {
 
     // Function signature
     write!(out, "define ptx_kernel void @{}(", mangled).unwrap();
-    for (i, _param) in func.params.iter().enumerate() {
+    for (i, param) in func.params.iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
-        let ty = layout.param_types.get(i).copied().unwrap_or("i32");
-        write!(out, "{} %p{}", ty, i).unwrap();
+        let ty = layout.param_types.get(i).map(|s| s.as_str()).unwrap_or("i32");
+        // Emit noalias for restrict-qualified params
+        if param.memory_type.is_some() && param.gpu_abi.is_pointer() {
+            write!(out, "{} noalias %p{}", ty, i).unwrap();
+        } else {
+            write!(out, "{} %p{}", ty, i).unwrap();
+        }
     }
     out.push_str(") {\n");
 
@@ -1048,12 +1085,17 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_gpu_module(funcs: Vec<MirFunction>) -> MirModule {
-        MirModule { functions: funcs }
+        MirModule {
+            functions: funcs,
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
+        }
     }
 
     fn make_gpu_function(name: &str, threads: u32) -> MirFunction {
         MirFunction {
             name: name.into(),
+            generics: vec![],
             params: vec![],
             return_ty: agam_sema::symbol::TypeId(0),
             blocks: vec![BasicBlock {
@@ -1096,6 +1138,7 @@ mod tests {
         }
         MirFunction {
             name: name.into(),
+            generics: vec![],
             params: vec![],
             return_ty: agam_sema::symbol::TypeId(0),
             blocks: vec![BasicBlock {
@@ -1167,6 +1210,7 @@ mod tests {
         let module = MirModule {
             functions: vec![MirFunction {
                 name: "main".into(),
+                generics: vec![],
                 params: vec![],
                 return_ty: agam_sema::symbol::TypeId(0),
                 blocks: vec![],
@@ -1174,6 +1218,8 @@ mod tests {
                 target: TargetProfile::Default,
                 gpu_config: None,
             }],
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
         };
         assert!(emit_gpu_module(&module).is_none());
     }

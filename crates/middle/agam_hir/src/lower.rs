@@ -16,6 +16,7 @@ use agam_ast::*;
 use agam_sema::consteval::ConstEvaluator;
 use agam_sema::gpu::{
     GpuBuiltin, GpuKernelParamAbi, resolve_gpu_builtin_expr, resolve_gpu_builtin_member,
+    resolve_gpu_memory_annotation,
 };
 use agam_sema::types::{FloatSize, IntSize, Type, TypeStore, builtin_type_id_for_name};
 
@@ -109,6 +110,9 @@ impl HirLowering {
             }
         };
 
+        // Resolve function-level GPU memory type annotation (applies to all pointer params)
+        let fn_memory_type = resolve_gpu_memory_annotation(&f.annotations);
+
         let params: Vec<HirParam> = f
             .params
             .iter()
@@ -116,11 +120,19 @@ impl HirLowering {
                 let name = self.pattern_name(&p.pattern).unwrap_or_else(|| "_".into());
                 let ty = self.resolve_type_expr(&p.ty);
                 self.bind_local(name.clone(), ty);
+                let gpu_abi = classify_gpu_kernel_param_abi(&p.ty);
+                // Pointer params inherit the function-level memory type annotation
+                let memory_type = if gpu_abi.is_pointer() {
+                    fn_memory_type
+                } else {
+                    None
+                };
                 HirParam {
                     name,
                     ty,
                     mutable: true,
-                    gpu_abi: classify_gpu_kernel_param_abi(&p.ty),
+                    gpu_abi,
+                    memory_type,
                 }
             })
             .collect();

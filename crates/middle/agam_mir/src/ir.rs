@@ -1,6 +1,6 @@
 //! MIR node definitions — SSA-based, CFG-structured IR.
 
-use agam_sema::gpu::{GpuKernelConfig, GpuKernelParamAbi};
+use agam_sema::gpu::{GpuKernelConfig, GpuKernelParamAbi, GpuMemoryType};
 use agam_sema::symbol::TypeId;
 use agam_sema::target::TargetProfile;
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,9 @@ pub struct MirParam {
     pub ty: TypeId,
     #[serde(default)]
     pub gpu_abi: GpuKernelParamAbi,
+    /// GPU memory address space classification for pointer parameters.
+    #[serde(default)]
+    pub memory_type: Option<GpuMemoryType>,
 }
 
 /// A basic block: a sequence of instructions ending with a terminator.

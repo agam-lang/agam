@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use agam_sema::gpu::{GpuKernelConfig, GpuKernelParamAbi};
+use agam_sema::gpu::{GpuKernelConfig, GpuKernelParamAbi, GpuMemoryType};
 use agam_sema::symbol::TypeId;
 use agam_sema::target::TargetProfile;
 
@@ -73,6 +73,8 @@ pub struct HirParam {
     pub ty: TypeId,
     pub mutable: bool,
     pub gpu_abi: GpuKernelParamAbi,
+    /// GPU memory address space classification for pointer parameters.
+    pub memory_type: Option<GpuMemoryType>,
 }
 
 /// A block of statements with an optional trailing expression.

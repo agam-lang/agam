@@ -190,6 +190,7 @@ fn substitute_function(
             value: p.value,
             ty: substitute_type(p.ty, subst, types),
             gpu_abi: p.gpu_abi,
+            memory_type: p.memory_type,
         })
         .collect();
 
@@ -481,6 +482,7 @@ mod tests {
                 value: ValueId(0),
                 ty: t_param,
                 gpu_abi: Default::default(),
+                memory_type: None,
             }],
             return_ty: t_param,
             blocks: vec![BasicBlock {
@@ -563,6 +565,7 @@ mod tests {
                 value: ValueId(0),
                 ty: t_param,
                 gpu_abi: Default::default(),
+                memory_type: None,
             }],
             return_ty: t_param,
             blocks: vec![BasicBlock {

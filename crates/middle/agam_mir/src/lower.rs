@@ -90,6 +90,7 @@ impl MirLowering {
                     value: v,
                     ty: p.ty,
                     gpu_abi: p.gpu_abi,
+                    memory_type: p.memory_type,
                 }
             })
             .collect();

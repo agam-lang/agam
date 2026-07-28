@@ -23,7 +23,7 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 | **20** | completed | Language surface: effect/handler/perform syntax | `details/20.md` |
 | **21** | completed | Runtime hardening: OS-level sandbox enforcement | `details/21.md` |
 | **22** | completed | Omni-Targeting Directives (`@target.iot`, `@target.enterprise`, `@target.hpc`) | `details/22.md` |
-| **23** | partial | GPU and NPU Integration (`@gpu` kernel pipeline) | `details/23.md` |
+| **23** | completed | GPU and NPU Integration (`@gpu` kernel pipeline) | `details/23.md` |
 
 ### 15F Progress
 - ✅ Workspace snapshot + invalidation diff contract
@@ -155,7 +155,7 @@ Native LLVM as first-class production backend for Windows, Linux, and Android.
 - ✅ Fixed-size array type expressions (`[T; N]`) now parse/resolve across parser, HIR, and sema, and lower through GPU buffer/shared-memory paths as element-typed device pointers
 - ✅ Source-level GPU builtins now resolve and lower end-to-end (`agam.gpu.thread_id_*`, `agam.gpu.block_id_*`, `agam.gpu.block_dim_*`, `agam.gpu.barrier`)
 - ✅ Indexed GPU buffer reads and writes now lower from source (`input[idx]`, `output[idx] = value`) through MIR into NVPTX `getelementptr` + load/store
-- ⬜ Rich Memory Types (pointer/array lowering in kernels)
+- ✅ Rich Memory Types (`GpuMemoryType` address space qualification for global, shared, constant, local memory + `noalias` restrict attributes)
 - ✅ Shared Memory (`agam.gpu.shared_alloc(...)` now lowers to `addrspace(3)` NVPTX shared allocations for annotated pointer/slice/reference targets)
 - ✅ GPU math builtins now lower to NVVM fast-math intrinsics (`agam.gpu.sin`, `agam.gpu.cos`, `agam.gpu.sqrt`, `agam.gpu.exp`)
 - ✅ Host-Device memory transfer APIs (`gpu_malloc`, `gpu_free`, `gpu_memcpy_to_device`, `gpu_memcpy_to_host`) now lower through the stdlib plus both the C and LLVM host backends

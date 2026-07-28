@@ -2488,6 +2488,14 @@ impl LlvmEmitter {
                     args.len()
                 )
                 .unwrap();
+                // Emit arg references for host-side launch (placeholder for actual cudaLaunchKernel lowering)
+                for (i, arg) in args.iter().enumerate() {
+                    if let Some(arg_val) = values.get(arg) {
+                        writeln!(out, "  ; arg[{}]: {} {}", i, arg_val.ty.ir(), arg_val.repr)
+                            .unwrap();
+                    }
+                }
+                let _ = (kernel_ptr, shared_memory_bytes); // suppress unused warnings
                 values.insert(
                     instr.result,
                     ValueRef::new(result_ty, result_name.clone(), result_sign),

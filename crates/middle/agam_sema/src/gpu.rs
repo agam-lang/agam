@@ -36,6 +36,79 @@ impl Default for GpuKernelConfig {
     }
 }
 
+/// GPU device memory address space classification.
+///
+/// Maps to NVPTX/CUDA address spaces for correct pointer qualification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum GpuMemoryType {
+    /// Global device DRAM (addrspace(1) in NVPTX).
+    #[default]
+    Global,
+    /// Per-block shared scratchpad (addrspace(3) in NVPTX).
+    Shared,
+    /// Read-only cache-optimized memory (addrspace(4) in NVPTX).
+    Constant,
+    /// Per-thread stack/spill memory (addrspace(5) in NVPTX).
+    Local,
+}
+
+impl GpuMemoryType {
+    /// NVPTX address space number.
+    pub fn addrspace(self) -> u32 {
+        match self {
+            GpuMemoryType::Global => 1,
+            GpuMemoryType::Shared => 3,
+            GpuMemoryType::Constant => 4,
+            GpuMemoryType::Local => 5,
+        }
+    }
+
+    /// LLVM IR address space suffix for pointer types.
+    pub fn llvm_addrspace_suffix(self) -> &'static str {
+        match self {
+            GpuMemoryType::Global => " addrspace(1)",
+            GpuMemoryType::Shared => " addrspace(3)",
+            GpuMemoryType::Constant => " addrspace(4)",
+            GpuMemoryType::Local => " addrspace(5)",
+        }
+    }
+
+    /// Parse from a string annotation value.
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "global" => Some(GpuMemoryType::Global),
+            "shared" => Some(GpuMemoryType::Shared),
+            "constant" | "const" => Some(GpuMemoryType::Constant),
+            "local" => Some(GpuMemoryType::Local),
+            _ => None,
+        }
+    }
+}
+
+/// A typed GPU pointer with element ABI, memory classification, and aliasing hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GpuTypedPointer {
+    /// The element type this pointer addresses.
+    pub element_abi: GpuKernelParamAbi,
+    /// Which device memory region the pointer targets.
+    pub memory_type: GpuMemoryType,
+    /// If true, emit `noalias` / `__restrict__` on this parameter.
+    pub is_restrict: bool,
+}
+
+impl GpuTypedPointer {
+    /// Emit LLVM IR pointer type with address space qualification.
+    ///
+    /// Example: `float addrspace(1)*` for a global f32 buffer.
+    pub fn llvm_ir(&self) -> String {
+        format!(
+            "{}{}*",
+            self.element_abi.pointee_llvm_ir(),
+            self.memory_type.llvm_addrspace_suffix()
+        )
+    }
+}
+
 /// GPU kernel ABI hint for parameter lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GpuKernelParamAbi {
@@ -136,6 +209,24 @@ impl GpuKernelParamAbi {
             GpuKernelParamAbi::F64 | GpuKernelParamAbi::PtrF64 => "double",
             GpuKernelParamAbi::OpaquePtr => "i8",
         }
+    }
+
+    /// Returns true if this ABI hint is a pointer type (Ptr* or OpaquePtr).
+    pub fn is_pointer(self) -> bool {
+        matches!(
+            self,
+            GpuKernelParamAbi::PtrI1
+                | GpuKernelParamAbi::PtrI8
+                | GpuKernelParamAbi::PtrI16
+                | GpuKernelParamAbi::PtrI32
+                | GpuKernelParamAbi::PtrI64
+                | GpuKernelParamAbi::PtrI128
+                | GpuKernelParamAbi::PtrI256
+                | GpuKernelParamAbi::PtrI512
+                | GpuKernelParamAbi::PtrF32
+                | GpuKernelParamAbi::PtrF64
+                | GpuKernelParamAbi::OpaquePtr
+        )
     }
 
     pub fn shared_ptr_llvm_ir(self) -> &'static str {
@@ -395,6 +486,34 @@ fn extract_int_param(text: &str, key: &str) -> Option<u32> {
     None
 }
 
+/// Resolve a `GpuMemoryType` from a `@gpu.memory("...")` annotation.
+///
+/// Returns `None` if no matching annotation is present.
+pub fn resolve_gpu_memory_annotation(annotations: &[Annotation]) -> Option<GpuMemoryType> {
+    for ann in annotations {
+        if ann.name.name == "gpu.memory" || ann.name.name == "gpu_memory" {
+            // Try to extract a string literal from the first argument
+            if let Some(arg) = ann.args.first() {
+                let text = format!("{:?}", arg);
+                // Match patterns like StringLit("global") or simple identifier
+                if let Some(start) = text.find("StringLit(\"") {
+                    let after = &text[start + 11..];
+                    if let Some(end) = after.find('\"') {
+                        return GpuMemoryType::from_str(&after[..end]);
+                    }
+                }
+                // Also try matching identifier patterns for shorthand
+                for mem_type in ["global", "shared", "constant", "const", "local"] {
+                    if text.contains(mem_type) {
+                        return GpuMemoryType::from_str(mem_type);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Validate that a function body is compatible with GPU kernel execution.
 ///
 /// This operates on HIR expression kinds to check for prohibited constructs.
@@ -610,5 +729,83 @@ mod tests {
             GpuKernelParamAbi::I512.pointer_to(),
             GpuKernelParamAbi::PtrI512
         );
+    }
+
+    #[test]
+    fn gpu_memory_type_from_str() {
+        assert_eq!(GpuMemoryType::from_str("global"), Some(GpuMemoryType::Global));
+        assert_eq!(GpuMemoryType::from_str("shared"), Some(GpuMemoryType::Shared));
+        assert_eq!(GpuMemoryType::from_str("constant"), Some(GpuMemoryType::Constant));
+        assert_eq!(GpuMemoryType::from_str("const"), Some(GpuMemoryType::Constant));
+        assert_eq!(GpuMemoryType::from_str("local"), Some(GpuMemoryType::Local));
+        assert_eq!(GpuMemoryType::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn gpu_memory_type_addrspace() {
+        assert_eq!(GpuMemoryType::Global.addrspace(), 1);
+        assert_eq!(GpuMemoryType::Shared.addrspace(), 3);
+        assert_eq!(GpuMemoryType::Constant.addrspace(), 4);
+        assert_eq!(GpuMemoryType::Local.addrspace(), 5);
+    }
+
+    #[test]
+    fn gpu_memory_type_llvm_suffix() {
+        assert_eq!(GpuMemoryType::Global.llvm_addrspace_suffix(), " addrspace(1)");
+        assert_eq!(GpuMemoryType::Shared.llvm_addrspace_suffix(), " addrspace(3)");
+        assert_eq!(GpuMemoryType::Constant.llvm_addrspace_suffix(), " addrspace(4)");
+    }
+
+    #[test]
+    fn gpu_typed_pointer_llvm_ir() {
+        let ptr = GpuTypedPointer {
+            element_abi: GpuKernelParamAbi::F32,
+            memory_type: GpuMemoryType::Global,
+            is_restrict: false,
+        };
+        assert_eq!(ptr.llvm_ir(), "float addrspace(1)*");
+
+        let ptr_shared = GpuTypedPointer {
+            element_abi: GpuKernelParamAbi::I32,
+            memory_type: GpuMemoryType::Shared,
+            is_restrict: true,
+        };
+        assert_eq!(ptr_shared.llvm_ir(), "i32 addrspace(3)*");
+    }
+
+    #[test]
+    fn gpu_typed_pointer_constant_memory() {
+        let ptr = GpuTypedPointer {
+            element_abi: GpuKernelParamAbi::F64,
+            memory_type: GpuMemoryType::Constant,
+            is_restrict: false,
+        };
+        assert_eq!(ptr.llvm_ir(), "double addrspace(4)*");
+    }
+
+    #[test]
+    fn gpu_validation_allows_clean_kernel() {
+        // A kernel with no violations should pass
+        let errors = validate_gpu_kernel_body(false, false, false, false, "kern", &[]);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn gpu_validation_still_rejects_heap() {
+        let errors = validate_gpu_kernel_body(false, false, true, false, "kern", &[]);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0], GpuKernelError::HeapAllocationProhibited);
+    }
+
+    #[test]
+    fn gpu_memory_type_default_is_global() {
+        let default: GpuMemoryType = Default::default();
+        assert_eq!(default, GpuMemoryType::Global);
+    }
+
+    #[test]
+    fn resolve_gpu_memory_annotation_no_match() {
+        let anns = vec![plain_annotation("test")];
+        assert_eq!(resolve_gpu_memory_annotation(&anns), None);
     }
 }
