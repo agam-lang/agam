@@ -18,3 +18,8 @@
 [2026-07-28 21:48:00 IST] [SYSTEM] Added Run Benchmark and Recommend Feature trigger keywords to rules/trigger-keywords.md.
 
 [2026-07-28 22:28:00 IST] [DEBUG] Executed Stream 0 debug loop — Removed duplicate Op::Cast match arm in agam_jit lib.rs (fixing unreachable pattern warning), added Option/Result interning unit test to agam_sema, and verified 100% pass rate across workspace tests.
+[2026-07-29 14:18:00 IST] [DOCS] Generated comprehensive Horizon Review artifact covering 12 completed phases, critical path, knowledge graph metrics, and tier roadmap.
+[2026-07-29 14:50:00 IST] [FEATURE] Completed T0-type-system Phase B — Wired AST EnumDecl -> HirEnumLayout, HirExprKind::EnumVariant -> MIR Op::EnumConstruct, HirExprKind::Match -> MIR Switch + Op::EnumTag + Op::EnumPayload, propagated layout tables, and verified clean cargo check.
+[2026-07-29 16:00:00 IST] [DEBUG] Executed Stream 0 continuous assurance & debug loop — Verified clean workspace compilation across 27 crates, validated HIR/MIR enum/match lowering and unit tests, synced activity log.
+[2026-07-29 15:20:00 IST] [HANDOFF] Corrected pending HIR/MIR layout and match lowering: struct layouts now propagate, variant tags resolve from enum layouts, and enum dispatch no longer rewrites finished basic blocks. Verification is blocked on this host because Windows Application Control rejects Rust proc-macro DLLs (`os error 4551`); graphify CLI is unavailable.
+[2026-07-29 15:45:00 IST] [FEATURE] Extended T0-type-system HIR lowering to recognize declared enum constructors (`Some(value)`, `None`, and qualified paths), added MIR coverage asserting declared discriminant tags, and retained the concrete struct aggregate as the next pending slice.

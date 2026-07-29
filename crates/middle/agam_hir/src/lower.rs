@@ -33,6 +33,8 @@ pub struct HirLowering {
     current_target: TargetProfile,
     /// Diagnostic messages collected during lowering.
     pub diagnostics: Vec<String>,
+    /// Source-level enum constructor names resolved during the module pre-pass.
+    enum_variants: HashMap<String, String>,
 }
 
 impl HirLowering {
@@ -43,6 +45,7 @@ impl HirLowering {
             scopes: Vec::new(),
             current_target: TargetProfile::Default,
             diagnostics: Vec::new(),
+            enum_variants: HashMap::new(),
         }
     }
 
@@ -75,6 +78,34 @@ impl HirLowering {
 
     /// Lower a parsed AST module into HIR.
     pub fn lower_module(&mut self, module: &Module) -> HirModule {
+        // First pass: collect enum and struct layouts
+        let mut enum_layouts = HashMap::new();
+        let mut struct_layouts = HashMap::new();
+        for decl in &module.declarations {
+            match &decl.kind {
+                DeclKind::Enum(e) => {
+                    let layout = self.lower_enum_layout(e);
+                    enum_layouts.insert(layout.name.clone(), layout);
+                }
+                DeclKind::Struct(s) => {
+                    let layout = self.lower_struct_layout(s);
+                    struct_layouts.insert(layout.name.clone(), layout);
+                }
+                _ => {}
+            }
+        }
+
+        self.enum_variants.clear();
+        for (enum_name, layout) in &enum_layouts {
+            for variant in &layout.variants {
+                self.enum_variants
+                    .insert(variant.name.clone(), enum_name.clone());
+                self.enum_variants
+                    .insert(format!("{enum_name}::{}", variant.name), enum_name.clone());
+            }
+        }
+
+        // Second pass: lower function declarations
         let functions = module
             .declarations
             .iter()
@@ -82,8 +113,8 @@ impl HirLowering {
             .collect();
         HirModule {
             functions,
-            enum_layouts: HashMap::new(),
-            struct_layouts: HashMap::new(),
+            enum_layouts,
+            struct_layouts,
         }
     }
 
@@ -91,6 +122,34 @@ impl HirLowering {
         match &decl.kind {
             DeclKind::Function(f) => Some(self.lower_function(f)),
             _ => None,
+        }
+    }
+
+    fn lower_enum_layout(&self, e: &EnumDecl) -> HirEnumLayout {
+        let variants = e
+            .variants
+            .iter()
+            .enumerate()
+            .map(|(i, v)| HirEnumVariantLayout {
+                name: v.name.name.clone(),
+                tag: i as u32,
+                has_payload: !matches!(v.fields, VariantFields::Unit),
+            })
+            .collect();
+        HirEnumLayout {
+            name: e.name.name.clone(),
+            variants,
+        }
+    }
+
+    fn lower_struct_layout(&self, s: &StructDecl) -> HirStructLayout {
+        HirStructLayout {
+            name: s.name.name.clone(),
+            fields: s
+                .fields
+                .iter()
+                .map(|field| field.name.name.clone())
+                .collect(),
         }
     }
 
@@ -381,18 +440,43 @@ impl HirLowering {
                 return acc;
             }
 
-            ExprKind::Identifier(ident) => (
-                self.lookup_local(&ident.name)
-                    .unwrap_or_else(|| self.types.fresh_var()),
-                HirExprKind::Var(ident.name.clone()),
-            ),
+            ExprKind::Identifier(ident) => {
+                if let Some(enum_name) = self.enum_variants.get(&ident.name).cloned() {
+                    (
+                        self.types.fresh_var(),
+                        HirExprKind::EnumVariant {
+                            enum_name,
+                            variant: ident.name.clone(),
+                            fields: Vec::new(),
+                        },
+                    )
+                } else {
+                    (
+                        self.lookup_local(&ident.name)
+                            .unwrap_or_else(|| self.types.fresh_var()),
+                        HirExprKind::Var(ident.name.clone()),
+                    )
+                }
+            }
             ExprKind::PathExpr(path) => {
                 let full = path_name(path);
-                (
-                    self.lookup_local(&full)
-                        .unwrap_or_else(|| self.types.fresh_var()),
-                    HirExprKind::Var(full),
-                )
+                if let Some(enum_name) = self.enum_variants.get(&full).cloned() {
+                    let variant = full.rsplit("::").next().unwrap_or(&full).to_string();
+                    (
+                        self.types.fresh_var(),
+                        HirExprKind::EnumVariant {
+                            enum_name,
+                            variant,
+                            fields: Vec::new(),
+                        },
+                    )
+                } else {
+                    (
+                        self.lookup_local(&full)
+                            .unwrap_or_else(|| self.types.fresh_var()),
+                        HirExprKind::Var(full),
+                    )
+                }
             }
 
             ExprKind::Binary { op, left, right } => {
@@ -420,38 +504,51 @@ impl HirLowering {
                 )
             }
 
-            ExprKind::Call { callee, args } => match resolve_gpu_builtin_expr(callee) {
-                Some(GpuBuiltin::SharedAlloc) => {
-                    let count = self.lower_gpu_shared_alloc_count(args);
-                    let element_abi = self.shared_alloc_element_abi(expected_ty);
-                    if element_abi == GpuKernelParamAbi::OpaquePtr {
-                        self.diagnostics.push(
-                            "error: `agam.gpu.shared_alloc(...)` currently requires an annotated pointer, slice, or reference target type".into(),
-                        );
-                    }
+            ExprKind::Call { callee, args } => {
+                if let Some((enum_name, variant)) = self.enum_constructor(callee) {
                     (
-                        expected_ty.unwrap_or_else(|| self.types.fresh_var()),
-                        HirExprKind::GpuSharedAlloc {
-                            element_abi,
-                            count: Box::new(count),
+                        self.types.fresh_var(),
+                        HirExprKind::EnumVariant {
+                            enum_name,
+                            variant,
+                            fields: args.iter().map(|arg| self.lower_expr(arg)).collect(),
                         },
                     )
+                } else {
+                    match resolve_gpu_builtin_expr(callee) {
+                        Some(GpuBuiltin::SharedAlloc) => {
+                            let count = self.lower_gpu_shared_alloc_count(args);
+                            let element_abi = self.shared_alloc_element_abi(expected_ty);
+                            if element_abi == GpuKernelParamAbi::OpaquePtr {
+                                self.diagnostics.push(
+                            "error: `agam.gpu.shared_alloc(...)` currently requires an annotated pointer, slice, or reference target type".into(),
+                        );
+                            }
+                            (
+                                expected_ty.unwrap_or_else(|| self.types.fresh_var()),
+                                HirExprKind::GpuSharedAlloc {
+                                    element_abi,
+                                    count: Box::new(count),
+                                },
+                            )
+                        }
+                        Some(builtin) => (
+                            builtin.return_type(&mut self.types),
+                            HirExprKind::Call {
+                                callee: Box::new(self.lower_expr(callee)),
+                                args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                            },
+                        ),
+                        None => (
+                            self.types.fresh_var(),
+                            HirExprKind::Call {
+                                callee: Box::new(self.lower_expr(callee)),
+                                args: args.iter().map(|a| self.lower_expr(a)).collect(),
+                            },
+                        ),
+                    }
                 }
-                Some(builtin) => (
-                    builtin.return_type(&mut self.types),
-                    HirExprKind::Call {
-                        callee: Box::new(self.lower_expr(callee)),
-                        args: args.iter().map(|a| self.lower_expr(a)).collect(),
-                    },
-                ),
-                None => (
-                    self.types.fresh_var(),
-                    HirExprKind::Call {
-                        callee: Box::new(self.lower_expr(callee)),
-                        args: args.iter().map(|a| self.lower_expr(a)).collect(),
-                    },
-                ),
-            },
+            }
             ExprKind::MethodCall {
                 object,
                 method,
@@ -613,6 +710,38 @@ impl HirLowering {
                     body: Box::new(self.lower_expr(body)),
                 },
             ),
+
+            ExprKind::Match { scrutinee, arms } => {
+                let hir_scrutinee = self.lower_expr(scrutinee);
+                let hir_arms: Vec<HirMatchArm> =
+                    arms.iter().map(|arm| self.lower_match_arm(arm)).collect();
+                let ty = hir_arms
+                    .first()
+                    .map(|arm| arm.body.ty)
+                    .unwrap_or_else(|| self.types.unit());
+                (
+                    ty,
+                    HirExprKind::Match {
+                        scrutinee: Box::new(hir_scrutinee),
+                        arms: hir_arms,
+                    },
+                )
+            }
+
+            ExprKind::StructLiteral { path, fields } => {
+                let name = path_name(path);
+                let hir_fields = fields
+                    .iter()
+                    .map(|f| (f.name.name.clone(), self.lower_expr(&f.value)))
+                    .collect();
+                (
+                    self.types.fresh_var(),
+                    HirExprKind::StructLiteral {
+                        name,
+                        fields: hir_fields,
+                    },
+                )
+            }
 
             // Fallback for unhandled expressions
             _ => (self.types.unit(), HirExprKind::Tuple(vec![])), // Unit value
@@ -819,6 +948,79 @@ impl HirLowering {
             _ => None,
         }
     }
+
+    fn enum_constructor(&self, callee: &Expr) -> Option<(String, String)> {
+        let name = expr_name(callee)?;
+        let enum_name = self
+            .enum_variants
+            .get(&name)
+            .or_else(|| {
+                name.rsplit("::")
+                    .next()
+                    .and_then(|short| self.enum_variants.get(short))
+            })?
+            .clone();
+        let variant = name.rsplit("::").next().unwrap_or(&name).to_string();
+        Some((enum_name, variant))
+    }
+
+    fn lower_match_arm(&mut self, arm: &agam_ast::expr::MatchArm) -> HirMatchArm {
+        let pattern = self.lower_pattern(&arm.pattern);
+        let guard = arm.guard.as_ref().map(|g| self.lower_expr(g));
+        let body = self.lower_expr(&arm.body);
+        HirMatchArm {
+            pattern,
+            guard,
+            body,
+        }
+    }
+
+    fn lower_pattern(&mut self, pattern: &agam_ast::pattern::Pattern) -> HirPattern {
+        use agam_ast::pattern::PatternKind;
+        match &pattern.kind {
+            PatternKind::Wildcard => HirPattern::Wildcard,
+            PatternKind::Identifier { name, .. } => HirPattern::Bind(name.name.clone()),
+            PatternKind::Literal(expr) => HirPattern::Literal(self.lower_expr(expr)),
+            PatternKind::Tuple(pats) => {
+                HirPattern::Tuple(pats.iter().map(|p| self.lower_pattern(p)).collect())
+            }
+            PatternKind::Variant { path, fields } => {
+                let name = path_name(path);
+                let hir_fields = fields.iter().map(|p| self.lower_pattern(p)).collect();
+                HirPattern::Variant {
+                    name,
+                    fields: hir_fields,
+                }
+            }
+            PatternKind::Struct { path, fields, .. } => {
+                let name = path_name(path);
+                let hir_fields = fields
+                    .iter()
+                    .map(|f| {
+                        let pat = f
+                            .pattern
+                            .as_ref()
+                            .map(|p| self.lower_pattern(p))
+                            .unwrap_or(HirPattern::Bind(f.name.name.clone()));
+                        (f.name.name.clone(), pat)
+                    })
+                    .collect();
+                HirPattern::Struct {
+                    name,
+                    fields: hir_fields,
+                }
+            }
+            PatternKind::Or(pats) => {
+                // Lower first alternative — or-patterns need full lowering later
+                if let Some(first) = pats.first() {
+                    self.lower_pattern(first)
+                } else {
+                    HirPattern::Wildcard
+                }
+            }
+            _ => HirPattern::Wildcard,
+        }
+    }
 }
 
 impl Default for HirLowering {
@@ -980,6 +1182,29 @@ mod tests {
                 _ => panic!("expected Call"),
             },
             _ => panic!("expected Expr"),
+        }
+    }
+
+    #[test]
+    fn test_lower_enum_variant_constructors() {
+        let hir = lower_source("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
+        let value = match &hir.functions[0].body.stmts[0] {
+            HirStmt::Let {
+                value: Some(value), ..
+            } => value,
+            _ => panic!("expected enum constructor binding"),
+        };
+        match &value.kind {
+            HirExprKind::EnumVariant {
+                enum_name,
+                variant,
+                fields,
+            } => {
+                assert_eq!(enum_name, "Option");
+                assert_eq!(variant, "Some");
+                assert_eq!(fields.len(), 1);
+            }
+            other => panic!("expected EnumVariant, got {other:?}"),
         }
     }
 

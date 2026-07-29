@@ -17,6 +17,9 @@ pub struct MirLowering {
     current_instrs: Vec<Instruction>,
     current_block: BlockId,
     types: TypeStore,
+    /// Variant names are globally resolved by the current front end.  Keep the
+    /// corresponding discriminants available while lowering function bodies.
+    variant_tags: std::collections::HashMap<String, u32>,
 }
 
 impl MirLowering {
@@ -28,6 +31,7 @@ impl MirLowering {
             current_instrs: Vec::new(),
             current_block: BlockId(0),
             types: TypeStore::new(),
+            variant_tags: std::collections::HashMap::new(),
         }
     }
 
@@ -60,15 +64,58 @@ impl MirLowering {
 
     /// Lower an entire HIR module into MIR.
     pub fn lower_module(&mut self, hir: &HirModule) -> MirModule {
+        self.variant_tags = hir
+            .enum_layouts
+            .values()
+            .flat_map(|layout| layout.variants.iter())
+            .map(|variant| (variant.name.clone(), variant.tag))
+            .collect();
+
         let functions = hir
             .functions
             .iter()
             .map(|f| self.lower_function(f))
             .collect();
+
+        // Propagate enum and struct layouts from HIR to MIR
+        let enum_layouts = hir
+            .enum_layouts
+            .iter()
+            .map(|(name, layout)| {
+                (
+                    name.clone(),
+                    crate::ir::EnumLayout {
+                        name: layout.name.clone(),
+                        variants: layout
+                            .variants
+                            .iter()
+                            .map(|v| crate::ir::EnumVariantLayout {
+                                name: v.name.clone(),
+                                tag: v.tag,
+                                has_payload: v.has_payload,
+                            })
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
+
         MirModule {
             functions,
-            enum_layouts: std::collections::HashMap::new(),
-            struct_layouts: std::collections::HashMap::new(),
+            enum_layouts,
+            struct_layouts: hir
+                .struct_layouts
+                .iter()
+                .map(|(name, layout)| {
+                    (
+                        name.clone(),
+                        crate::ir::StructLayout {
+                            name: layout.name.clone(),
+                            fields: layout.fields.clone(),
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -215,6 +262,10 @@ impl MirLowering {
                 }
 
                 self.current_block = after_block;
+            }
+            HirStmt::Match { scrutinee, arms } => {
+                let scrutinee_val = self.lower_expr(scrutinee);
+                self.lower_match(self.types.unit(), scrutinee_val, arms);
             }
             _ => {}
         }
@@ -412,10 +463,232 @@ impl MirLowering {
                 self.lower_expr(body)
             }
 
-            HirExprKind::StructLiteral { .. }
-            | HirExprKind::EnumVariant { .. }
-            | HirExprKind::Match { .. } => self.emit(ty, Op::Unit),
+            HirExprKind::StructLiteral { fields, .. } => {
+                // Lower field initializer expressions but emit Unit since
+                // struct layout codegen will come in a later pass.
+                for (_name, value) in fields {
+                    self.lower_expr(value);
+                }
+                self.emit(ty, Op::Unit)
+            }
+
+            HirExprKind::EnumVariant {
+                variant, fields, ..
+            } => {
+                let tag = self.variant_tags.get(variant).copied().unwrap_or(0);
+                let payload: Vec<ValueId> = fields.iter().map(|f| self.lower_expr(f)).collect();
+                self.emit(ty, Op::EnumConstruct { tag, payload })
+            }
+
+            HirExprKind::Match { scrutinee, arms } => {
+                let scrutinee_val = self.lower_expr(scrutinee);
+                self.lower_match(ty, scrutinee_val, arms)
+            }
         }
+    }
+
+    /// Lower a match expression into MIR control flow.
+    ///
+    /// For variant patterns: emit Switch on EnumTag with per-arm blocks.
+    /// For literal patterns: emit chained equality comparisons.
+    /// For wildcard/bind patterns: direct jump to arm body.
+    fn lower_match(
+        &mut self,
+        result_ty: TypeId,
+        scrutinee: ValueId,
+        arms: &[HirMatchArm],
+    ) -> ValueId {
+        if arms.is_empty() {
+            return self.emit(result_ty, Op::Unit);
+        }
+
+        let dispatch_block = self.current_block;
+        let merge_block = self.fresh_block();
+
+        // Allocate a local to hold the match result (phi-like)
+        let result_name = format!("__match_result_{}", self.next_value);
+        self.emit(
+            result_ty,
+            Op::Alloca {
+                name: result_name.clone(),
+                ty: result_ty,
+            },
+        );
+
+        // Check if this is an enum-tag-based match (any arm has a Variant pattern)
+        let has_variant_pattern = arms
+            .iter()
+            .any(|arm| matches!(arm.pattern, HirPattern::Variant { .. }));
+
+        if has_variant_pattern {
+            // Enum match: extract the discriminant once, then dispatch directly
+            // to fully formed arm blocks.  Do not patch an already-finished
+            // block: that loses instructions accumulated for the first arm.
+            let tag_val = self.emit(self.types.i32(), Op::EnumTag(scrutinee));
+
+            let mut cases: Vec<(i64, BlockId)> = Vec::new();
+            let mut default_block = None;
+            let mut arm_blocks = Vec::with_capacity(arms.len());
+            for _ in arms {
+                arm_blocks.push(self.fresh_block());
+            }
+
+            for (arm, arm_block) in arms.iter().zip(arm_blocks) {
+                self.current_block = arm_block;
+
+                match &arm.pattern {
+                    HirPattern::Variant { name, fields } => {
+                        if let Some(tag) = self.variant_tags.get(name) {
+                            cases.push((*tag as i64, arm_block));
+                        }
+
+                        // Extract payload fields as local variables
+                        for (field_idx, field_pat) in fields.iter().enumerate() {
+                            if let HirPattern::Bind(name) = field_pat {
+                                let payload_ty = self.types.fresh_var();
+                                let payload = self.emit(
+                                    payload_ty,
+                                    Op::EnumPayload {
+                                        value: scrutinee,
+                                        field_index: field_idx as u32,
+                                    },
+                                );
+                                self.emit(
+                                    payload_ty,
+                                    Op::Alloca {
+                                        name: name.clone(),
+                                        ty: payload_ty,
+                                    },
+                                );
+                                self.emit(
+                                    result_ty,
+                                    Op::StoreLocal {
+                                        name: name.clone(),
+                                        value: payload,
+                                    },
+                                );
+                            }
+                        }
+
+                        let arm_result = self.lower_expr(&arm.body);
+                        self.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        self.finish_block(Terminator::Jump(merge_block));
+                    }
+                    HirPattern::Wildcard | HirPattern::Bind(_) => {
+                        default_block = Some(arm_block);
+                        let arm_result = self.lower_expr(&arm.body);
+                        self.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        self.finish_block(Terminator::Jump(merge_block));
+                    }
+                    _ => {
+                        // A mixed enum match is validated earlier.  Preserve a
+                        // deterministic fallback here for recovery lowering.
+                        default_block = Some(arm_block);
+                        let arm_result = self.lower_expr(&arm.body);
+                        self.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        self.finish_block(Terminator::Jump(merge_block));
+                    }
+                }
+            }
+            self.current_block = dispatch_block;
+            self.finish_block(Terminator::Switch {
+                discriminant: tag_val,
+                cases,
+                default: default_block.unwrap_or(merge_block),
+            });
+        } else {
+            // Non-enum match: chained if-else on literal equality or wildcard
+            for arm in arms {
+                match &arm.pattern {
+                    HirPattern::Wildcard | HirPattern::Bind(_) => {
+                        // Default arm: just lower body
+                        let arm_result = self.lower_expr(&arm.body);
+                        self.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        self.finish_block(Terminator::Jump(merge_block));
+                        self.current_block = merge_block;
+                        break;
+                    }
+                    HirPattern::Literal(lit_expr) => {
+                        let lit_val = self.lower_expr(lit_expr);
+                        let cmp = self.emit(
+                            self.types.bool(),
+                            Op::BinOp {
+                                op: MirBinOp::Eq,
+                                left: scrutinee,
+                                right: lit_val,
+                            },
+                        );
+
+                        let then_block = self.fresh_block();
+                        let else_block = self.fresh_block();
+                        self.finish_block(Terminator::Branch {
+                            condition: cmp,
+                            then_block,
+                            else_block,
+                        });
+
+                        self.current_block = then_block;
+                        let arm_result = self.lower_expr(&arm.body);
+                        self.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        self.finish_block(Terminator::Jump(merge_block));
+
+                        self.current_block = else_block;
+                    }
+                    _ => {
+                        // Unsupported pattern type — skip
+                        let arm_result = self.lower_expr(&arm.body);
+                        self.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        self.finish_block(Terminator::Jump(merge_block));
+                        self.current_block = merge_block;
+                        break;
+                    }
+                }
+            }
+
+            // If we didn't hit a default arm, jump to merge anyway
+            if self.current_block != merge_block {
+                self.finish_block(Terminator::Jump(merge_block));
+            }
+        }
+
+        self.current_block = merge_block;
+        self.emit(result_ty, Op::LoadLocal(result_name))
     }
 }
 
@@ -717,6 +990,73 @@ mod tests {
         assert!(
             has_shared_alloc,
             "expected fixed-array GPU shared allocation in MIR"
+        );
+    }
+
+    #[test]
+    fn test_mir_enum_layout_propagated_from_hir() {
+        let mir = lower_to_mir("enum Color { Red, Green, Blue }\nfn main(): return 0");
+        assert!(
+            mir.enum_layouts.contains_key("Color"),
+            "expected enum layout for Color in MIR module"
+        );
+        let layout = &mir.enum_layouts["Color"];
+        assert_eq!(layout.variants.len(), 3);
+        assert_eq!(layout.variants[0].name, "Red");
+        assert_eq!(layout.variants[0].tag, 0);
+        assert!(!layout.variants[0].has_payload);
+        assert_eq!(layout.variants[1].name, "Green");
+        assert_eq!(layout.variants[2].name, "Blue");
+    }
+
+    #[test]
+    fn test_mir_enum_variant_with_payload_layout() {
+        let mir = lower_to_mir("enum Option { Some(i32), None }\nfn main(): return 0");
+        assert!(mir.enum_layouts.contains_key("Option"));
+        let layout = &mir.enum_layouts["Option"];
+        assert_eq!(layout.variants.len(), 2);
+        assert!(layout.variants[0].has_payload, "Some should have payload");
+        assert!(
+            !layout.variants[1].has_payload,
+            "None should not have payload"
+        );
+    }
+
+    #[test]
+    fn test_mir_enum_constructor_uses_declared_tag() {
+        let mir = lower_to_mir("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
+        let has_some = mir.functions[0].blocks.iter().any(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    &instruction.op,
+                    Op::EnumConstruct {
+                        tag: 0,
+                        payload
+                    } if payload.len() == 1
+                )
+            })
+        });
+        assert!(has_some, "expected Some constructor with declared tag 0");
+    }
+
+    #[test]
+    fn test_mir_match_on_integer_lowers_to_branch() {
+        let mir = lower_to_mir("fn main(): let x = 42; match x { 1 => return 10, _ => return 20 }");
+        let f = &mir.functions[0];
+        let has_eq = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::BinOp {
+                        op: MirBinOp::Eq,
+                        ..
+                    }
+                )
+            })
+        });
+        assert!(
+            has_eq,
+            "expected equality comparison for literal pattern match in MIR"
         );
     }
 }
