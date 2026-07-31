@@ -10,8 +10,8 @@
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Type System** | Static interned `TypeStore`, Enums, Generics, Option/Result | Static linear/borrow-checked type system | Static MLIR-backed struct/type system | Dynamic Python frontend $\rightarrow$ Static MLIR | Static `comptime` type system | Dynamic object model |
 | **Effects System** | Native Effect Perform & Handler runtime contract | No native effects (via async/traits) | No native effects | No native effects | No native effects | No native effects |
-| **Backend Code Generation** | **4-in-1**: Native LLVM IR, NVPTX CUDA, C Emitter, Cranelift JIT | LLVM IR (Cranelift opt) | MLIR $\rightarrow$ LLVM IR | MLIR $\rightarrow$ LLVM/NVPTX | Custom C/LLVM | Bytecode Interpreter |
-| **GPU / HPC Lowering** | Direct NVPTX kernel emitter, `addrspace(3)` shared alloc, barrier intrinsics | External CUDA / nvcc via build scripts | MLIR GPU Dialect | Python DSL $\rightarrow$ NVPTX | External C/CUDA | PyTorch/CUDA wrappers |
+| **Backend Code Generation** | **4-in-1**: Native LLVM IR, Universal GPU Emitter (NVPTX / AMDGPU / SPIR-V / Metal), C Emitter, Cranelift JIT | LLVM IR (Cranelift opt) | MLIR $\rightarrow$ LLVM IR | MLIR $\rightarrow$ LLVM/NVPTX | Custom C/LLVM | Bytecode Interpreter |
+| **GPU / HPC Lowering** | Direct Universal GPU Emitter (`addrspace(3)` shared alloc, barrier intrinsics, multi-vendor target adapters) | External CUDA / nvcc via build scripts | MLIR GPU Dialect | Python DSL $\rightarrow$ NVPTX | External C/CUDA | PyTorch/CUDA wrappers |
 | **IR Compile Throughput** | **300–374 MB/s** (pre-allocated buffer codegen) | Medium (slow LLVM codegen) | Medium (MLIR optimization pipeline) | Fast (domain specific) | Fast (custom C codegen) | N/A (Interpreted) |
 | **JIT & Call Caching** | Adaptive pure call cache, JIT specialization guards | No JIT (AoT only) | AoT / JIT via MLIR | JIT per kernel launch | AoT only | PyPy/Numba JIT |
 | **Agentic / MCP Native** | Built-in `agamc mcp serve`, SARIF streaming, telemetry loops | External cargo tools | External | External | External | External |
@@ -22,7 +22,7 @@
 
 ### 2.1 Agam vs. Rust (`rustc`)
 - **Type System & Interning**: Agam uses an interned `$O(1)$` lookup arena `TypeStore` with hash-deduplicated `TypeId` references for all resolved types (`Option<T>`, `Result<T, E>`, tuples, arrays), avoiding quadratic type-check overhead on large projects.
-- **GPU Integration**: Unlike Rust which relies on `nvcc` or external crates for GPU execution, Agam has a first-class **NVPTX CUDA backend** built directly into `agam_codegen`, generating PTX assembly, `addrspace(3)` shared allocations, and kernel launching.
+- **Universal GPU Integration**: Unlike Rust which relies on `nvcc` or external vendor crates for GPU execution, Agam features a first-class **Universal GPU Emitter** built directly into `agam_codegen` (supporting NVPTX, AMDGPU, SPIR-V, and Metal target adapters), generating target assembly, `addrspace(3)` shared allocations, and native driver launching.
 - **Effects Model**: Agam features built-in algebraic effects (`Op::EffectPerform`, `Op::HandleWith`) lowering natively through MIR.
 
 ### 2.2 Agam vs. Mojo / Triton
