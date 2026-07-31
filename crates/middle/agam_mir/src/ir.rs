@@ -181,6 +181,16 @@ pub enum Op {
     EnumTag(ValueId),
     /// Extract the payload of a tagged union (after tag check).
     EnumPayload { value: ValueId, field_index: u32 },
+
+    // ── Struct Operations ──
+    /// Construct a named struct value from its named fields.
+    ///
+    /// Field names are retained in MIR so later layout-aware lowering can map
+    /// source-order-independent literals onto their declared representation.
+    StructConstruct {
+        name: String,
+        fields: Vec<(String, ValueId)>,
+    },
 }
 
 /// Specialized hardware intrinsics for the GPU.

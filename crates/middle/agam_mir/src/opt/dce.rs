@@ -215,6 +215,9 @@ fn mark_used_values(instr: &Instruction, used_values: &mut HashSet<ValueId>) {
         Op::EnumConstruct { payload, .. } => {
             used_values.extend(payload.iter().copied());
         }
+        Op::StructConstruct { fields, .. } => {
+            used_values.extend(fields.iter().map(|(_, value)| *value));
+        }
         Op::EnumTag(v) | Op::EnumPayload { value: v, .. } => {
             used_values.insert(*v);
         }

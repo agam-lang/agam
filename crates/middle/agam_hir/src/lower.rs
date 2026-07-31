@@ -15,10 +15,10 @@ use agam_ast::types::{TypeExpr, TypeExprKind};
 use agam_ast::*;
 use agam_sema::consteval::ConstEvaluator;
 use agam_sema::gpu::{
-    GpuBuiltin, GpuKernelParamAbi, resolve_gpu_builtin_expr, resolve_gpu_builtin_member,
-    resolve_gpu_memory_annotation,
+    resolve_gpu_builtin_expr, resolve_gpu_builtin_member, resolve_gpu_memory_annotation,
+    GpuBuiltin, GpuKernelParamAbi,
 };
-use agam_sema::types::{FloatSize, IntSize, Type, TypeStore, builtin_type_id_for_name};
+use agam_sema::types::{builtin_type_id_for_name, FloatSize, IntSize, Type, TypeStore};
 
 use agam_sema::target::TargetProfile;
 
@@ -441,7 +441,9 @@ impl HirLowering {
             }
 
             ExprKind::Identifier(ident) => {
-                if let Some(enum_name) = self.enum_variants.get(&ident.name).cloned() {
+                if let Some(local_ty) = self.lookup_local(&ident.name) {
+                    (local_ty, HirExprKind::Var(ident.name.clone()))
+                } else if let Some(enum_name) = self.enum_variants.get(&ident.name).cloned() {
                     (
                         self.types.fresh_var(),
                         HirExprKind::EnumVariant {
@@ -451,11 +453,7 @@ impl HirLowering {
                         },
                     )
                 } else {
-                    (
-                        self.lookup_local(&ident.name)
-                            .unwrap_or_else(|| self.types.fresh_var()),
-                        HirExprKind::Var(ident.name.clone()),
-                    )
+                    (self.types.fresh_var(), HirExprKind::Var(ident.name.clone()))
                 }
             }
             ExprKind::PathExpr(path) => {
@@ -1206,6 +1204,20 @@ mod tests {
             }
             other => panic!("expected EnumVariant, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_local_binding_shadows_enum_variant() {
+        let hir = lower_source(
+            "enum Status { Ready }\nfn main():\n    let Ready = 42\n    let value = Ready",
+        );
+        let value = match &hir.functions[0].body.stmts[1] {
+            HirStmt::Let {
+                value: Some(value), ..
+            } => value,
+            _ => panic!("expected local binding"),
+        };
+        assert!(matches!(&value.kind, HirExprKind::Var(name) if name == "Ready"));
     }
 
     #[test]

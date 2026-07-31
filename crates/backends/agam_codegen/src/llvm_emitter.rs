@@ -21,9 +21,9 @@ use agam_mir::analysis::{
 };
 use agam_mir::ir::*;
 use agam_profile::{
-    CallCacheSpecializationPlan, StableScalarValueProfile, specialization_feedback_signature,
+    specialization_feedback_signature, CallCacheSpecializationPlan, StableScalarValueProfile,
 };
-use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
+use agam_sema::types::{builtin_type_by_id, FloatSize, IntSize, Type};
 
 use crate::gpu_emitter::emit_host_cuda_declarations;
 
@@ -95,6 +95,8 @@ enum LlvmType {
     Bool,
     Str,
     OpaquePtr,
+    Enum,
+    Struct,
 }
 
 impl LlvmType {
@@ -104,6 +106,8 @@ impl LlvmType {
             LlvmType::Float(float_ty) => float_ty.ir(),
             LlvmType::Bool => "i1",
             LlvmType::Str | LlvmType::OpaquePtr => "i8*",
+            LlvmType::Enum => "%AgamEnum",
+            LlvmType::Struct => "%AgamStruct",
         }
     }
 
@@ -113,6 +117,8 @@ impl LlvmType {
             LlvmType::Float(_) => "0.0",
             LlvmType::Bool => "false",
             LlvmType::Str | LlvmType::OpaquePtr => "null",
+            LlvmType::Enum => "zeroinitializer",
+            LlvmType::Struct => "zeroinitializer",
         }
     }
 
@@ -460,10 +466,12 @@ fn analyze_function(
                 Op::GpuSharedAlloc { .. } => LlvmType::default_int(),
                 Op::GpuIntrinsic { .. } => LlvmType::default_int(),
                 Op::InlineAsm { .. } => LlvmType::default_int(),
-                Op::EnumConstruct { .. } | Op::EnumPayload { .. } => {
+                Op::EnumConstruct { .. } => LlvmType::Enum,
+                Op::EnumPayload { .. } => {
                     infer_llvm_type_from_type_id(instr.ty).unwrap_or_else(LlvmType::default_int)
                 }
                 Op::EnumTag(_) => LlvmType::default_int(),
+                Op::StructConstruct { .. } => LlvmType::Struct,
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -621,6 +629,7 @@ fn analyze_function(
                         | Op::EnumConstruct { .. }
                         | Op::EnumTag(_)
                         | Op::EnumPayload { .. }
+                        | Op::StructConstruct { .. }
                         | Op::InlineAsm { .. } => default_sign_for_type(result_ty),
                     };
 
@@ -796,7 +805,7 @@ fn supports_call_cache_type(ty: LlvmType) -> bool {
     match ty {
         LlvmType::Int(int_ty) => int_ty.bits <= 64,
         LlvmType::Float(LlvmFloatType::F32 | LlvmFloatType::F64) | LlvmType::Bool => true,
-        LlvmType::Str | LlvmType::OpaquePtr => false,
+        LlvmType::Str | LlvmType::OpaquePtr | LlvmType::Enum | LlvmType::Struct => false,
     }
 }
 
@@ -888,6 +897,30 @@ fn module_uses_gpu_host_builtins(module: &MirModule) -> bool {
     })
 }
 
+fn module_uses_enum_values(module: &MirModule) -> bool {
+    module.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instr| {
+                matches!(
+                    &instr.op,
+                    Op::EnumConstruct { .. } | Op::EnumTag(_) | Op::EnumPayload { .. }
+                )
+            })
+        })
+    })
+}
+
+fn module_uses_struct_values(module: &MirModule) -> bool {
+    module.functions.iter().any(|func| {
+        func.blocks.iter().any(|block| {
+            block
+                .instructions
+                .iter()
+                .any(|instr| matches!(&instr.op, Op::StructConstruct { .. }))
+        })
+    })
+}
+
 fn infer_binop_type(op: MirBinOp, left: LlvmType, right: LlvmType) -> LlvmType {
     if matches!(
         op,
@@ -925,6 +958,10 @@ fn infer_unop_type(op: MirUnOp, operand: LlvmType) -> LlvmType {
 fn merge_type(left: LlvmType, right: LlvmType) -> LlvmType {
     if left == right {
         left
+    } else if left == LlvmType::Enum || right == LlvmType::Enum {
+        LlvmType::Enum
+    } else if left == LlvmType::Struct || right == LlvmType::Struct {
+        LlvmType::Struct
     } else if left == LlvmType::OpaquePtr || right == LlvmType::OpaquePtr {
         LlvmType::OpaquePtr
     } else if left == LlvmType::Str || right == LlvmType::Str {
@@ -1380,6 +1417,8 @@ impl LlvmEmitter {
 
     fn emit_module(&mut self, module: &MirModule) -> Result<String, String> {
         let uses_gpu_host_runtime = module_uses_gpu_host_builtins(module);
+        let uses_enum_values = module_uses_enum_values(module);
+        let uses_struct_values = module_uses_struct_values(module);
         let mut functions = String::new();
         for func in &module.functions {
             let layout = self
@@ -1428,6 +1467,12 @@ impl LlvmEmitter {
                 escape_llvm_attr_value(target_triple)
             )
             .unwrap();
+        }
+        if uses_enum_values {
+            writeln!(output, "%AgamEnum = type {{ i32, [8 x i64] }}").unwrap();
+        }
+        if uses_struct_values {
+            writeln!(output, "%AgamStruct = type {{ [8 x i64] }}").unwrap();
         }
         let default_int_ir = LlvmType::default_int().ir();
         writeln!(
@@ -2542,32 +2587,31 @@ impl LlvmEmitter {
                 .unwrap();
                 let mut curr_val = format!("%v{}_tag", instr.result.0);
 
-                if !payload.is_empty() {
-                    for (i, p_val) in payload.iter().enumerate() {
-                        let p_ty = values.get(p_val).map(|v| v.ty.ir()).unwrap_or("i8*");
-                        let next_val = if i == payload.len() - 1 {
-                            format!("%v{}", instr.result.0)
-                        } else {
-                            format!("%v{}_p{}", instr.result.0, i)
-                        };
-                        writeln!(
-                            out,
-                            "  {} = insertvalue {} {}, {} %v{}, {}",
-                            next_val,
-                            ir_ty,
-                            curr_val,
-                            p_ty,
-                            p_val.0,
-                            i + 1
-                        )
-                        .unwrap();
-                        curr_val = next_val;
-                    }
-                } else {
+                if payload.len() > 8 {
+                    return Err("LLVM enum lowering supports at most eight payload fields".into());
+                }
+                let payload_count = payload.len();
+                for (index, payload_value) in payload.iter().enumerate() {
+                    let payload = get_value(values, *payload_value)?;
+                    let encoded = self.encode_enum_payload(out, &payload)?;
+                    let next_val = if index + 1 == payload_count {
+                        format!("%v{}", instr.result.0)
+                    } else {
+                        format!("%v{}_p{}", instr.result.0, index)
+                    };
                     writeln!(
                         out,
-                        "  %v{} = bitcast {} {} to {}",
-                        instr.result.0, ir_ty, curr_val, ir_ty
+                        "  {} = insertvalue {} {}, i64 {}, 1, {}",
+                        next_val, ir_ty, curr_val, encoded.repr, index
+                    )
+                    .unwrap();
+                    curr_val = next_val;
+                }
+                if payload.is_empty() {
+                    writeln!(
+                        out,
+                        "  %v{} = insertvalue {} {}, i64 0, 1, 0",
+                        instr.result.0, ir_ty, curr_val
                     )
                     .unwrap();
                 }
@@ -2577,11 +2621,12 @@ impl LlvmEmitter {
                 );
             }
             Op::EnumTag(value) => {
-                let val_ty = values.get(value).map(|v| v.ty.ir()).unwrap_or("i8*");
                 writeln!(
                     out,
                     "  %v{} = extractvalue {} %v{}, 0",
-                    instr.result.0, val_ty, value.0
+                    instr.result.0,
+                    LlvmType::Enum.ir(),
+                    value.0
                 )
                 .unwrap();
                 values.insert(
@@ -2590,16 +2635,56 @@ impl LlvmEmitter {
                 );
             }
             Op::EnumPayload { value, field_index } => {
-                let val_ty = values.get(value).map(|v| v.ty.ir()).unwrap_or("i8*");
+                if *field_index >= 8 {
+                    return Err("LLVM enum payload index exceeds the eight-field layout".into());
+                }
+                let raw_name = format!("%v{}_payload_raw", instr.result.0);
                 writeln!(
                     out,
-                    "  %v{} = extractvalue {} %v{}, {}",
-                    instr.result.0,
-                    val_ty,
+                    "  {} = extractvalue {} %v{}, 1, {}",
+                    raw_name,
+                    LlvmType::Enum.ir(),
                     value.0,
-                    field_index + 1
+                    field_index
                 )
                 .unwrap();
+                let decoded = self.decode_enum_payload(out, &raw_name, result_ty)?;
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, decoded.repr, result_sign),
+                );
+            }
+            Op::StructConstruct { fields, .. } => {
+                if fields.len() > 8 {
+                    return Err("LLVM struct lowering supports at most eight fields".into());
+                }
+                let ir_ty = result_ty.ir();
+                let field_count = fields.len();
+                let mut current = "undef".to_string();
+                for (index, (_name, field_value)) in fields.iter().enumerate() {
+                    let field_value = get_value(values, *field_value)?;
+                    let encoded = self.encode_enum_payload(out, &field_value)?;
+                    let next = if index + 1 == field_count {
+                        format!("%v{}", instr.result.0)
+                    } else {
+                        format!("%v{}_field{}", instr.result.0, index)
+                    };
+                    writeln!(
+                        out,
+                        "  {} = insertvalue {} {}, i64 {}, 0, {}",
+                        next, ir_ty, current, encoded.repr, index
+                    )
+                    .unwrap();
+                    current = next;
+                }
+                if fields.is_empty() {
+                    writeln!(
+                        out,
+                        "  %v{} = insertvalue {} undef, i64 0, 0, 0",
+                        instr.result.0, ir_ty
+                    )
+                    .unwrap();
+                }
                 values.insert(
                     instr.result,
                     ValueRef::new(result_ty, format!("%v{}", instr.result.0), result_sign),
@@ -3023,6 +3108,16 @@ impl LlvmEmitter {
                         format.push_str(if int_ty.signed { "%lld" } else { "%llu" });
                         call_args.push(format!("i64 {}", promoted.repr));
                     }
+                    LlvmType::Enum => {
+                        let tag = format!("%tmp{}", self.fresh_temp_id());
+                        writeln!(out, "  {} = extractvalue %AgamEnum {}, 0", tag, arg.repr)
+                            .unwrap();
+                        format.push_str("<enum:%d>");
+                        call_args.push(format!("i32 {}", tag));
+                    }
+                    LlvmType::Struct => {
+                        format.push_str("<struct>");
+                    }
                 }
             }
             format.push('\n');
@@ -3138,6 +3233,127 @@ impl LlvmEmitter {
             temp,
             default_sign_for_type(LlvmType::Str),
         ))
+    }
+
+    fn encode_enum_payload(
+        &mut self,
+        out: &mut String,
+        value: &ValueRef,
+    ) -> Result<ValueRef, String> {
+        let encoded = match value.ty {
+            LlvmType::Int(int_ty) if int_ty.bits == 64 => value.repr.clone(),
+            LlvmType::Int(int_ty) => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                let opcode = if int_ty.bits < 64 {
+                    if int_ty.signed {
+                        "sext"
+                    } else {
+                        "zext"
+                    }
+                } else {
+                    "trunc"
+                };
+                writeln!(
+                    out,
+                    "  {} = {} {} {} to i64",
+                    temp,
+                    opcode,
+                    int_ty.ir(),
+                    value.repr
+                )
+                .unwrap();
+                temp
+            }
+            LlvmType::Bool => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = zext i1 {} to i64", temp, value.repr).unwrap();
+                temp
+            }
+            LlvmType::Float(LlvmFloatType::F64) => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = bitcast double {} to i64", temp, value.repr).unwrap();
+                temp
+            }
+            LlvmType::Float(LlvmFloatType::F32) => {
+                let bits = format!("%tmp{}", self.fresh_temp_id());
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = bitcast float {} to i32", bits, value.repr).unwrap();
+                writeln!(out, "  {} = zext i32 {} to i64", temp, bits).unwrap();
+                temp
+            }
+            LlvmType::Str | LlvmType::OpaquePtr => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = ptrtoint i8* {} to i64", temp, value.repr).unwrap();
+                temp
+            }
+            LlvmType::Enum | LlvmType::Struct => {
+                return Err("nested aggregate payloads are not implemented in the LLVM backend".into());
+            }
+        };
+        Ok(ValueRef::new(
+            LlvmType::Int(LlvmIntType {
+                bits: 64,
+                signed: false,
+            }),
+            encoded,
+            SignInfo::NonNegative,
+        ))
+    }
+
+    fn decode_enum_payload(
+        &mut self,
+        out: &mut String,
+        raw: &str,
+        target: LlvmType,
+    ) -> Result<ValueRef, String> {
+        let repr = match target {
+            LlvmType::Int(int_ty) if int_ty.bits == 64 => raw.to_string(),
+            LlvmType::Int(int_ty) if int_ty.bits < 64 => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = trunc i64 {} to {}", temp, raw, int_ty.ir()).unwrap();
+                temp
+            }
+            LlvmType::Int(int_ty) => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                let opcode = if int_ty.signed { "sext" } else { "zext" };
+                writeln!(
+                    out,
+                    "  {} = {} i64 {} to {}",
+                    temp,
+                    opcode,
+                    raw,
+                    int_ty.ir()
+                )
+                .unwrap();
+                temp
+            }
+            LlvmType::Bool => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = trunc i64 {} to i1", temp, raw).unwrap();
+                temp
+            }
+            LlvmType::Float(LlvmFloatType::F64) => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = bitcast i64 {} to double", temp, raw).unwrap();
+                temp
+            }
+            LlvmType::Float(LlvmFloatType::F32) => {
+                let bits = format!("%tmp{}", self.fresh_temp_id());
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = trunc i64 {} to i32", bits, raw).unwrap();
+                writeln!(out, "  {} = bitcast i32 {} to float", temp, bits).unwrap();
+                temp
+            }
+            LlvmType::Str | LlvmType::OpaquePtr => {
+                let temp = format!("%tmp{}", self.fresh_temp_id());
+                writeln!(out, "  {} = inttoptr i64 {} to i8*", temp, raw).unwrap();
+                temp
+            }
+            LlvmType::Enum | LlvmType::Struct => {
+                return Err("nested aggregate payloads are not implemented in the LLVM backend".into());
+            }
+        };
+        Ok(ValueRef::new(target, repr, default_sign_for_type(target)))
     }
 
     fn coerce_value(
@@ -6376,6 +6592,26 @@ mod tests {
         let llvm = compile_to_llvm("fn main(): return 42");
         assert!(llvm.contains("define noundef i32 @main"));
         assert!(llvm.contains("ret i32"));
+    }
+
+    #[test]
+    fn test_emit_enum_constructor_uses_tagged_union_layout() {
+        let llvm =
+            compile_to_llvm("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
+        assert!(llvm.contains("%AgamEnum = type { i32, [8 x i64] }"));
+        assert!(llvm.contains("insertvalue %AgamEnum undef, i32 0, 0"));
+        assert!(llvm.contains("to i64"));
+        assert!(llvm.contains("insertvalue %AgamEnum %v2_tag, i64"));
+    }
+
+    #[test]
+    fn test_emit_struct_constructor_uses_aggregate_layout() {
+        let llvm = compile_to_llvm(
+            "struct Point { x: i32, y: i32 }\nfn main() { let point = Point { x: 3, y: 4 }; }",
+        );
+        assert!(llvm.contains("%AgamStruct = type { [8 x i64] }"));
+        assert!(llvm.contains("insertvalue %AgamStruct undef, i64"));
+        assert!(llvm.contains("insertvalue %AgamStruct %v"));
     }
 
     #[test]

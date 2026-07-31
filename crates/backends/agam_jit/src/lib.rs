@@ -1167,6 +1167,10 @@ impl AgamJit {
                 mem_flags,
                 pointer_type,
             ),
+            Op::StructConstruct { .. } => Err(
+                "named struct construction is not yet supported by the Cranelift JIT slice; use the C or LLVM backend"
+                    .into(),
+            ),
         }
     }
 
@@ -2379,6 +2383,10 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                 Op::EnumTag(_) => JitType::Int {
                     bits: 32,
                     signed: true,
+                },
+                Op::StructConstruct { .. } => JitType::Int {
+                    bits: 64,
+                    signed: false,
                 },
                 Op::EnumPayload { value, field_index } => layout
                     .enum_payload_slots

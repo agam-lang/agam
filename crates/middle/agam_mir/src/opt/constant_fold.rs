@@ -128,7 +128,10 @@ pub fn run(module: &mut MirModule) -> bool {
                     | Op::InlineAsm { .. } => {
                         value_consts.remove(&instr.result);
                     }
-                    Op::EnumConstruct { .. } | Op::EnumTag(_) | Op::EnumPayload { .. } => {
+                    Op::EnumConstruct { .. }
+                    | Op::EnumTag(_)
+                    | Op::EnumPayload { .. }
+                    | Op::StructConstruct { .. } => {
                         value_consts.remove(&instr.result);
                     }
                 }

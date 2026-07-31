@@ -463,13 +463,18 @@ impl MirLowering {
                 self.lower_expr(body)
             }
 
-            HirExprKind::StructLiteral { fields, .. } => {
-                // Lower field initializer expressions but emit Unit since
-                // struct layout codegen will come in a later pass.
-                for (_name, value) in fields {
-                    self.lower_expr(value);
-                }
-                self.emit(ty, Op::Unit)
+            HirExprKind::StructLiteral { name, fields } => {
+                let fields = fields
+                    .iter()
+                    .map(|(field_name, value)| (field_name.clone(), self.lower_expr(value)))
+                    .collect();
+                self.emit(
+                    ty,
+                    Op::StructConstruct {
+                        name: name.clone(),
+                        fields,
+                    },
+                )
             }
 
             HirExprKind::EnumVariant {
@@ -1037,6 +1042,32 @@ mod tests {
             })
         });
         assert!(has_some, "expected Some constructor with declared tag 0");
+    }
+
+    #[test]
+    fn test_mir_struct_literal_preserves_named_field_values() {
+        let mir = lower_to_mir(
+            "struct Point { x: i32, y: i32 }\nfn main() { let point = Point { x: 3, y: 4 }; }",
+        );
+        let construct = mir.functions[0]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match &instruction.op {
+                Op::StructConstruct { name, fields } => Some((name, fields)),
+                _ => None,
+            })
+            .expect("expected a struct construction operation");
+
+        assert_eq!(construct.0, "Point");
+        assert_eq!(
+            construct
+                .1
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["x", "y"]
+        );
     }
 
     #[test]

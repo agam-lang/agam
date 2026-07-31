@@ -5,7 +5,7 @@
 //! Agam programs natively without requiring LLVM bindings.
 
 use agam_mir::ir::*;
-use agam_sema::types::{FloatSize, Type, builtin_type_by_id};
+use agam_sema::types::{builtin_type_by_id, FloatSize, Type};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -18,6 +18,8 @@ enum CType {
     OpaquePtr,
     Tensor,
     DataFrame,
+    Enum,
+    Struct,
 }
 
 impl CType {
@@ -30,6 +32,8 @@ impl CType {
             CType::OpaquePtr => "void*",
             CType::Tensor => "AgamTensor*",
             CType::DataFrame => "AgamDataFrame*",
+            CType::Enum => "AgamEnum",
+            CType::Struct => "AgamStruct",
         }
     }
 
@@ -40,6 +44,8 @@ impl CType {
             CType::Bool => "0",
             CType::Str => "NULL",
             CType::OpaquePtr | CType::Tensor | CType::DataFrame => "NULL",
+            CType::Enum => "{0}",
+            CType::Struct => "{0}",
         }
     }
 }
@@ -135,12 +141,17 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                     .or_else(|| infer_ctype_from_type_id(instr.ty))
                     .unwrap_or(CType::Int),
                 Op::StoreLocal { name, value } => {
-                    let ty = layout
-                        .local_types
-                        .get(name)
-                        .copied()
-                        .or_else(|| infer_ctype_from_type_id(instr.ty))
-                        .unwrap_or_else(|| value_type(&layout, *value));
+                    let value_ty = value_type(&layout, *value);
+                    let ty = if matches!(value_ty, CType::Enum | CType::Struct) {
+                        value_ty
+                    } else {
+                        layout
+                            .local_types
+                            .get(name)
+                            .copied()
+                            .or_else(|| infer_ctype_from_type_id(instr.ty))
+                            .unwrap_or(value_ty)
+                    };
                     layout.local_types.insert(name.clone(), ty);
                     ty
                 }
@@ -169,10 +180,10 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                 Op::GpuSharedAlloc { .. } => CType::Int,
                 Op::GpuIntrinsic { .. } => CType::Int,
                 Op::InlineAsm { .. } => CType::Int,
-                Op::EnumConstruct { .. } | Op::EnumPayload { .. } => {
-                    infer_ctype_from_type_id(instr.ty).unwrap_or(CType::Int)
-                }
+                Op::EnumConstruct { .. } => CType::Enum,
+                Op::EnumPayload { .. } => infer_ctype_from_type_id(instr.ty).unwrap_or(CType::Int),
                 Op::EnumTag(_) => CType::Int,
+                Op::StructConstruct { .. } => CType::Struct,
             };
 
             layout.value_types.insert(instr.result, inferred);
@@ -332,6 +343,10 @@ fn infer_unop_type(op: MirUnOp, operand: CType) -> CType {
 fn merge_type(left: CType, right: CType) -> CType {
     if left == right {
         left
+    } else if left == CType::Enum || right == CType::Enum {
+        CType::Enum
+    } else if left == CType::Struct || right == CType::Struct {
+        CType::Struct
     } else if left == CType::OpaquePtr || right == CType::OpaquePtr {
         CType::OpaquePtr
     } else if left == CType::DataFrame || right == CType::DataFrame {
@@ -355,6 +370,18 @@ fn value_type(layout: &FunctionLayout, value: ValueId) -> CType {
         .get(&value)
         .copied()
         .unwrap_or(CType::Int)
+}
+
+fn enum_payload_field(ty: CType) -> &'static str {
+    match ty {
+        CType::Int => "int_value",
+        CType::Float => "float_value",
+        CType::Bool => "bool_value",
+        CType::Str => "str_value",
+        CType::OpaquePtr | CType::Tensor | CType::DataFrame | CType::Enum | CType::Struct => {
+            "ptr_value"
+        }
+    }
 }
 
 fn emit_common_prelude(out: &mut String) {
@@ -461,6 +488,20 @@ pub fn emit_c(module: &MirModule) -> String {
     writeln!(output, "typedef double agam_float;").unwrap();
     writeln!(output, "typedef int agam_bool;").unwrap();
     writeln!(output, "typedef const char* agam_str;").unwrap();
+    writeln!(output, "typedef union {{").unwrap();
+    writeln!(output, "  agam_int int_value;").unwrap();
+    writeln!(output, "  agam_float float_value;").unwrap();
+    writeln!(output, "  agam_bool bool_value;").unwrap();
+    writeln!(output, "  agam_str str_value;").unwrap();
+    writeln!(output, "  void* ptr_value;").unwrap();
+    writeln!(output, "}} AgamEnumPayload;").unwrap();
+    writeln!(output, "typedef struct {{").unwrap();
+    writeln!(output, "  int32_t tag;").unwrap();
+    writeln!(output, "  AgamEnumPayload payload[8];").unwrap();
+    writeln!(output, "}} AgamEnum;").unwrap();
+    writeln!(output, "typedef struct {{").unwrap();
+    writeln!(output, "  AgamEnumPayload fields[8];").unwrap();
+    writeln!(output, "}} AgamStruct;").unwrap();
     writeln!(output).unwrap();
 
     emit_runtime_prelude(&mut output, module);
@@ -899,34 +940,44 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
             writeln!(out, "  {} {} = 0; /* asm result */", result_ty.name(), v).unwrap();
         }
         Op::EnumConstruct { tag, payload } => {
-            let payload_desc = payload
-                .iter()
-                .map(|value| format!("__v{}", value.0))
-                .collect::<Vec<_>>()
-                .join(", ");
-            writeln!(
-                out,
-                "  {} {} = {{ .tag = {}, .payload = {{ {} }} }};",
-                result_ty.name(),
-                v,
-                tag,
-                payload_desc
-            )
-            .unwrap();
+            writeln!(out, "  {} {} = {{ .tag = {} }};", result_ty.name(), v, tag).unwrap();
+            for (field_index, value) in payload.iter().enumerate() {
+                let field = enum_payload_field(value_type(layout, *value));
+                writeln!(
+                    out,
+                    "  {}.payload[{}].{} = __v{};",
+                    v, field_index, field, value.0
+                )
+                .unwrap();
+            }
         }
         Op::EnumTag(value) => {
             writeln!(out, "  {} {} = __v{}.tag;", result_ty.name(), v, value.0).unwrap();
         }
         Op::EnumPayload { value, field_index } => {
+            let field = enum_payload_field(result_ty);
             writeln!(
                 out,
-                "  {} {} = __v{}.payload.f{};",
+                "  {} {} = __v{}.payload[{}].{};",
                 result_ty.name(),
                 v,
                 value.0,
-                field_index
+                field_index,
+                field
             )
             .unwrap();
+        }
+        Op::StructConstruct { fields, .. } => {
+            writeln!(out, "  {} {} = {{0}};", result_ty.name(), v).unwrap();
+            for (field_index, (_name, value)) in fields.iter().enumerate() {
+                let field = enum_payload_field(value_type(layout, *value));
+                writeln!(
+                    out,
+                    "  {}.fields[{}].{} = __v{};",
+                    v, field_index, field, value.0
+                )
+                .unwrap();
+            }
         }
     }
 }
@@ -1003,6 +1054,12 @@ fn emit_print_value(out: &mut String, value: ValueId, ty: CType) {
         }
         CType::DataFrame => {
             writeln!(out, "  printf(\"<dataframe:%p>\", (void*)__v{});", value.0).unwrap();
+        }
+        CType::Enum => {
+            writeln!(out, "  printf(\"<enum:%d>\", __v{}.tag);", value.0).unwrap();
+        }
+        CType::Struct => {
+            writeln!(out, "  printf(\"<struct>\");").unwrap();
         }
     }
 }
@@ -1124,6 +1181,28 @@ mod tests {
         let c = compile_to_c("fn main(): return 0");
         assert!(c.contains("typedef int64_t agam_int;"));
         assert!(c.contains("typedef double agam_float;"));
+    }
+
+    #[test]
+    fn test_emit_enum_constructor_uses_tagged_union_layout() {
+        let c = compile_to_c("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
+        assert!(c.contains("} AgamEnumPayload;"));
+        assert!(c.contains("} AgamEnum;"));
+        assert!(c.contains("AgamEnum __v"));
+        assert!(c.contains(".payload[0].int_value = __v"));
+        assert!(c.contains("AgamEnum _local_value = {0};"));
+    }
+
+    #[test]
+    fn test_emit_struct_constructor_uses_aggregate_layout() {
+        let c = compile_to_c(
+            "struct Point { x: i32, y: i32 }\nfn main() { let point = Point { x: 3, y: 4 }; }",
+        );
+        assert!(c.contains("} AgamStruct;"));
+        assert!(c.contains("AgamStruct __v"));
+        assert!(c.contains(".fields[0].int_value = __v"));
+        assert!(c.contains(".fields[1].int_value = __v"));
+        assert!(c.contains("AgamStruct _local_point = {0};"));
     }
 
     #[test]

@@ -474,6 +474,13 @@ fn clone_op(op: &Op, value_map: &HashMap<ValueId, ValueId>) -> Op {
             value: remap_value(*value, value_map),
             field_index: *field_index,
         },
+        Op::StructConstruct { name, fields } => Op::StructConstruct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(name, value)| (name.clone(), remap_value(*value, value_map)))
+                .collect(),
+        },
     }
 }
 
