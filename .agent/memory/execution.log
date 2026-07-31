@@ -30,3 +30,4 @@
 [2026-07-31 14:17:00 IST] [DOCS] Generated Agam vs. Major Compilers (Rust, Mojo, Triton, Zig, Python) architectural diff matrix artifact in .agent/wiki/compiler-diff-matrix.md.
 [2026-07-31 14:22:00 IST] [DOCS] Generated NVIDIA NVPTX Benchmark Performance & Universal Compiler Architecture Strategy artifact in .agent/wiki/nvidia-benchmark-comparison.md.
 [2026-07-31 14:27:00 IST] [ARCHITECTURE] Refactored 4-in-1 backend architecture definition across specs & rules to Universal GPU Emitter (NVPTX / AMDGPU / SPIR-V / Metal) to eliminate vendor-lock and uphold Agam's core universal compiler guarantee.
+[2026-07-31 14:32:00 IST] [SPECS] Updated master implementation roadmap (.agent/specs/active/next.md) with T0-type-system Phase C, T1-compiler-agent-tool (MCP serve), T1-error-messages, and T3-gpu-target-adapter.

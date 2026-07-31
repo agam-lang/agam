@@ -4,40 +4,35 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T0-type-system: Foundation Type System (Generics, Sum Types, Pattern Matching)**
-   - Single highest-leverage gap: enables stdlib collections (`List<T>`, `Map<K, V>`), safe error handling (`Option<T>`, `Result<T, E>`), and pattern matching
-   - Implement type inference, sum types/enums, pattern matching, and monomorphization end-to-end through AST → HIR → MIR → LLVM/C/JIT
+1. **Phase T0-type-system: Foundation Type System (Phase C: Struct Aggregates & Tuple Destructuring)**
+   - Single highest-leverage gap: completes `Option<T>`, `Result<T, E>`, struct construction (`Point { x, y }`), field access (`Op::FieldAccess`), and tuple destructuring (`let (a, b) = pair`) in MIR across all backends.
+   - Implement type inference, sum types/enums, pattern matching, and monomorphization end-to-end through AST → HIR → MIR → LLVM/Universal GPU/C/JIT
    - Detail file: `details/T0-type-system.md`
 
-2. **Finish Phase T1-sdk-distribution**
+2. **Phase T1-compiler-agent-tool: Native MCP Server (`agamc mcp serve`)**
+   - Implement native Model Context Protocol (MCP) server directly inside `agamc` (`agamc mcp serve`)
+   - Expose zero-latency diagnostic streaming, SARIF output, AST symbol inspection, and automated code refactoring tools for LLM agent integration
+   - Detail file: `details/T1-compiler-agent-tool.md`
+
+3. **Phase T1-error-messages: Parser Recovery & Visual Spans**
+   - Upgrade parser error recovery and visual source-span highlights using `miette` and `codespan-reporting`
+   - Enable single-pass multi-error reporting without panicking on the first error
+   - Detail file: `details/T1-error-messages.md`
+
+4. **Phase T3-gpu-target-adapter: Universal GPU Target Adapter Interface**
+   - Introduce abstract `GpuTargetAdapter` trait interface in `agam_codegen`
+   - Decouple target-agnostic GPU MIR lowering from target assembly generation, enabling AMDGPU (ROCm/HIP), SPIR-V (Vulkan/oneAPI), and Metal adapters alongside NVPTX
+   - Detail file: `details/T3-gpu-target-adapter.md`
+
+5. **Finish Phase T1-sdk-distribution**
    - Exercise the hosted-runner Windows/Linux SDK flow on GitHub with bundled LLVM and post-download archive validation
    - Confirm one end-to-end release publication and Android target-pack packaging path on hosted infrastructure
    - Detail file: `details/T1-sdk-distribution.md`
 
-3. **Continue Phase T1-headless-exec**
+6. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating
    - Add stronger OS-level isolation for filesystem, network, process, and runtime resource usage
    - Detail file: `details/T1-headless-exec.md`
-
-4. **Continue Phase T1-python-wrappers**
-   - Validate the packaged LangChain/LlamaIndex adapter hooks against live framework releases
-   - Publish the optional-extras integration story beyond the repo-local test doubles
-   - Detail file: `details/T1-python-wrappers.md`
-
-5. **Continue Phase T0-stdlib-io**
-   - Build on the new `agam_std::io` file/path helpers and move native I/O toward an effects-aware language contract
-   - Keep standard-library growth aligned with the effects model and official package governance
-   - Detail file: `details/T0-stdlib-io.md`
-
-7. **Begin T1-error-messages** *(can run in parallel with T0)*
-   - Error message quality is a top adoption driver — can start during T0 implementation
-   - Parser error recovery and rich source-span diagnostics are independent of the type system
-   - Detail file: `details/T1-error-messages.md`
-
-8. **Begin T1-compiler-agent-tool** *(extends 18/19)*
-   - Natural follow-on once Phase T1-headless-exec/19 stabilize
-   - `agamc mcp serve`, SARIF output, diagnostic stability contract
-   - Detail file: `details/T1-compiler-agent-tool.md`
 
 ## What Not To Prioritize First
 
