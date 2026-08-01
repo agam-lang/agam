@@ -52,6 +52,20 @@ Agam is trying to unify one coherent language across:
 
 The design bias is to make those capabilities part of the language and runtime contract, not bolt-ons that only exist through foreign libraries.
 
+## Core Philosophy & Maxims
+
+Agam is built on mathematical invariants that have endured for over 2,500 years (Pāṇini's *Aṣṭādhyāyī* and the *Tolkāppiyam*), ensuring timeless language stability:
+
+- **Root Derivation (`Dhātu`):** *One verb per action; every API derives from a canonical root.*
+- **Role Marking (`Vibhakti`):** *Role over order; arguments state their purpose, not just their position.*
+- **Type Junctions (`Sandhi`):** *Type junctions are absolute laws, never guesses.*
+- **Compound Structure (`Samāsa`):** *Every abstraction fits one of four canonical composition patterns.*
+- **Contextual Flow (`Anuvṛtti`):** *Context flows forward; express what changes, inherit what stays.*
+- **Categorical Bounds (`Pratyāhāra`):** *Group traits into named constraints; never duplicate bound lists.*
+- **Agglutinative Chains (`Oṭṭu`):** *Chain operations like suffixes; container identity is sacred.*
+
+See full specification: [design-principles.md](docs/specification/design-principles.md)
+
 ## Syntax Modes
 
 Agam currently supports multiple source styles through one pipeline:

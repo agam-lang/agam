@@ -20,6 +20,88 @@ These seven principles shape every design decision in Agam, from type compositio
 
 ---
 
+## The Eternal Manifesto: Timeless Foundations
+
+Agam is built to transcend temporary industry paradigms and syntax trends. Most programming languages reflect the technology trends of their decade; Agam is built on mathematical invariants that have endured for over 2,500 years.
+
+### The 5 Invariant Axioms of Agam
+
+1. **Grammatical Invariance:** Standard library APIs derive deterministically from root action verbs (*Dhātu*). Syntactic trends fade, but structural root derivation is immutable.
+2. **Pure Term Rewriting:** The compiler IR models computation as E-Graph equality saturation and formal term reductions (*Sandhi & Samāsa*). Computation is invariant across hardware shifts (CPU, GPU, Neuromorphic, Quantum).
+3. **Absolute Mathematical Safety:** Zero undefined behavior. Every type junction is governed by deterministic reduction rules—the foundation is mathematically uncrackable.
+4. **First-Class Primitive Integration:** Compute capabilities (tensors, autodiff, concurrency) are language-native primitives, not fragile C-binding wrappers.
+5. **Role-First Transparency:** Execution intent and argument roles (*Vibhakti*) are explicit at every call site. Context inherits cleanly (*Anuvṛtti*), eliminating hidden magic.
+
+---
+
+## Core Philosophy Maxims
+
+| Core Pillar | **The Agam Philosophy Maxim** | Principle / Source |
+|---|---|---|
+| **Root Derivation** | *One verb per action; every API derives from a canonical root.* | **Dhātu** (Pāṇini) |
+| **Role Marking** | *Role over order; arguments state their purpose, not just their position.* | **Vibhakti** (Tolkāppiyam) |
+| **Type Junctions** | *Type junctions are absolute laws, never guesses.* | **Sandhi** (Pāṇini) |
+| **Compound Structure** | *Every abstraction fits one of four canonical composition patterns.* | **Samāsa** (Pāṇini) |
+| **Contextual Flow** | *Context flows forward; express what changes, inherit what stays.* | **Anuvṛtti** (Pāṇini) |
+| **Categorical Bounds** | *Group traits into named constraints; never duplicate bound lists.* | **Pratyāhāra** (Pāṇini) |
+| **Agglutinative Chains** | *Chain operations like suffixes; container identity is sacred.* | **Oṭṭu** (Tolkāppiyam) |
+| **Strategic Lowering** | *Lower progressively through Sāma, Dāna, Bheda, and Daṇḍa.* | **Upāya** (Chāṇakya Nīti) |
+| **Diagnostic Proofs** | *Errors are formal proofs (Fact, Reason, Fix, Law), never cryptics.* | **Nyāya** Epistemology |
+| **Developer Experience** | *Zero warning bloat; deterministic builds and guided feedback.* | **Tirukkuraḷ** Ethics |
+| **State & Effect** | *Separate pure data (Puruṣa) from active energy (Prakṛti).* | **Sāṃkhya** Dualism |
+
+---
+
+## Strategic & Operational Foundations: Chāṇakya Nīti
+
+While Pāṇini and the Tolkāppiyam govern Agam's **Grammatical & Structural Rigor** (language mechanics), **Chāṇakya Nīti** (and Kautilya's *Arthaśāstra*, ~4th c. BCE) governs Agam's **Strategic & Operational Pragmatism** (compiler pipeline, runtime governance, resource management, and execution sandboxing).
+
+### The 4 Strategic Pillars of Operational Execution
+
+#### 1. *Upāya-Chatuṣṭaya* — 4-Tier Progressive Lowering & Optimization
+Chāṇakya's 4 strategies for handling any challenge (*Sāma, Dāna, Bheda, Daṇḍa*) dictate Agam's compilation pipeline:
+- **Sāma (Conciliation):** *Tier 1 — Fast Inlining & Constant Folding.* Zero-cost AST pass for rapid developer feedback.
+- **Dāna (Concession):** *Tier 2 — Profile-Guided Specialization (PGO).* Allocate extra hardware and cache budgets to hot execution paths.
+- **Bheda (Decomposition):** *Tier 3 — Auto-Vectorization & GPU Warp Splitting.* Decompose iteration loops across SIMD registers and GPU hardware warps.
+- **Daṇḍa (Force):** *Tier 4 — E-Graph Superoptimization & Hard Enforcement.* Heavy formal lowering pass to guarantee optimal assembly and enforce hard OS bounds.
+
+#### 2. *Kosha-Mūlo Daṇḍaḥ* — Strict Resource Treasury Sovereignty
+> *"All governance and power rest upon the treasury (Kosha)."*
+
+Memory, cache lines, and thread limits are primary constraints. Agam treats memory as a strictly managed treasury: zero hidden heap allocations, cache-aware data layouts by default, and OS-level job resource limits (`JobObject` / `cgroups`).
+
+#### 3. *Anāgata-Vidhātā* — Proactive Defenses & Failure Prevention
+> *"He who foresees trouble and acts before it arrives is never defeated."*
+
+Runtime failures are pre-empted statically at compile time through native effect tracking, static range checks, and borrow invariants—preventing production failures before code ever executes.
+
+#### 4. *Durdharṣa & Gupta-Vidyā* — Unbreachable Execution Sandboxing
+> *"Guard secrets and vulnerabilities behind multi-layered fortifications."*
+
+Un-sandboxed execution is prohibited by default. Headless code execution, package builds, and external modules operate inside isolated OS sandboxes with zero ambient privilege.
+
+---
+
+## Epistemology & DX Foundations: Nyāya, Tirukkuraḷ & Sāṃkhya
+
+### Nyāya Epistemology — The Diagnostic Engine (`agam_errors`)
+The **Nyāya** school of formal logic (~2nd c. BCE) dictates that every diagnostic emitted by `agamc` must constitute a formal four-part proof (*Pramāṇa*):
+1. **Fact (*Pratyakṣa*):** Exact source span and token location.
+2. **Reason (*Anumāna*):** Deductive explanation of the violated constraint.
+3. **Fix (*Upamāna*):** Analogy-driven contextual suggested replacement.
+4. **Law (*Śabda*):** Authoritative link to the Agam formal specification.
+
+### Tirukkuraḷ Principles — Ergonomics & Build Determinism
+Grounded in Thiruvalluvar's *Tirukkuraḷ* (~1st c. BCE), Agam enforces developer experience axioms:
+- **Zero Warning Bloat:** Compilers must not pollute developer stdout with ignored warnings.
+- **Bit-for-Bit Determinism:** Compiling identical source files produces byte-for-byte identical binary targets.
+- **Compiler as Mentor:** Diagnostics serve as constructive guidance rather than punitive rejection.
+
+### Sāṃkhya Dualism — Separation of State & Effect
+Derived from Sāṃkhya philosophy, Agam strictly decouples pure data structures (*Puruṣa*) from active state mutations and side effects (*Prakṛti*). Side effects (I/O, GPU dispatches, memory mutation) are managed through first-class `perform`/`handle` effect handlers, keeping function bodies side-effect transparent and deterministically testable.
+
+---
+
 ## Principle 1: Dhātu (धातु) — Systematic Root Derivation
 
 ### Origin
@@ -382,6 +464,7 @@ let result = users                    # Root: List<User>
 
 - Pāṇini, *Aṣṭādhyāyī* (~4th century BCE) — 3,959 sūtras defining the complete Sanskrit grammar
 - Tolkāppiyar, *Tolkāppiyam* (~3rd century BCE) — the oldest extant Tamil grammar
+- Chāṇakya (Kautilya), *Arthaśāstra* & *Chāṇakya Nīti* (~4th century BCE) — foundational treatises on strategy, governance, and resource management
 - P.Z. Ingerman, "Pāṇini-Backus Form Suggested," *Communications of the ACM* 10.3 (1967): 137
 - Noam Chomsky, acknowledgment of Pāṇini as first generative grammarian in *Current Issues in Linguistic Theory* (1964)
 - Amba Kulkarni, "Computational Linguistics and Sanskrit" — modern formalization of Paninian grammar
@@ -391,8 +474,9 @@ let result = users                    # Root: List<User>
 
 ## Architectural Cross-Reference (2026)
 
-The Indic design principles are not merely frontend syntactic sugar; they directly inform Agam's world-class 2026 compiler architecture:
+The Indic design and strategic principles are not merely frontend syntactic sugar; they directly inform Agam's world-class 2026 compiler architecture:
 
 - **E-Graph Superoptimization (Middle-end)**: The `agam_mir` E-Graph native representation uses **Sandhi** (junction rules) and **Samāsa** (compound formation) as its foundational, deterministic rewrite rules. Equality saturation relies on Sandhi to guarantee that type combinations reduce to a canonical, optimized form.
+- **Progressive Lowering & Sandboxing (Compiler & Runtime)**: The 4-tier lowering strategy (*Upāya-Chatuṣṭaya*) and runtime isolation (*Durdharṣa*) derive directly from **Chāṇakya Nīti**, governing OS-level JobObject limits, capability security, and profile-guided tier escalations.
 - **LLVM 22.1 & GPU AutoWS (Backend)**: Advanced targets leverage **Avyayībhāva** (adverbial modifiers). The `@gpu(warp_specialize)` and `@llvm(denormal_fpenv)` annotations follow strict adverbial composition rules, guaranteeing that progressive lowering through MLIR dialects preserves the original hardware-introspection intent.
 - **Salsa Query Engine (Frontend)**: The demand-driven frontend relies on **Anuvṛtti** (contextual inheritance) to invalidate caches efficiently. When a `pub mod` or `impl` block changes, the inherited context strictly bounds the required re-evaluation graph.
