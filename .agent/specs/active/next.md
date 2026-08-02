@@ -11,12 +11,12 @@ Use this as the default answer to "what should Agam agents build next?"
 
 2. **Phase T1-compiler-agent-tool: Native MCP Server (`agamc mcp serve`)**
    - Implement native Model Context Protocol (MCP) server directly inside `agamc` (`agamc mcp serve`)
-   - Expose zero-latency diagnostic streaming, SARIF output, AST symbol inspection, and automated code refactoring tools for LLM agent integration
+   - Expose zero-latency diagnostic streaming, Nyāya SARIF proof output, AST symbol inspection, and automated code refactoring tools for AI agent integration
    - Detail file: `details/T1-compiler-agent-tool.md`
 
-3. **Phase T1-error-messages: Parser Recovery & Visual Spans**
-   - Upgrade parser error recovery and visual source-span highlights using `miette` and `codespan-reporting`
-   - Enable single-pass multi-error reporting without panicking on the first error
+3. **Phase T1-error-messages: Nyāya 4-Part Proof Diagnostic Engine (`agam_errors`)**
+   - Upgrade parser error recovery and visual source-span highlights into formal 4-part Nyāya proofs (*Fact, Reason, Fix, Law*) in `agam_errors`
+   - Enable single-pass multi-error reporting with exact mathematical proof diagnostics
    - Detail file: `details/T1-error-messages.md`
 
 4. **Phase T3-gpu-target-adapter: Universal GPU Target Adapter Interface**
@@ -31,14 +31,14 @@ Use this as the default answer to "what should Agam agents build next?"
 
 6. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating
-   - Add stronger OS-level isolation for filesystem, network, process, and runtime resource usage
+   - Add stronger OS-level isolation (Chāṇakya *Durdharṣa* sandboxing) for filesystem, network, process, and runtime resource usage
    - Detail file: `details/T1-headless-exec.md`
 
 ## What Not To Prioritize First
 
 - macOS/iOS backend bring-up beyond planning and driver hooks
 - broad new language-surface expansion that distracts from the native LLVM product path
-- long-horizon model-training phases ahead of the hosted SDK proof, execution sandbox hardening, and wrapper validation now in 15H/18/19
+- long-horizon model-training phases ahead of the hosted SDK proof, execution sandbox hardening, and wrapper validation
 - WSL-only shortcuts that weaken the real host-toolchain story
 - Tier 5–6 AI-native phases before Tier 0 foundation is solid
 
