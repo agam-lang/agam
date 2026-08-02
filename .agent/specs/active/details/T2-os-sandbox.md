@@ -1,39 +1,18 @@
-# Phase T2-os-sandbox � Runtime Hardening: OS-Level Sandbox Enforcement
+# Phase T2-os-sandbox — Chāṇakya Durdharṣa Sandboxing & Resource Bounds
 
-## Status
+## Phase Focus
 
-- Overall status: open
+OS-level process, memory, and capability isolation (`agam_runtime`) enforcing Chāṇakya Nīti Durdharṣa (sandboxing) and Kosha (resource treasury) principles for untrusted code execution.
 
-## Goal
+## Key Capabilities
 
-- Train models that natively reason in Agam syntax.
+1. **OS-Native Hardening**:
+   - **Win32 JobObjects**: Memory limits, process counts, UI isolation, and wall-clock timeout enforcement.
+   - **Linux prctl/setrlimit/cgroups**: `PR_SET_NO_NEW_PRIVS`, CPU quota, RSS memory limits, and file descriptor bounds.
 
-## Main Motive
+2. **Entropy & Subspace Resource Bounds**:
+   - Bounded child process execution entropy ($H(Z \mid X, Y) \le \kappa + (\log_2 3)d$) ensuring untrusted code cannot leak host memory or exceed pre-allocated resource limits.
 
-- Move from prompt-level syntax steering to models that can actually think in Agam.
+## Verification Plan
 
-## Responsible Crates
-
-- `agam_notebook`
-- `agam_test`
-- `agam_ffi`
-- `agam_pkg`
-
-## Planned Work
-
-- Build a dataset of thousands of `.agam` scripts plus expected outputs.
-- Fine-tune an open-source model such as Llama or Mistral so it can produce Agam without heavy prompt engineering.
-
-## What To Build Next
-
-- Build the dataset first.
-- Then evaluate a fine-tuning path on an open model.
-
-## Dependencies And Prerequisites
-
-- strong syntax corpus
-- execution and validation surfaces from earlier agent phases
-
-## Agent Interpretation
-
-- This is a long-term data and model phase, not an immediate compiler-core priority.
+- Integration tests on Windows and Linux verifying process memory termination and wall-clock timeout enforcement.

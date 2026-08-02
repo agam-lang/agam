@@ -193,8 +193,11 @@ These phases are open but not tracked in the numbered workstreams above. They ar
 | **T1-lsp-production** | open | LSP: go-to-definition, completion, hover, refactoring | `details/T1-lsp-production.md` |
 | **T1-build-system** | partial | `agamc add/remove/update/bench` completeness | `details/T1-build-system.md` |
 | **T1-compiler-agent-tool** | open | MCP server, SARIF output, agent SDK (extends 18/19) | `details/T1-compiler-agent-tool.md` |
-| **T2-memory-model** | decided | Memory ownership: Hybrid ARC + Value Semantics (decision made) | `details/T2-memory-model.md` |
 | **T2-sandboxing** | open | Language-level permissions, MicroVM isolation (extends 21) | `details/T2-sandboxing.md` |
+| **T0-type-sandhi-graph** | open | Type Sandhi & representation harmonic monomorphization lattice graphs | `details/T0-type-sandhi-graph.md` |
+| **T4-egraph-square-zero** | open | E-Graph superoptimization & square-zero algebraic tensor kernel fusion | `details/T4-egraph-square-zero.md` |
+| **T5-advanced-math-primitives** | open | Sphere packing, Hankel systems, Ehrhart volume, Ramsey covers | `details/T5-advanced-math-primitives.md` |
+| **T6-algebraic-complexity-verification** | open | Baur-Strassen AD pass, GPU permanent kernels, quantum sampling | `details/T6-algebraic-complexity-verification.md` |
 
 > See `catalog.md` for the full tier breakdown of all 50+ open phases.
 

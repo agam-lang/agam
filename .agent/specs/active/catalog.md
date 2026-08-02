@@ -35,6 +35,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T0-object-model | open | Struct/trait/impl pipeline, method dispatch, visibility | `details/T0-object-model.md` |
 | T0-module-system | open | File-to-module mapping, imports, re-exports, visibility rules | `details/T0-module-system.md` |
 | T0-effects-depth | open | Named args, closures, destructuring, ranges, operator overloading | `details/T0-effects-depth.md` |
+| T0-type-sandhi-graph | open | Type Sandhi & representation harmonic monomorphization lattice graphs | `details/T0-type-sandhi-graph.md` |
 
 ---
 
@@ -53,7 +54,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T1-official-distributions | complete | Curated first-party distributions and package governance | `details/T1-official-distributions.md` |
 | T1-headless-exec | partial | Agent-facing headless execution tool (`agamc exec`) | `details/T1-headless-exec.md` |
 | T1-python-wrappers | partial | Agent ecosystem wrappers (LangChain/LlamaIndex/Python) | `details/T1-python-wrappers.md` |
-| T1-error-messages | open | Elite diagnostics: multi-span, suggestions, error recovery | `details/T1-error-messages.md` |
+| T1-error-messages | open | Nyāya 4-part proof diagnostic engine with Hankel moment solvers | `details/T1-error-messages.md` |
 | T1-lsp-production | open | LSP production quality: go-to-def, completion, hover, refactoring | `details/T1-lsp-production.md` |
 | T1-doc-generation | open | `agamc doc` — rendered HTML docs, cross-linked, searchable | `details/T1-doc-generation.md` |
 | T1-formatter-linter | open | `agam_fmt` stability, `agam_lint` rules, IDE integration | `details/T1-formatter-linter.md` |
@@ -72,7 +73,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 
 | Phase | Status | Focus | Detail |
 |-------|--------|-------|--------|
-| T2-os-sandbox | complete | OS-level sandbox enforcement (Win32 JobObject, Linux prctl/setrlimit) | `details/T2-os-sandbox.md` |
+| T2-os-sandbox | complete | Chāṇakya Durdharṣa & Kosha OS-level resource bounds (Win32 JobObject, Linux prctl/cgroups) | `details/T2-os-sandbox.md` |
 | T2-memory-model | decided | Memory ownership: Hybrid ARC + Value Semantics (decision made) | `details/T2-memory-model.md` |
 | T2-async-concurrency | open | async/await, structured concurrency, channels, event loop | `details/T2-async-concurrency.md` |
 | T2-networking-stack | open | `agam_std::net` — TCP/UDP, HTTP/2, TLS 1.3, DNS-over-HTTPS | `details/T2-networking-stack.md` |
@@ -122,6 +123,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T4-metaprogramming | open | Declarative and procedural macros, DSL construction, `@comptime` reflection | `details/T4-metaprogramming.md` |
 | T4-gpu-auto-tuning | open | GPU auto-tuning (genetic pass selection) and `Tile<T,N>` abstractions | `details/T4-gpu-auto-tuning.md` |
 | T4-tile-async-memory | open | Tile-centric programming model and asynchronous memory (TMA-style) | `details/T4-tile-async-memory.md` |
+| T4-egraph-square-zero | open | E-Graph superoptimization & square-zero algebraic tensor kernel fusion | `details/T4-egraph-square-zero.md` |
 
 ---
 
@@ -136,6 +138,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T5-edge-ai-inference | open | ONNX/TFLite model import, compile-time embedding, edge targets | `details/T5-edge-ai-inference.md` |
 | T5-probabilistic-prog | open | `sample`/`observe` algebraic effects, HMC/VI inference engines | `details/T5-probabilistic-prog.md` |
 | T5-tensor-core-matrix | open | Tensor core access via SPIR-V `OpCooperativeMatrixMulAddKHR` | `details/T5-tensor-core-matrix.md` |
+| T5-advanced-math-primitives | open | Sphere packing, Hankel systems, Ehrhart volume, Ramsey covers | `details/T5-advanced-math-primitives.md` |
 
 ---
 
@@ -147,6 +150,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T6-formal-verification | open | SMT solver integration, `@verify`, `requires`/`ensures` contracts | `details/T6-formal-verification.md` |
 | T6-language-research | open | Experimental language features and research proposals | `details/T6-language-research.md` |
 | T6-ai-compiler-intel | open | ML-guided optimization, semantic error messages, profile-guided AI | `details/T6-ai-compiler-intel.md` |
+| T6-algebraic-complexity-verification | open | Baur-Strassen AD pass, GPU permanent kernels, quantum sampling, non-sofic group testing | `details/T6-algebraic-complexity-verification.md` |
 
 ---
 

@@ -1,68 +1,24 @@
-# Phase T1-error-messages � Elite Error Messages and Recovery
+# Phase T1-error-messages — Nyāya 4-Part Proof Diagnostic Engine & Hankel Root Solvers
 
-**Status:** open
-**Tier:** 1 (Developer Experience Excellence)
-**Priority:** Rust proved that error message quality is a top adoption driver
+## Phase Focus
 
-## Scope
+Upgrading parser error recovery, visual source-span highlights, and constraint diagnostics into formal 4-part Nyāya proofs (*Fact, Reason, Fix, Law*) in `agam_errors`, powered by Hankel moment matrix root solvers.
 
-Transform Agam's compiler diagnostics from basic error reporting into a world-class developer experience with error recovery, rich source annotations, actionable suggestions, and machine-readable output for IDE consumption.
+## Key Capabilities
 
-## Deliverables
+1. **Nyāya 4-Part Proof Diagnostic Schema**:
+   - **Fact (Pratijñā)**: Precise multi-span code locus and observed error condition.
+   - **Reason (Hetu)**: Formal type mismatch, effect violation, or borrow check failure.
+   - **Fix (Udāharaṇa)**: Actionable, compiler-suggested code modification.
+   - **Law (Nigamana)**: Governing language rule or specification constraint.
 
-### Parser Error Recovery
-- [ ] Continue parsing after syntax errors to report multiple issues per compilation
-- [ ] Synchronization points: recover at statement/block/function boundaries
-- [ ] Track error recovery state to avoid cascading false-positive errors
-- [ ] Report the most useful errors first, suppress noise
+2. **Hankel Moment Matrix Root Solvers (`agam_errors::hankel`)**:
+   - `solve_hankel_determinant(moments: &[FieldElement]) -> Option<Vec<TypeConstraint>>`: Uses Hankel matrix determinants ($\Delta_h(X) = \det(\mu_{i+j}(X))$) and Reed–Solomon moment constraints to uniquely reconstruct missing type constraints and generate exact mathematical proofs.
 
-### Rich Diagnostic Rendering
-- [ ] Multi-line source display with line numbers and column markers
-- [ ] Underline spans with `^^^` markers pointing to the exact error location
-- [ ] Color-coded terminal output: error (red), warning (yellow), note (blue), help (green)
-- [ ] `--color auto/always/never` flag
-- [ ] Unicode box-drawing for diagnostic frames (like Rust's `rustc`)
+3. **Single-Pass Multi-Error Recovery**:
+   - Resilient Pratt parser error recovery that collects multiple diagnostic proofs per compilation pass without cascading cascades.
 
-### Actionable Suggestions
-- [ ] "Did you mean?" for misspelled identifiers (Levenshtein distance)
-- [ ] "Did you mean?" for wrong keyword usage
-- [ ] Suggested fixes with concrete code snippets
-- [ ] "Help:" annotations explaining why an error occurs
-- [ ] "Note:" annotations showing relevant declaration sites
+## Verification Plan
 
-### Multi-Span Diagnostics
-- [ ] Show both error site and relevant declaration/definition
-- [ ] Type mismatch errors show both the expected and actual types with their origins
-- [ ] Import errors show the module being imported and available alternatives
-
-### Machine-Readable Output
-- [ ] `--error-format json` for IDE and CI consumption
-- [ ] JSON diagnostic format compatible with LSP diagnostic protocol
-- [ ] Structured error codes (e.g., `E0001`, `E0002`) with documentation
-- [ ] `agamc explain E0001` command to show detailed error documentation
-
-### Warning Infrastructure
-- [ ] `#[allow(warning_name)]` to suppress specific warnings
-- [ ] `#[deny(warning_name)]` to promote warnings to errors
-- [ ] `--warn-as-error` / `-Werror` flag
-- [ ] Unused variable, unused import, unreachable code warnings
-- [ ] Deprecated item warnings
-
-## Responsible Crates
-
-- `agam_errors` — diagnostic data model, rendering engine, suggestion infrastructure
-- `agam_parser` — error recovery, synchronization points
-- `agam_sema` — type error diagnostics, suggestion generation
-- `agam_driver` — `--error-format`, `--color`, `explain` command
-
-## Dependencies
-
-- Independent of other Tier 0 work — can start during F2 implementation
-- Error recovery in parser is orthogonal to type system design
-
-## Test Strategy
-
-- Snapshot tests: compile known-bad programs, compare diagnostic output against golden files
-- Error recovery tests: programs with multiple errors produce multiple diagnostics
-- JSON format tests: parse diagnostic JSON, validate structure
-- Suggestion accuracy tests: misspelled identifiers produce correct suggestions
+- Diagnostic snapshot tests verifying 4-part Nyāya proof rendering on type, syntax, and effect errors.
+- Hankel matrix solver unit tests for type inference error reconstruction.
