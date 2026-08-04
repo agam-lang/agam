@@ -78,6 +78,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T2-async-concurrency | open | async/await, structured concurrency, channels, event loop | `details/T2-async-concurrency.md` |
 | T2-networking-stack | open | `agam_std::net` — TCP/UDP, HTTP/2, TLS 1.3, DNS-over-HTTPS | `details/T2-networking-stack.md` |
 | T2-cybersecurity | open | Memory safety, capability model, crypto primitives, taint tracking | `details/T2-cybersecurity.md` |
+| T2-compiler-fuzzer | open | AST mutation & LLVM backend vulnerability fuzzer (cargo-fuzz, arbitrary AST, IR invariants) | `details/T2-compiler-fuzzer.md` |
 | T2-sandboxing | open | Language-level permissions (Deno-style), MicroVM isolation | `details/T2-sandboxing.md` |
 | T2-observability | open | OpenTelemetry integration, `@trace`/`@metric` annotations, OTLP export | `details/T2-observability.md` |
 | T2-zero-copy-serial | open | Zero-copy serialization, shared memory IPC, memory-mapped files | `details/T2-zero-copy-serial.md` |
