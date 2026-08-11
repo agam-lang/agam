@@ -187,10 +187,12 @@ F6 (design principles, parallel) → F2 (type system) → F3 (object model) → 
 ### Code
 
 - Work in the **smallest responsible crate**. Avoid cross-crate churn.
+- Follow `.agent/rules/compiler-literature.md` — implement algorithms from Nystrom (Pratt parsing), Parr (Symbol tables), Cooper & Torczon (CFG/SSA/Opt), Appel (Functional lowerings), Colombet (GlobalISel/MIR), Nacke & Kwan (LLVM IR/JIT), and K&R (ABI/Memory).
 - Route failures through `agam_errors`. Preserve `SourceId`, `Span`, and debug metadata.
 - Avoid `.unwrap()` / `.expect()` in compiler passes.
 - Prefer asymptotically optimal time/space complexity; justify tradeoffs explicitly.
 - Optimization work requires **measured benchmarks**, not intuition.
+
 
 ### Language
 
