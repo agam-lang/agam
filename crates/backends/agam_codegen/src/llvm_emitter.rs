@@ -97,6 +97,9 @@ enum LlvmType {
     OpaquePtr,
     Enum,
     Struct,
+    /// A struct field access result — we know it came from a struct, but
+    /// the decoded scalar type is tracked via the instruction's TypeId.
+    StructField,
 }
 
 impl LlvmType {
@@ -107,7 +110,7 @@ impl LlvmType {
             LlvmType::Bool => "i1",
             LlvmType::Str | LlvmType::OpaquePtr => "i8*",
             LlvmType::Enum => "%AgamEnum",
-            LlvmType::Struct => "%AgamStruct",
+            LlvmType::Struct | LlvmType::StructField => "%AgamStruct",
         }
     }
 
@@ -118,7 +121,7 @@ impl LlvmType {
             LlvmType::Bool => "false",
             LlvmType::Str | LlvmType::OpaquePtr => "null",
             LlvmType::Enum => "zeroinitializer",
-            LlvmType::Struct => "zeroinitializer",
+            LlvmType::Struct | LlvmType::StructField => "zeroinitializer",
         }
     }
 
@@ -449,7 +452,9 @@ fn analyze_function(
                     ty
                 }
                 Op::StoreIndex { value, .. } => value_type(&layout, *value),
-                Op::GetField { object, .. } => value_type(&layout, *object),
+                Op::GetField { .. } => {
+                    infer_llvm_type_from_type_id(instr.ty).unwrap_or_else(LlvmType::default_int)
+                }
                 Op::GetIndex { object, .. } => value_type(&layout, *object),
                 Op::Phi(entries) => entries
                     .iter()
@@ -805,7 +810,7 @@ fn supports_call_cache_type(ty: LlvmType) -> bool {
     match ty {
         LlvmType::Int(int_ty) => int_ty.bits <= 64,
         LlvmType::Float(LlvmFloatType::F32 | LlvmFloatType::F64) | LlvmType::Bool => true,
-        LlvmType::Str | LlvmType::OpaquePtr | LlvmType::Enum | LlvmType::Struct => false,
+        LlvmType::Str | LlvmType::OpaquePtr | LlvmType::Enum | LlvmType::Struct | LlvmType::StructField => false,
     }
 }
 
@@ -913,10 +918,12 @@ fn module_uses_enum_values(module: &MirModule) -> bool {
 fn module_uses_struct_values(module: &MirModule) -> bool {
     module.functions.iter().any(|func| {
         func.blocks.iter().any(|block| {
-            block
-                .instructions
-                .iter()
-                .any(|instr| matches!(&instr.op, Op::StructConstruct { .. }))
+            block.instructions.iter().any(|instr| {
+                matches!(
+                    &instr.op,
+                    Op::StructConstruct { .. } | Op::GetField { .. }
+                )
+            })
         })
     })
 }
@@ -960,7 +967,9 @@ fn merge_type(left: LlvmType, right: LlvmType) -> LlvmType {
         left
     } else if left == LlvmType::Enum || right == LlvmType::Enum {
         LlvmType::Enum
-    } else if left == LlvmType::Struct || right == LlvmType::Struct {
+    } else if matches!(left, LlvmType::Struct | LlvmType::StructField)
+        || matches!(right, LlvmType::Struct | LlvmType::StructField)
+    {
         LlvmType::Struct
     } else if left == LlvmType::OpaquePtr || right == LlvmType::OpaquePtr {
         LlvmType::OpaquePtr
@@ -1380,6 +1389,8 @@ struct LlvmEmitter {
     string_pool: HashMap<Vec<u8>, String>,
     next_string_id: usize,
     next_temp_id: usize,
+    /// Module-level struct layouts for field-name → index resolution in GetField.
+    struct_layouts: HashMap<String, StructLayout>,
 }
 
 impl LlvmEmitter {
@@ -1412,6 +1423,7 @@ impl LlvmEmitter {
             string_pool: HashMap::new(),
             next_string_id: 0,
             next_temp_id: 0,
+            struct_layouts: module.struct_layouts.clone(),
         }
     }
 
@@ -2439,10 +2451,38 @@ impl LlvmEmitter {
                 let casted = self.coerce_value(out, &source, target)?;
                 values.insert(instr.result, casted);
             }
-            Op::GetField { field, .. } => {
-                return Err(format!(
-                    "LLVM backend does not yet support field access for `.{field}`"
-                ));
+            Op::GetField { object, field } => {
+                let obj_val = get_value(values, *object)?;
+                // Resolve field name to index via module struct_layouts.
+                // Walk all layouts to find the struct that declares this field.
+                let field_index = self
+                    .struct_layouts
+                    .values()
+                    .find_map(|layout| {
+                        layout
+                            .fields
+                            .iter()
+                            .position(|f| f == field)
+                    })
+                    .unwrap_or(0);
+                if field_index >= 8 {
+                    return Err(format!(
+                        "LLVM struct field index {} exceeds the eight-field layout",
+                        field_index
+                    ));
+                }
+                let raw_name = format!("%v{}_field_raw", instr.result.0);
+                writeln!(
+                    out,
+                    "  {} = extractvalue %AgamStruct {}, 0, {}",
+                    raw_name, obj_val.repr, field_index
+                )
+                .unwrap();
+                let decoded = self.decode_enum_payload(out, &raw_name, result_ty)?;
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, decoded.repr, result_sign),
+                );
             }
             Op::GetIndex { .. } => {
                 return Err("LLVM backend does not yet support indexed aggregate access".into());
@@ -3115,7 +3155,7 @@ impl LlvmEmitter {
                         format.push_str("<enum:%d>");
                         call_args.push(format!("i32 {}", tag));
                     }
-                    LlvmType::Struct => {
+                    LlvmType::Struct | LlvmType::StructField => {
                         format.push_str("<struct>");
                     }
                 }
@@ -3286,7 +3326,7 @@ impl LlvmEmitter {
                 writeln!(out, "  {} = ptrtoint i8* {} to i64", temp, value.repr).unwrap();
                 temp
             }
-            LlvmType::Enum | LlvmType::Struct => {
+            LlvmType::Enum | LlvmType::Struct | LlvmType::StructField => {
                 return Err("nested aggregate payloads are not implemented in the LLVM backend".into());
             }
         };
@@ -3349,7 +3389,7 @@ impl LlvmEmitter {
                 writeln!(out, "  {} = inttoptr i64 {} to i8*", temp, raw).unwrap();
                 temp
             }
-            LlvmType::Enum | LlvmType::Struct => {
+            LlvmType::Enum | LlvmType::Struct | LlvmType::StructField => {
                 return Err("nested aggregate payloads are not implemented in the LLVM backend".into());
             }
         };
@@ -6587,6 +6627,32 @@ mod tests {
         emit_llvm_with_options(&mir, options).expect("LLVM emission failed")
     }
 
+    /// Like `compile_to_llvm` but skips the MIR optimization pass so dead
+    /// locals survive for codegen layout verification.
+    fn compile_to_llvm_unoptimized(source: &str) -> String {
+        let source_id = SourceId(0);
+        let mut lexer = Lexer::new(source, source_id);
+        let mut tokens = Vec::new();
+        loop {
+            let tok = lexer.next_token();
+            let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
+            tokens.push(tok);
+            if is_eof {
+                break;
+            }
+        }
+        let mut parser = agam_parser::Parser::new(tokens);
+        let module = parser.parse_module(source_id).expect("parse failed");
+
+        let mut hir_lower = HirLowering::new();
+        let hir = hir_lower.lower_module(&module);
+
+        let mut mir_lower = MirLowering::new();
+        let mir = mir_lower.lower_module(&hir);
+
+        emit_llvm_with_options(&mir, LlvmEmitOptions::default()).expect("LLVM emission failed")
+    }
+
     #[test]
     fn test_emit_main_function() {
         let llvm = compile_to_llvm("fn main(): return 42");
@@ -6597,7 +6663,7 @@ mod tests {
     #[test]
     fn test_emit_enum_constructor_uses_tagged_union_layout() {
         let llvm =
-            compile_to_llvm("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
+            compile_to_llvm_unoptimized("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
         assert!(llvm.contains("%AgamEnum = type { i32, [8 x i64] }"));
         assert!(llvm.contains("insertvalue %AgamEnum undef, i32 0, 0"));
         assert!(llvm.contains("to i64"));
@@ -6606,7 +6672,7 @@ mod tests {
 
     #[test]
     fn test_emit_struct_constructor_uses_aggregate_layout() {
-        let llvm = compile_to_llvm(
+        let llvm = compile_to_llvm_unoptimized(
             "struct Point { x: i32, y: i32 }\nfn main() { let point = Point { x: 3, y: 4 }; }",
         );
         assert!(llvm.contains("%AgamStruct = type { [8 x i64] }"));

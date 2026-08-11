@@ -576,14 +576,14 @@ pub fn emit_c(module: &MirModule) -> String {
     // Function definitions
     for func in &module.functions {
         let layout = layouts.get(&func.name).expect("missing function layout");
-        emit_function(&mut output, func, layout);
+        emit_function(&mut output, func, layout, &module.struct_layouts);
         writeln!(output).unwrap();
     }
 
     output
 }
 
-fn emit_function(out: &mut String, func: &MirFunction, layout: &FunctionLayout) {
+fn emit_function(out: &mut String, func: &MirFunction, layout: &FunctionLayout, struct_layouts: &std::collections::HashMap<String, StructLayout>) {
     // Function signature
     if func.name == "main" {
         writeln!(out, "int main(int argc, char** argv) {{").unwrap();
@@ -624,23 +624,23 @@ fn emit_function(out: &mut String, func: &MirFunction, layout: &FunctionLayout) 
 
     // Emit all basic blocks
     for block in &func.blocks {
-        emit_block(out, block, layout, func.name == "main");
+        emit_block(out, block, layout, func.name == "main", struct_layouts);
     }
 
     writeln!(out, "}}").unwrap();
 }
 
-fn emit_block(out: &mut String, block: &BasicBlock, layout: &FunctionLayout, is_main: bool) {
+fn emit_block(out: &mut String, block: &BasicBlock, layout: &FunctionLayout, is_main: bool, struct_layouts: &std::collections::HashMap<String, StructLayout>) {
     writeln!(out, "block_{}:", block.id.0).unwrap();
 
     for instr in &block.instructions {
-        emit_instruction(out, instr, layout);
+        emit_instruction(out, instr, layout, struct_layouts);
     }
 
     emit_terminator(out, &block.terminator, layout, is_main);
 }
 
-fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayout) {
+fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayout, struct_layouts: &std::collections::HashMap<String, StructLayout>) {
     let v = format!("__v{}", instr.result.0);
     let result_ty = value_type(layout, instr.result);
 
@@ -799,12 +799,22 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
             .unwrap();
         }
         Op::GetField { object, field } => {
+            // Resolve field name to index via struct_layouts.
+            let field_index = struct_layouts
+                .values()
+                .find_map(|layout| {
+                    layout.fields.iter().position(|f| f == field)
+                })
+                .unwrap_or(0);
+            let payload_field = enum_payload_field(result_ty);
             writeln!(
                 out,
-                "  {} {} = __v{}; /* .{} */",
+                "  {} {} = __v{}.fields[{}].{}; /* .{} */",
                 result_ty.name(),
                 v,
                 object.0,
+                field_index,
+                payload_field,
                 field
             )
             .unwrap();
@@ -1143,6 +1153,32 @@ mod tests {
         emit_c(&mir)
     }
 
+    /// Like `compile_to_c` but skips the MIR optimization pass so dead
+    /// locals survive for codegen layout verification.
+    fn compile_to_c_unoptimized(source: &str) -> String {
+        let source_id = SourceId(0);
+        let mut lexer = Lexer::new(source, source_id);
+        let mut tokens = Vec::new();
+        loop {
+            let tok = lexer.next_token();
+            let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
+            tokens.push(tok);
+            if is_eof {
+                break;
+            }
+        }
+        let mut parser = agam_parser::Parser::new(tokens);
+        let module = parser.parse_module(source_id).expect("parse failed");
+
+        let mut hir_lower = HirLowering::new();
+        let hir = hir_lower.lower_module(&module);
+
+        let mut mir_lower = MirLowering::new();
+        let mir = mir_lower.lower_module(&hir);
+
+        emit_c(&mir)
+    }
+
     #[test]
     fn test_emit_main_function() {
         let c = compile_to_c("fn main(): return 42");
@@ -1185,7 +1221,7 @@ mod tests {
 
     #[test]
     fn test_emit_enum_constructor_uses_tagged_union_layout() {
-        let c = compile_to_c("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
+        let c = compile_to_c_unoptimized("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
         assert!(c.contains("} AgamEnumPayload;"));
         assert!(c.contains("} AgamEnum;"));
         assert!(c.contains("AgamEnum __v"));
@@ -1195,7 +1231,7 @@ mod tests {
 
     #[test]
     fn test_emit_struct_constructor_uses_aggregate_layout() {
-        let c = compile_to_c(
+        let c = compile_to_c_unoptimized(
             "struct Point { x: i32, y: i32 }\nfn main() { let point = Point { x: 3, y: 4 }; }",
         );
         assert!(c.contains("} AgamStruct;"));

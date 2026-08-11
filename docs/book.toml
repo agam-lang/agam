@@ -1,0 +1,22 @@
+[book]
+authors = ["Agam Language Contributors"]
+language = "en"
+multilingual = false
+src = "."
+title = "Engineering the Agam Compiler & Language Programming Guide"
+
+[build]
+build-dir = "book_out"
+
+[output.html]
+additional-css = []
+git-repository-url = "https://github.com/agam-lang/agam"
+mathjax-support = true
+theme = "navy"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+search = { enable = true, limit-results = 30, use-boolean-and = true }
+
+[output.html.fold]
+enable = true
+level = 1

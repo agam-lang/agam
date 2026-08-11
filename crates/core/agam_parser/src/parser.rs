@@ -48,6 +48,14 @@ impl Parser {
         self.peek().kind
     }
 
+    /// Peek at a token at `offset` positions ahead (0 = current).
+    fn peek_at(&self, offset: usize) -> TokenKind {
+        self.tokens
+            .get(self.pos + offset)
+            .map(|t| t.kind)
+            .unwrap_or(TokenKind::Eof)
+    }
+
     fn advance(&mut self) -> &Token {
         let tok = &self.tokens[self.pos.min(self.tokens.len() - 1)];
         if self.pos < self.tokens.len() {
@@ -942,11 +950,24 @@ impl Parser {
             left = self.parse_infix(left, next_min)?;
         }
 
-        // Contextual struct literal: only for dotted paths like `module.Type { ... }`
-        if self.peek_kind() == TokenKind::LBrace
-            && let ExprKind::FieldAccess { .. } = &left.kind
-        {
-            left = self.parse_infix(left, 14)?;
+        // Contextual struct literal: `Type { field: value, ... }` or `module.Type { ... }`
+        // Disambiguate from blocks: for plain identifiers, require `{ Ident : ...`
+        // lookahead pattern (the `field:` part).  Dotted paths are unambiguous.
+        if self.peek_kind() == TokenKind::LBrace {
+            let is_struct_literal = match &left.kind {
+                ExprKind::FieldAccess { .. } => true,
+                ExprKind::Identifier(_) => {
+                    // Look ahead: `{ Identifier Colon` or `{ StringLiteral Colon`
+                    // means struct literal, not a block
+                    let first = self.peek_at(1);
+                    (first == TokenKind::Identifier || first == TokenKind::StringLiteral)
+                        && self.peek_at(2) == TokenKind::Colon
+                }
+                _ => false,
+            };
+            if is_struct_literal {
+                left = self.parse_infix(left, 14)?;
+            }
         }
 
         Ok(left)
