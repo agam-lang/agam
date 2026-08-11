@@ -1,0 +1,40 @@
+{
+  "environment": "local_windows_win11",
+  "platform_name": "win11",
+  "host": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "python_version": "3.13.9",
+    "processor": "AMD64 Family 25 Model 116 Stepping 1, AuthenticAMD"
+  },
+  "cpu_topology": {
+    "platform_name": "Windows-11-10.0.26200-SP0",
+    "arch": "amd64",
+    "physical_cores": 8,
+    "logical_cores": 16,
+    "l1_data_cache_bytes": 32768,
+    "l2_cache_bytes": 8388608,
+    "l3_cache_bytes": 16777216,
+    "cache_line_bytes": 64,
+    "pointer_width_bits": 64,
+    "simd_register_width_bytes": 32,
+    "general_register_bytes_estimate": 128,
+    "simd_register_file_bytes_estimate": 512,
+    "register_file_bytes_estimate": 640
+  },
+  "benchmark_count": 6,
+  "warmup_runs": 2,
+  "measured_runs": 7,
+  "dry_run": true,
+  "selected_suites": [
+    "01_algorithms"
+  ],
+  "selected_targets": [
+    "python_cpython",
+    "rust_release",
+    "agam_jit_o2_call_cache_on"
+  ],
+  "selected_languages": []
+}

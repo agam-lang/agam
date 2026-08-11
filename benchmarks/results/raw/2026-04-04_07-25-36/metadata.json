@@ -1,0 +1,57 @@
+{
+  "environment": "local_windows_win11",
+  "platform_name": "win11",
+  "host": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "system": "Windows",
+    "release": "11",
+    "machine": "AMD64",
+    "python_version": "3.13.9",
+    "processor": "AMD64 Family 25 Model 116 Stepping 1, AuthenticAMD"
+  },
+  "cpu_topology": {
+    "platform_name": "Windows-11-10.0.26200-SP0",
+    "arch": "amd64",
+    "physical_cores": 8,
+    "logical_cores": 16,
+    "l1_data_cache_bytes": 32768,
+    "l2_cache_bytes": 8388608,
+    "l3_cache_bytes": 16777216,
+    "cache_line_bytes": 64,
+    "pointer_width_bits": 64,
+    "simd_register_width_bytes": 32,
+    "general_register_bytes_estimate": 128,
+    "simd_register_file_bytes_estimate": 512,
+    "register_file_bytes_estimate": 640
+  },
+  "benchmark_count": 9,
+  "warmup_runs": 2,
+  "measured_runs": 7,
+  "compile_warmup_runs": 1,
+  "dry_run": true,
+  "selected_suites": [
+    "01_algorithms",
+    "02_numerical_computation",
+    "03_data_structures",
+    "06_string_processing",
+    "07_io_operations",
+    "08_jit_optimization"
+  ],
+  "selected_targets": [
+    "agam_llvm_o3_call_cache_off"
+  ],
+  "selected_languages": [
+    "agam"
+  ],
+  "selected_matches": [
+    "edit_distance",
+    "polynomial_eval",
+    "ring_buffer",
+    "token_frequency",
+    "csv_scanning",
+    "call_cache_hotset",
+    "call_cache_mixed_locality",
+    "call_cache_phase_shift",
+    "call_cache_unique_inputs"
+  ]
+}

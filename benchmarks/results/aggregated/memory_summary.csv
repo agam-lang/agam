@@ -1,0 +1,2 @@
+platform,suite,case,target_id,target_name,language,backend,compiler,call_cache_enabled,peak_rss_bytes,ssd_footprint_bytes,artifact_size_bytes,runtime_executable_size_bytes,l1_data_cache_bytes,l2_cache_bytes,l3_cache_bytes,l3_pressure_ratio_estimate,register_file_bytes_estimate,simd_register_width_bytes,pointer_width_bits,time_complexity,space_complexity
+win11,01_algorithms,01_algorithms__comparisons__fibonacci_py,python_cpython,CPython,python,interpreted,cpython,False,,104403,,104264,32768,262144,8388608,,640,32,64,O(phi^n),O(n)

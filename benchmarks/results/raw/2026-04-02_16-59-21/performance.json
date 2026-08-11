@@ -1,0 +1,563 @@
+[
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__comparisons__fibonacci_c",
+    "language": "c",
+    "target_id": "c_clang_o3",
+    "target_name": "Clang C O3",
+    "backend": "native",
+    "compiler": "clang",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\comparisons\\fibonacci.c",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 23.4674,
+    "mean_ms": 23.488329,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "7c22ba7a8544ed3dc5a8d0a8fd09f0fa3a8311890379132cd838f4a0b2d31df1",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        23.2864,
+        23.6936,
+        23.8896,
+        23.838,
+        23.4674,
+        23.3409,
+        22.9024
+      ],
+      "sample_count": 7,
+      "mean_ms": 23.488329,
+      "median_ms": 23.4674,
+      "min_ms": 22.9024,
+      "max_ms": 23.8896,
+      "stdev_ms": 0.34921,
+      "coefficient_of_variation_percent": 1.486739,
+      "confidence_interval_95_ms": [
+        23.208702,
+        23.726098
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__comparisons__fibonacci_cpp",
+    "language": "cpp",
+    "target_id": "cpp_clangxx_o3",
+    "target_name": "Clang++ O3",
+    "backend": "native",
+    "compiler": "clang++",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\comparisons\\fibonacci.cpp",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 23.1625,
+    "mean_ms": 23.2608,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "7c22ba7a8544ed3dc5a8d0a8fd09f0fa3a8311890379132cd838f4a0b2d31df1",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        23.441,
+        22.9396,
+        22.5908,
+        24.0117,
+        23.0943,
+        23.5857,
+        23.1625
+      ],
+      "sample_count": 7,
+      "mean_ms": 23.2608,
+      "median_ms": 23.1625,
+      "min_ms": 22.5908,
+      "max_ms": 24.0117,
+      "stdev_ms": 0.463921,
+      "coefficient_of_variation_percent": 1.994434,
+      "confidence_interval_95_ms": [
+        22.818822,
+        23.506178
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__comparisons__fibonacci_go",
+    "language": "go",
+    "target_id": "go_release",
+    "target_name": "Go release",
+    "backend": "native",
+    "compiler": "go",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\comparisons\\fibonacci.go",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 33.6056,
+    "mean_ms": 30.939829,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "c57b376ca4883de409932a8847c48e75c39e0c17ffe579e7b01cae10348fc264",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        33.4118,
+        34.262,
+        23.3455,
+        34.4004,
+        34.1833,
+        23.3702,
+        33.6056
+      ],
+      "sample_count": 7,
+      "mean_ms": 30.939829,
+      "median_ms": 33.6056,
+      "min_ms": 23.3455,
+      "max_ms": 34.4004,
+      "stdev_ms": 5.191701,
+      "coefficient_of_variation_percent": 16.779993,
+      "confidence_interval_95_ms": [
+        29.759534,
+        37.451666
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__comparisons__fibonacci_py",
+    "language": "python",
+    "target_id": "python_cpython",
+    "target_name": "CPython",
+    "backend": "interpreted",
+    "compiler": "cpython",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\comparisons\\fibonacci.py",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 360.2661,
+    "mean_ms": 359.133229,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "7c22ba7a8544ed3dc5a8d0a8fd09f0fa3a8311890379132cd838f4a0b2d31df1",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        346.56,
+        356.3603,
+        355.8985,
+        360.2661,
+        360.7291,
+        363.3504,
+        370.7682
+      ],
+      "sample_count": 7,
+      "mean_ms": 359.133229,
+      "median_ms": 360.2661,
+      "min_ms": 346.56,
+      "max_ms": 370.7682,
+      "stdev_ms": 7.45236,
+      "coefficient_of_variation_percent": 2.075096,
+      "confidence_interval_95_ms": [
+        354.745315,
+        365.786885
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__comparisons__fibonacci_rs",
+    "language": "rust",
+    "target_id": "rust_release",
+    "target_name": "Rust release",
+    "backend": "native",
+    "compiler": "rustc",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\comparisons\\fibonacci.rs",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 23.6964,
+    "mean_ms": 23.493014,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "c57b376ca4883de409932a8847c48e75c39e0c17ffe579e7b01cae10348fc264",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        23.7503,
+        23.6176,
+        23.8761,
+        22.9323,
+        22.7135,
+        23.6964,
+        23.8649
+      ],
+      "sample_count": 7,
+      "mean_ms": 23.493014,
+      "median_ms": 23.6964,
+      "min_ms": 22.7135,
+      "max_ms": 23.8761,
+      "stdev_ms": 0.470847,
+      "coefficient_of_variation_percent": 2.004199,
+      "confidence_interval_95_ms": [
+        23.347592,
+        24.045208
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__fibonacci_agam",
+    "language": "agam",
+    "target_id": "agam_llvm_o3_call_cache_off",
+    "target_name": "Agam LLVM O3",
+    "backend": "llvm",
+    "compiler": "agamc",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\fibonacci.agam",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 12.9609,
+    "mean_ms": 14.3378,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "7c22ba7a8544ed3dc5a8d0a8fd09f0fa3a8311890379132cd838f4a0b2d31df1",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        13.1419,
+        12.6458,
+        12.9609,
+        12.5224,
+        12.2683,
+        23.2555,
+        13.5698
+      ],
+      "sample_count": 7,
+      "mean_ms": 14.3378,
+      "median_ms": 12.9609,
+      "min_ms": 12.2683,
+      "max_ms": 23.2555,
+      "stdev_ms": 3.955642,
+      "coefficient_of_variation_percent": 27.588902,
+      "confidence_interval_95_ms": [
+        10.03052,
+        15.89128
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__fibonacci_agam",
+    "language": "agam",
+    "target_id": "agam_llvm_o3_call_cache_on",
+    "target_name": "Agam LLVM O3 + Call Cache",
+    "backend": "llvm",
+    "compiler": "agamc",
+    "call_cache_enabled": true,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\fibonacci.agam",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 13.32,
+    "mean_ms": 17.406029,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "7c22ba7a8544ed3dc5a8d0a8fd09f0fa3a8311890379132cd838f4a0b2d31df1",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        12.94,
+        23.1477,
+        23.8398,
+        12.7408,
+        23.3451,
+        13.32,
+        12.5088
+      ],
+      "sample_count": 7,
+      "mean_ms": 17.406029,
+      "median_ms": 13.32,
+      "min_ms": 12.5088,
+      "max_ms": 23.8398,
+      "stdev_ms": 5.657164,
+      "coefficient_of_variation_percent": 32.501176,
+      "confidence_interval_95_ms": [
+        9.129114,
+        17.510886
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__fibonacci_agam",
+    "language": "agam",
+    "target_id": "agam_c_o3_call_cache_off",
+    "target_name": "Agam C O3",
+    "backend": "c",
+    "compiler": "agamc",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\fibonacci.agam",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 23.5355,
+    "mean_ms": 23.534971,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "7c22ba7a8544ed3dc5a8d0a8fd09f0fa3a8311890379132cd838f4a0b2d31df1",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        23.1064,
+        23.3345,
+        23.7732,
+        23.7508,
+        23.5355,
+        23.176,
+        24.0684
+      ],
+      "sample_count": 7,
+      "mean_ms": 23.534971,
+      "median_ms": 23.5355,
+      "min_ms": 23.1064,
+      "max_ms": 24.0684,
+      "stdev_ms": 0.351332,
+      "coefficient_of_variation_percent": 1.492807,
+      "confidence_interval_95_ms": [
+        23.27523,
+        23.79577
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__fibonacci_agam",
+    "language": "agam",
+    "target_id": "agam_c_o3_call_cache_on",
+    "target_name": "Agam C O3 + Call Cache",
+    "backend": "c",
+    "compiler": "agamc",
+    "call_cache_enabled": true,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\fibonacci.agam",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 23.8359,
+    "mean_ms": 23.883571,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "7c22ba7a8544ed3dc5a8d0a8fd09f0fa3a8311890379132cd838f4a0b2d31df1",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        23.7183,
+        23.8359,
+        23.9974,
+        23.6915,
+        23.9073,
+        23.6139,
+        24.4207
+      ],
+      "sample_count": 7,
+      "mean_ms": 23.883571,
+      "median_ms": 23.8359,
+      "min_ms": 23.6139,
+      "max_ms": 24.4207,
+      "stdev_ms": 0.271179,
+      "coefficient_of_variation_percent": 1.135421,
+      "confidence_interval_95_ms": [
+        23.635008,
+        24.036792
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__fibonacci_agam",
+    "language": "agam",
+    "target_id": "agam_jit_o2_call_cache_off",
+    "target_name": "Agam JIT O2",
+    "backend": "jit",
+    "compiler": "agamc",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\fibonacci.agam",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 151.3436,
+    "mean_ms": 149.889829,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "c57b376ca4883de409932a8847c48e75c39e0c17ffe579e7b01cae10348fc264",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        153.0474,
+        170.3273,
+        151.3436,
+        152.3344,
+        137.8683,
+        147.3182,
+        136.9896
+      ],
+      "sample_count": 7,
+      "mean_ms": 149.889829,
+      "median_ms": 151.3436,
+      "min_ms": 136.9896,
+      "max_ms": 170.3273,
+      "stdev_ms": 11.204881,
+      "coefficient_of_variation_percent": 7.475411,
+      "confidence_interval_95_ms": [
+        143.042908,
+        159.644292
+      ]
+    }
+  },
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__fibonacci_agam",
+    "language": "agam",
+    "target_id": "agam_jit_o2_call_cache_on",
+    "target_name": "Agam JIT O2 + Call Cache",
+    "backend": "jit",
+    "compiler": "agamc",
+    "call_cache_enabled": true,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\fibonacci.agam",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "median_ms": 138.4831,
+    "mean_ms": 140.843614,
+    "delta_percent": null,
+    "sample_count": 7,
+    "stdout_hash": "c57b376ca4883de409932a8847c48e75c39e0c17ffe579e7b01cae10348fc264",
+    "return_codes": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "summary": {
+      "samples_ms": [
+        137.1166,
+        138.4831,
+        147.1431,
+        148.6299,
+        149.8019,
+        128.4053,
+        136.3254
+      ],
+      "sample_count": 7,
+      "mean_ms": 140.843614,
+      "median_ms": 138.4831,
+      "min_ms": 128.4053,
+      "max_ms": 149.8019,
+      "stdev_ms": 7.907267,
+      "coefficient_of_variation_percent": 5.614218,
+      "confidence_interval_95_ms": [
+        132.625315,
+        144.340885
+      ]
+    }
+  }
+]

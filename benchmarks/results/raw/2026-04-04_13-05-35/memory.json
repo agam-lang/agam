@@ -1,0 +1,32 @@
+[
+  {
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__comparisons__fibonacci_py",
+    "language": "python",
+    "target_id": "python_cpython",
+    "target_name": "CPython",
+    "backend": "interpreted",
+    "compiler": "cpython",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\comparisons\\fibonacci.py",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark.",
+    "source_size_bytes": 139,
+    "artifact_size_bytes": null,
+    "runtime_executable_size_bytes": 104264,
+    "ssd_footprint_bytes": 104403,
+    "peak_rss_bytes": null,
+    "l1_data_cache_bytes": 32768,
+    "l2_cache_bytes": 262144,
+    "l3_cache_bytes": 8388608,
+    "cache_line_bytes": 64,
+    "pointer_width_bits": 64,
+    "simd_register_width_bytes": 32,
+    "general_register_bytes_estimate": 128,
+    "simd_register_file_bytes_estimate": 512,
+    "register_file_bytes_estimate": 640,
+    "l3_pressure_ratio_estimate": null
+  }
+]

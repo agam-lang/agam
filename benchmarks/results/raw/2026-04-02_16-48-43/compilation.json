@@ -1,0 +1,29 @@
+[
+  {
+    "command": [
+      "rustc",
+      "-C",
+      "opt-level=3",
+      "-o",
+      "C:\\Users\\ksvik\\IdeaProjects\\agam\\benchmarks\\results\\raw\\2026-04-02_16-48-43\\build\\01_algorithms__comparisons__fibonacci_rs\\rust_release.exe",
+      "C:\\Users\\ksvik\\IdeaProjects\\agam\\benchmarks\\benchmarks\\01_algorithms\\comparisons\\fibonacci.rs"
+    ],
+    "duration_ms": 174.512,
+    "return_code": 0,
+    "stderr_preview": "",
+    "artifact_size_bytes": 129024,
+    "platform": "win11",
+    "suite": "01_algorithms",
+    "case": "01_algorithms__comparisons__fibonacci_rs",
+    "language": "rust",
+    "target_id": "rust_release",
+    "target_name": "Rust release",
+    "backend": "native",
+    "compiler": "rustc",
+    "call_cache_enabled": false,
+    "source": "benchmarks\\benchmarks\\01_algorithms\\comparisons\\fibonacci.rs",
+    "time_complexity": "O(phi^n)",
+    "space_complexity": "O(n)",
+    "complexity_notes": "Naive recursive benchmark."
+  }
+]
