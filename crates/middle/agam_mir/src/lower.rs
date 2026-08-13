@@ -669,6 +669,88 @@ impl MirLowering {
 
                         self.current_block = else_block;
                     }
+                    HirPattern::Tuple(sub_patterns) => {
+                        // Irrefutable destructuring: extract each tuple element.
+                        for (elem_idx, elem_pat) in sub_patterns.iter().enumerate() {
+                            if let HirPattern::Bind(name) = elem_pat {
+                                let elem_ty = self.types.fresh_var();
+                                let idx_val =
+                                    self.emit(self.types.i32(), Op::ConstInt(elem_idx as i64));
+                                let elem_val = self.emit(
+                                    elem_ty,
+                                    Op::GetIndex {
+                                        object: scrutinee,
+                                        index: idx_val,
+                                    },
+                                );
+                                self.emit(
+                                    elem_ty,
+                                    Op::Alloca {
+                                        name: name.clone(),
+                                        ty: elem_ty,
+                                    },
+                                );
+                                self.emit(
+                                    result_ty,
+                                    Op::StoreLocal {
+                                        name: name.clone(),
+                                        value: elem_val,
+                                    },
+                                );
+                            }
+                        }
+                        let arm_result = self.lower_expr(&arm.body);
+                        self.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        self.finish_block(Terminator::Jump(merge_block));
+                        self.current_block = merge_block;
+                        break;
+                    }
+                    HirPattern::Struct { name: _, fields } => {
+                        // Irrefutable destructuring: extract each named field.
+                        for (field_name, field_pat) in fields {
+                            if let HirPattern::Bind(bind_name) = field_pat {
+                                let field_ty = self.types.fresh_var();
+                                let field_val = self.emit(
+                                    field_ty,
+                                    Op::GetField {
+                                        object: scrutinee,
+                                        field: field_name.clone(),
+                                    },
+                                );
+                                self.emit(
+                                    field_ty,
+                                    Op::Alloca {
+                                        name: bind_name.clone(),
+                                        ty: field_ty,
+                                    },
+                                );
+                                self.emit(
+                                    result_ty,
+                                    Op::StoreLocal {
+                                        name: bind_name.clone(),
+                                        value: field_val,
+                                    },
+                                );
+                            }
+                        }
+                        let arm_result = self.lower_expr(&arm.body);
+                        self.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        self.finish_block(Terminator::Jump(merge_block));
+                        self.current_block = merge_block;
+                        break;
+                    }
                     _ => {
                         // Unsupported pattern type — skip
                         let arm_result = self.lower_expr(&arm.body);
@@ -1072,7 +1154,7 @@ mod tests {
 
     #[test]
     fn test_mir_match_on_integer_lowers_to_branch() {
-        let mir = lower_to_mir("fn main(): let x = 42; match x { 1 => return 10, _ => return 20 }");
+        let mir = lower_to_mir("fn main() { let x = 42; match x { 1 => 10, _ => 20 }; }");
         let f = &mir.functions[0];
         let has_eq = f.blocks.iter().any(|b| {
             b.instructions.iter().any(|i| {
@@ -1089,5 +1171,41 @@ mod tests {
             has_eq,
             "expected equality comparison for literal pattern match in MIR"
         );
+    }
+
+    #[test]
+    fn test_mir_struct_field_access_produces_get_field() {
+        let mir = lower_to_mir(
+            "struct Point { x: i32, y: i32 }\nfn main() { let p = Point { x: 3, y: 4 }; let v = p.x; }",
+        );
+        let f = &mir.functions[0];
+        let has_construct = f.blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(&i.op, Op::StructConstruct { .. }))
+        });
+        let has_get_field = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::GetField { field, .. } if field == "x"
+                )
+            })
+        });
+        assert!(has_construct, "expected StructConstruct in MIR");
+        assert!(has_get_field, "expected GetField for .x in MIR");
+    }
+
+    #[test]
+    fn test_mir_struct_layout_propagated_from_hir() {
+        let mir = lower_to_mir(
+            "struct Point { x: i32, y: i32 }\nfn main(): return 0",
+        );
+        assert!(
+            mir.struct_layouts.contains_key("Point"),
+            "expected struct layout for Point in MIR module"
+        );
+        let layout = &mir.struct_layouts["Point"];
+        assert_eq!(layout.fields, vec!["x", "y"]);
     }
 }

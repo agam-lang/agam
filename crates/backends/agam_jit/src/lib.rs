@@ -187,6 +187,7 @@ impl CompiledJitModule {
             next_string_id: 0,
             call_cache_plan,
             specializations,
+            struct_layouts: module.struct_layouts.clone(),
         };
 
         jit.declare_functions(module)?;
@@ -723,6 +724,8 @@ struct AgamJit {
     next_string_id: usize,
     call_cache_plan: CallCachePlan,
     specializations: SpecializationRegistry,
+    /// Module-level struct layouts for field-name → index resolution in GetField.
+    struct_layouts: HashMap<String, StructLayout>,
 }
 
 impl AgamJit {
@@ -1096,7 +1099,26 @@ impl AgamJit {
                     }
                 }
             }
-            Op::GetField { object, .. } => lookup_value(values, *object),
+            Op::GetField { object, field } => {
+                // Resolve field name to index via struct_layouts.
+                let field_index = self
+                    .struct_layouts
+                    .values()
+                    .find_map(|sl| sl.fields.iter().position(|f| f == field))
+                    .unwrap_or(0) as u32;
+                // Extract field from packed struct value using the same
+                // mechanism as enum payload extraction.
+                emit_enum_payload(
+                    builder,
+                    layout,
+                    values,
+                    instr.result,
+                    *object,
+                    field_index,
+                    mem_flags,
+                    pointer_type,
+                )
+            }
             Op::GetIndex { object, .. } => lookup_value(values, *object),
             Op::StoreIndex { .. } => Err(
                 "indexed aggregate stores are not yet supported by the Cranelift JIT slice".into(),
@@ -1167,10 +1189,22 @@ impl AgamJit {
                 mem_flags,
                 pointer_type,
             ),
-            Op::StructConstruct { .. } => Err(
-                "named struct construction is not yet supported by the Cranelift JIT slice; use the C or LLVM backend"
-                    .into(),
-            ),
+            Op::StructConstruct { fields, .. } => {
+                // Pack struct fields into a single i64 value using the
+                // same bit-packing as enum payloads (without a tag).
+                let payload_ids: Vec<ValueId> = fields.iter().map(|(_, v)| *v).collect();
+                // Reuse enum construct with tag=0 (no tag bits consumed).
+                emit_enum_construct(
+                    builder,
+                    layout,
+                    values,
+                    instr.result,
+                    0,
+                    &payload_ids,
+                    mem_flags,
+                    pointer_type,
+                )
+            }
         }
     }
 
@@ -2357,7 +2391,13 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     JitType::Unit
                 }
                 Op::StoreIndex { value, .. } => value_type(&layout, *value),
-                Op::GetField { object, .. } | Op::GetIndex { object, .. } => {
+                Op::GetField { .. } => {
+                    infer_jit_type_from_type_id(instr.ty).unwrap_or(JitType::Int {
+                        bits: 64,
+                        signed: false,
+                    })
+                }
+                Op::GetIndex { object, .. } => {
                     value_type(&layout, *object)
                 }
                 Op::Phi(entries) => {

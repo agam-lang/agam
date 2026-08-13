@@ -7240,4 +7240,19 @@ fn main() -> i32:
         assert!(llvm.contains("add i64"));
         assert!(!llvm.contains("add nuw nsw i64"));
     }
+
+    #[test]
+    fn test_emit_struct_field_access_produces_extractvalue() {
+        let llvm = compile_to_llvm_unoptimized(
+            "struct Point { x: i32, y: i32 }\nfn main() { let p = Point { x: 3, y: 4 }; let v = p.x; }",
+        );
+        assert!(
+            llvm.contains("insertvalue %AgamStruct"),
+            "expected struct construction with insertvalue"
+        );
+        assert!(
+            llvm.contains("extractvalue %AgamStruct"),
+            "expected struct field access with extractvalue, got:\n{llvm}"
+        );
+    }
 }

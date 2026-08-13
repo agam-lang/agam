@@ -1368,4 +1368,16 @@ mod tests {
         assert!(c.contains("agam_gpu_free"));
         assert!(c.contains("void* __v"));
     }
+
+    #[test]
+    fn test_emit_struct_field_access_uses_indexed_payload() {
+        let c = compile_to_c_unoptimized(
+            "struct Point { x: i32, y: i32 }\nfn main() { let p = Point { x: 3, y: 4 }; let v = p.x; }",
+        );
+        // Field access should use indexed payload extraction
+        assert!(
+            c.contains(".fields[0].int_value"),
+            "expected field access to use .fields[0].int_value, got:\n{c}"
+        );
+    }
 }
