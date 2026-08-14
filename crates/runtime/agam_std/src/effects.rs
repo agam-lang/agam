@@ -28,10 +28,39 @@ pub fn register_console_handlers(table: &mut EffectHandlerTable) {
     table.register("Console", "eprintln", console_eprintln);
 }
 
+/// Register all builtin `Network` effect handlers.
+pub fn register_network_handlers(table: &mut EffectHandlerTable) {
+    table.register("Network", "connect", net_connect);
+    table.register("Network", "listen", net_listen);
+    table.register("Network", "accept", net_accept);
+    table.register("Network", "send", net_send);
+    table.register("Network", "recv", net_recv);
+    table.register("Network", "close", net_close);
+}
+
+/// Register all builtin `Environment` effect handlers.
+pub fn register_env_handlers(table: &mut EffectHandlerTable) {
+    table.register("Environment", "get_var", env_get_var);
+    table.register("Environment", "set_var", env_set_var);
+    table.register("Environment", "remove_var", env_remove_var);
+    table.register("Environment", "current_dir", env_current_dir);
+    table.register("Environment", "args", env_args);
+}
+
+/// Register all builtin `Process` effect handlers.
+pub fn register_process_handlers(table: &mut EffectHandlerTable) {
+    table.register("Process", "run", process_run);
+    table.register("Process", "pid", process_pid);
+    table.register("Process", "exit", process_exit);
+}
+
 /// Register all builtin effect handlers for all `agam_std` modules.
 pub fn register_all_builtin_handlers(table: &mut EffectHandlerTable) {
     register_filesystem_handlers(table);
     register_console_handlers(table);
+    register_network_handlers(table);
+    register_env_handlers(table);
+    register_process_handlers(table);
 }
 
 /// Create an `EffectHandlerTable` pre-populated with all builtin handlers.
@@ -186,6 +215,178 @@ fn console_eprintln(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
     Ok(EffectValue::Unit)
 }
 
+fn require_int_arg(
+    effect: &str,
+    op: &str,
+    args: &[EffectValue],
+    index: usize,
+) -> Result<i64, EffectError> {
+    match args.get(index) {
+        Some(EffectValue::Int(i)) => Ok(*i),
+        _ => Err(EffectError {
+            effect: effect.to_string(),
+            operation: op.to_string(),
+            message: format!("expected integer argument at position {index}"),
+        }),
+    }
+}
+
+// ── Network effect handlers ──────────────────────────────────────────
+
+fn net_connect(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let addr = require_string_arg("Network", "connect", args, 0)?;
+    let id = crate::net::global_net_manager()
+        .lock()
+        .unwrap()
+        .connect(&addr)
+        .map_err(|e| EffectError {
+            effect: "Network".into(),
+            operation: "connect".into(),
+            message: e.to_string(),
+        })?;
+    Ok(EffectValue::Int(id))
+}
+
+fn net_listen(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let addr = require_string_arg("Network", "listen", args, 0)?;
+    let id = crate::net::global_net_manager()
+        .lock()
+        .unwrap()
+        .listen(&addr)
+        .map_err(|e| EffectError {
+            effect: "Network".into(),
+            operation: "listen".into(),
+            message: e.to_string(),
+        })?;
+    Ok(EffectValue::Int(id))
+}
+
+fn net_accept(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let listener_id = require_int_arg("Network", "accept", args, 0)?;
+    let id = crate::net::global_net_manager()
+        .lock()
+        .unwrap()
+        .accept(listener_id)
+        .map_err(|e| EffectError {
+            effect: "Network".into(),
+            operation: "accept".into(),
+            message: e.to_string(),
+        })?;
+    Ok(EffectValue::Int(id))
+}
+
+fn net_send(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let stream_id = require_int_arg("Network", "send", args, 0)?;
+    let data = require_string_arg("Network", "send", args, 1)?;
+    let bytes = crate::net::global_net_manager()
+        .lock()
+        .unwrap()
+        .send(stream_id, data.as_bytes())
+        .map_err(|e| EffectError {
+            effect: "Network".into(),
+            operation: "send".into(),
+            message: e.to_string(),
+        })?;
+    Ok(EffectValue::Int(bytes as i64))
+}
+
+fn net_recv(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let stream_id = require_int_arg("Network", "recv", args, 0)?;
+    let max_bytes = require_int_arg("Network", "recv", args, 1)? as usize;
+    let bytes = crate::net::global_net_manager()
+        .lock()
+        .unwrap()
+        .recv(stream_id, max_bytes)
+        .map_err(|e| EffectError {
+            effect: "Network".into(),
+            operation: "recv".into(),
+            message: e.to_string(),
+        })?;
+    Ok(EffectValue::String(String::from_utf8_lossy(&bytes).to_string()))
+}
+
+fn net_close(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let id = require_int_arg("Network", "close", args, 0)?;
+    let closed = crate::net::global_net_manager()
+        .lock()
+        .unwrap()
+        .close(id);
+    Ok(EffectValue::Bool(closed))
+}
+
+// ── Environment effect handlers ──────────────────────────────────────
+
+fn env_get_var(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let key = require_string_arg("Environment", "get_var", args, 0)?;
+    let val = crate::env::get_var(&key).map_err(|e| EffectError {
+        effect: "Environment".into(),
+        operation: "get_var".into(),
+        message: e.to_string(),
+    })?;
+    Ok(EffectValue::String(val))
+}
+
+fn env_set_var(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let key = require_string_arg("Environment", "set_var", args, 0)?;
+    let val = require_string_arg("Environment", "set_var", args, 1)?;
+    crate::env::set_var(&key, &val);
+    Ok(EffectValue::Unit)
+}
+
+fn env_remove_var(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let key = require_string_arg("Environment", "remove_var", args, 0)?;
+    crate::env::remove_var(&key);
+    Ok(EffectValue::Unit)
+}
+
+fn env_current_dir(_args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let p = crate::env::current_dir().map_err(|e| EffectError {
+        effect: "Environment".into(),
+        operation: "current_dir".into(),
+        message: e.to_string(),
+    })?;
+    Ok(EffectValue::String(p.to_string_lossy().to_string()))
+}
+
+fn env_args(_args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let list = crate::env::args()
+        .into_iter()
+        .map(EffectValue::String)
+        .collect();
+    Ok(EffectValue::List(list))
+}
+
+// ── Process effect handlers ──────────────────────────────────────────
+
+fn process_run(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let cmd = require_string_arg("Process", "run", args, 0)?;
+    let raw_args = match args.get(1) {
+        Some(EffectValue::List(list)) => list
+            .iter()
+            .filter_map(|v| match v {
+                EffectValue::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let output = crate::process::run(&cmd, &raw_args).map_err(|e| EffectError {
+        effect: "Process".into(),
+        operation: "run".into(),
+        message: e.to_string(),
+    })?;
+    Ok(EffectValue::Int(output.status as i64))
+}
+
+fn process_pid(_args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    Ok(EffectValue::Int(crate::process::pid() as i64))
+}
+
+fn process_exit(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
+    let code = require_int_arg("Process", "exit", args, 0)? as i32;
+    crate::process::exit(code);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,7 +405,7 @@ mod tests {
     #[test]
     fn builtin_table_has_all_ops() {
         let table = builtin_handler_table();
-        assert_eq!(table.len(), 14); // 9 FileSystem + 5 Console
+        assert_eq!(table.len(), 28); // 9 FileSystem + 5 Console + 6 Network + 5 Environment + 3 Process
         assert!(table.get("FileSystem", "exists").is_some());
         assert!(table.get("FileSystem", "read_to_string").is_some());
         assert!(table.get("FileSystem", "write_string").is_some());
@@ -214,6 +415,44 @@ mod tests {
         assert!(table.get("Console", "read_line").is_some());
         assert!(table.get("Console", "eprint").is_some());
         assert!(table.get("Console", "eprintln").is_some());
+        assert!(table.get("Network", "connect").is_some());
+        assert!(table.get("Network", "listen").is_some());
+        assert!(table.get("Environment", "get_var").is_some());
+        assert!(table.get("Environment", "current_dir").is_some());
+        assert!(table.get("Process", "pid").is_some());
+    }
+
+    #[test]
+    fn dispatch_env_and_process_effects() {
+        let table = builtin_handler_table();
+        let pid_res = table
+            .dispatch("Process", "pid", &[])
+            .expect("pid should succeed");
+        if let EffectValue::Int(pid) = pid_res {
+            assert!(pid > 0);
+        } else {
+            panic!("expected int pid");
+        }
+
+        table
+            .dispatch(
+                "Environment",
+                "set_var",
+                &[
+                    EffectValue::String("AGAM_EFFECT_TEST".into()),
+                    EffectValue::String("12345".into()),
+                ],
+            )
+            .expect("set_var should succeed");
+
+        let var_res = table
+            .dispatch(
+                "Environment",
+                "get_var",
+                &[EffectValue::String("AGAM_EFFECT_TEST".into())],
+            )
+            .expect("get_var should succeed");
+        assert_eq!(var_res, EffectValue::String("12345".into()));
     }
 
     #[test]

@@ -141,6 +141,103 @@ pub fn std_console_effect() -> EffectDef {
     }
 }
 
+/// Builtin network I/O effect for TCP/UDP operations.
+pub fn std_network_effect() -> EffectDef {
+    EffectDef {
+        name: "Network".to_string(),
+        operations: vec![
+            EffectOpDef {
+                name: "connect".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "listen".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "accept".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "send".to_string(),
+                param_count: 2,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "recv".to_string(),
+                param_count: 2,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "close".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+        ],
+    }
+}
+
+/// Builtin environment inspection effect.
+pub fn std_env_effect() -> EffectDef {
+    EffectDef {
+        name: "Environment".to_string(),
+        operations: vec![
+            EffectOpDef {
+                name: "get_var".to_string(),
+                param_count: 1,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "set_var".to_string(),
+                param_count: 2,
+                has_return: false,
+            },
+            EffectOpDef {
+                name: "remove_var".to_string(),
+                param_count: 1,
+                has_return: false,
+            },
+            EffectOpDef {
+                name: "current_dir".to_string(),
+                param_count: 0,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "args".to_string(),
+                param_count: 0,
+                has_return: true,
+            },
+        ],
+    }
+}
+
+/// Builtin process control effect.
+pub fn std_process_effect() -> EffectDef {
+    EffectDef {
+        name: "Process".to_string(),
+        operations: vec![
+            EffectOpDef {
+                name: "run".to_string(),
+                param_count: 2,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "pid".to_string(),
+                param_count: 0,
+                has_return: true,
+            },
+            EffectOpDef {
+                name: "exit".to_string(),
+                param_count: 1,
+                has_return: false,
+            },
+        ],
+    }
+}
+
 /// Effect registry: tracks all declared effects and their handlers.
 pub struct EffectRegistry {
     effects: HashMap<String, EffectDef>,
@@ -159,6 +256,9 @@ impl EffectRegistry {
     pub fn register_std_effects(&mut self) {
         self.register_effect(std_filesystem_effect());
         self.register_effect(std_console_effect());
+        self.register_effect(std_network_effect());
+        self.register_effect(std_env_effect());
+        self.register_effect(std_process_effect());
     }
 
     /// Register a new effect.
@@ -179,7 +279,6 @@ impl EffectRegistry {
         self.effects.get(name)
     }
 
-    /// Look up handlers for an effect.
     pub fn get_handlers(&self, effect_name: &str) -> &[HandlerDef] {
         self.handlers
             .get(effect_name)
