@@ -20,6 +20,8 @@ pub struct MirLowering {
     /// Variant names are globally resolved by the current front end.  Keep the
     /// corresponding discriminants available while lowering function bodies.
     variant_tags: std::collections::HashMap<String, u32>,
+    /// Qualified method names mapped from short names (e.g. "magnitude" -> "Point::magnitude").
+    known_methods: std::collections::HashMap<String, String>,
 }
 
 impl MirLowering {
@@ -32,6 +34,7 @@ impl MirLowering {
             current_block: BlockId(0),
             types: TypeStore::new(),
             variant_tags: std::collections::HashMap::new(),
+            known_methods: std::collections::HashMap::new(),
         }
     }
 
@@ -44,6 +47,7 @@ impl MirLowering {
             current_block: BlockId(0),
             types,
             variant_tags: std::collections::HashMap::new(),
+            known_methods: std::collections::HashMap::new(),
         }
     }
 
@@ -82,6 +86,15 @@ impl MirLowering {
             .flat_map(|layout| layout.variants.iter())
             .map(|variant| (variant.name.clone(), variant.tag))
             .collect();
+
+        self.known_methods.clear();
+        for f in &hir.functions {
+            if f.name.contains("::") {
+                if let Some(short_name) = f.name.split("::").last() {
+                    self.known_methods.insert(short_name.to_string(), f.name.clone());
+                }
+            }
+        }
 
         let functions = hir
             .functions
@@ -350,10 +363,15 @@ impl MirLowering {
                 let obj_val = self.lower_expr(object);
                 let mut all_args = vec![obj_val];
                 all_args.extend(args.iter().map(|a| self.lower_expr(a)));
+                let callee = self
+                    .known_methods
+                    .get(method)
+                    .cloned()
+                    .unwrap_or_else(|| method.clone());
                 self.emit(
                     ty,
                     Op::Call {
-                        callee: method.clone(),
+                        callee,
                         args: all_args,
                     },
                 )
@@ -1522,5 +1540,20 @@ mod tests {
         });
         assert!(has_tag, "expected EnumTag op for try operator");
         assert!(has_payload, "expected EnumPayload op for try operator ok unwrapping");
+    }
+
+    #[test]
+    fn test_mir_method_call_dispatch() {
+        let mir = lower_to_mir(
+            "struct Point { x: i32 }\nimpl Point { fn get_x(self) -> i32 { return self.x; } }\nfn main() { let p = Point { x: 10 }; let val = p.get_x(); }",
+        );
+        let main_fn = mir.functions.iter().find(|f| f.name == "main").unwrap();
+        let has_call = main_fn.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| match &i.op {
+                Op::Call { callee, args } => callee == "Point::get_x" && !args.is_empty(),
+                _ => false,
+            })
+        });
+        assert!(has_call, "expected Op::Call to Point::get_x with receiver as first arg");
     }
 }

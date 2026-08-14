@@ -1040,7 +1040,7 @@ impl Parser {
                     kind: ExprKind::BoolLiteral(false),
                 })
             }
-            TokenKind::Identifier => {
+            TokenKind::Identifier | TokenKind::Self_ => {
                 self.advance();
                 let ident = Ident::new(&tok.lexeme, tok.span);
                 Ok(Expr {
@@ -1792,7 +1792,7 @@ impl Parser {
         let tok = self.peek().clone();
 
         match tok.kind {
-            TokenKind::Identifier => {
+            TokenKind::Identifier | TokenKind::Self_ => {
                 self.advance();
                 let name = Ident::new(&tok.lexeme, tok.span);
                 if self.eat(TokenKind::LParen) {

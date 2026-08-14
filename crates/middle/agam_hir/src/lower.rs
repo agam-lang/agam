@@ -112,23 +112,33 @@ impl HirLowering {
             }
         }
 
-        // Second pass: lower function declarations
-        let functions = module
-            .declarations
-            .iter()
-            .filter_map(|decl| self.lower_decl(decl))
-            .collect();
+        // Second pass: lower function declarations and impl blocks
+        let mut functions = Vec::new();
+        for decl in &module.declarations {
+            match &decl.kind {
+                DeclKind::Function(f) => {
+                    functions.push(self.lower_function(f));
+                }
+                DeclKind::Impl(impl_decl) => {
+                    let type_name = match &impl_decl.target_type.kind {
+                        TypeExprKind::Named(path) => path_name(path),
+                        _ => "Self".to_string(),
+                    };
+                    for item in &impl_decl.items {
+                        if let DeclKind::Function(f) = &item.kind {
+                            let mut method_decl = f.clone();
+                            method_decl.name.name = format!("{}::{}", type_name, f.name.name);
+                            functions.push(self.lower_function(&method_decl));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         HirModule {
             functions,
             enum_layouts,
             struct_layouts,
-        }
-    }
-
-    fn lower_decl(&mut self, decl: &Decl) -> Option<HirFunction> {
-        match &decl.kind {
-            DeclKind::Function(f) => Some(self.lower_function(f)),
-            _ => None,
         }
     }
 
@@ -1600,5 +1610,15 @@ mod tests {
             },
             _ => panic!("expected return statement"),
         }
+    }
+
+    #[test]
+    fn test_hir_impl_block_lowering() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "struct Point { x: i32, y: i32 }\nimpl Point { fn magnitude(self) -> i32 { return self.x; } }",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let has_method = hir.functions.iter().any(|f| f.name == "Point::magnitude");
+        assert!(has_method, "expected lowered function Point::magnitude from impl block");
     }
 }
