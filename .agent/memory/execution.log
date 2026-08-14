@@ -32,3 +32,4 @@
 [2026-08-13 21:02:00 IST] [FEATURE] Completed T0-type-system Phase C — Implemented struct field access (Op::GetField) and destructuring.
 [2026-08-14 18:02:00 IST] [FEATURE] Completed T0-type-system Phase D — Implemented match guards, or-patterns, range patterns, and nested destructuring.
 [2026-08-14 18:17:00 IST] [FEATURE] Completed T0-type-system Phase E — Implemented generic parameter resolution/propagation through Resolver (SymbolKind::TypeParam), HIR (TypeExprKind::Generic), and MIR (MirFunction.generics), and verified monomorphization tests.
+[2026-08-14 18:24:00 IST] [FEATURE] Completed T0-type-system Phase F — Implemented ? try operator (HirExprKind::Try) with MIR branch/early return and payload unwrapping, plus sema Result/Option inference. Verified 100% test pass across 27 crates.
