@@ -555,6 +555,51 @@ impl Parser {
     fn parse_use_decl(&mut self, vis: Visibility) -> Result<UseDecl, ParseError> {
         let start = self.advance().span; // use/import
         let path = self.parse_path()?;
+        let items = if (self.eat(TokenKind::ColonColon) || self.eat(TokenKind::Dot))
+            && self.eat(TokenKind::LBrace)
+            || self.eat(TokenKind::LBrace)
+        {
+            let mut list = Vec::new();
+            while self.peek_kind() != TokenKind::RBrace && !self.at_end() {
+                if self.eat(TokenKind::Star) {
+                    list.push(UseItem {
+                        name: Ident::new("*", self.peek().span),
+                        alias: None,
+                        span: self.peek().span,
+                    });
+                    break;
+                }
+                let item_tok = self.expect(TokenKind::Identifier)?;
+                let name = Ident::new(&item_tok.lexeme, item_tok.span);
+                let alias = if self.eat(TokenKind::As) {
+                    let a = self.expect(TokenKind::Identifier)?;
+                    Some(Ident::new(&a.lexeme, a.span))
+                } else {
+                    None
+                };
+                list.push(UseItem {
+                    name,
+                    alias,
+                    span: item_tok.span,
+                });
+                if !self.eat(TokenKind::Comma) {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBrace)?;
+            Some(list)
+        } else if (self.eat(TokenKind::ColonColon) || self.eat(TokenKind::Dot))
+            && self.eat(TokenKind::Star)
+        {
+            Some(vec![UseItem {
+                name: Ident::new("*", self.peek().span),
+                alias: None,
+                span: self.peek().span,
+            }])
+        } else {
+            None
+        };
+
         let alias = if self.eat(TokenKind::As) {
             let a = self.expect(TokenKind::Identifier)?;
             Some(Ident::new(&a.lexeme, a.span))
@@ -566,7 +611,7 @@ impl Parser {
         Ok(UseDecl {
             path,
             alias,
-            items: None,
+            items,
             visibility: vis,
             span: start,
         })
@@ -1880,7 +1925,10 @@ impl Parser {
     fn parse_path(&mut self) -> Result<Path, ParseError> {
         let first = self.expect(TokenKind::Identifier)?;
         let mut segments = vec![Ident::new(&first.lexeme, first.span)];
-        while self.eat(TokenKind::ColonColon) || self.eat(TokenKind::Dot) {
+        while (self.peek_kind() == TokenKind::ColonColon || self.peek_kind() == TokenKind::Dot)
+            && (self.peek_at(1) == TokenKind::Identifier)
+        {
+            self.advance();
             let seg = self.expect(TokenKind::Identifier)?;
             segments.push(Ident::new(&seg.lexeme, seg.span));
         }
@@ -2201,6 +2249,25 @@ mod tests {
             assert_eq!(handler.name, "console_io");
         } else {
             panic!("not handle..with");
+        }
+    }
+
+    #[test]
+    fn test_parse_selective_use_decl() {
+        let module = parse_src("import std.math::{sin, cos as cosine};");
+        assert_eq!(module.declarations.len(), 1);
+        if let DeclKind::Use(u) = &module.declarations[0].kind {
+            assert_eq!(u.path.segments.len(), 2);
+            assert_eq!(u.path.segments[0].name, "std");
+            assert_eq!(u.path.segments[1].name, "math");
+            let items = u.items.as_ref().expect("expected selective items");
+            assert_eq!(items.len(), 2);
+            assert_eq!(items[0].name.name, "sin");
+            assert_eq!(items[0].alias, None);
+            assert_eq!(items[1].name.name, "cos");
+            assert_eq!(items[1].alias.as_ref().map(|a| a.name.as_str()), Some("cosine"));
+        } else {
+            panic!("expected Use declaration");
         }
     }
 }
