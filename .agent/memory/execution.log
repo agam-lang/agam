@@ -29,3 +29,6 @@
 [2026-08-02 15:45:00 IST] [HORIZON_INJECT] Executed Stream 2 Frontier Horizon Sync on OpenAI 'Ten Advances' paper — Cataloged T5-advanced-math-primitives and T6-algebraic-complexity-verification specs into catalog.md and current.md without direct codebase mutation per user host instructions.
 [2026-08-02 15:55:00 IST] [CATALOG_ADDITION] Cataloged all 5 architectural takeaways (T0-type-sandhi-graph, T4-egraph-square-zero, T1-error-messages Nyāya Hankel solvers, T2 Durdharṣa resource bounds, T5/T6 AD & Kronecker Jacobians) into catalog.md, current.md, and details/ spec files.
 [2026-08-02 16:08:00 IST] [GIT_PUSH] Pushed frontier research synthesis, mathematical models, updated trigger rules, and catalog specifications to remote repository.
+[2026-08-13 21:02:00 IST] [FEATURE] Completed T0-type-system Phase C — Implemented struct field access (Op::GetField) and destructuring.
+[2026-08-14 18:02:00 IST] [FEATURE] Completed T0-type-system Phase D — Implemented match guards, or-patterns, range patterns, and nested destructuring.
+[2026-08-14 18:17:00 IST] [FEATURE] Completed T0-type-system Phase E — Implemented generic parameter resolution/propagation through Resolver (SymbolKind::TypeParam), HIR (TypeExprKind::Generic), and MIR (MirFunction.generics), and verified monomorphization tests.
