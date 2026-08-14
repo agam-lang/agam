@@ -11,7 +11,7 @@ use agam_ast::stmt::*;
 use agam_ast::types::*;
 use agam_ast::*;
 use agam_errors::span::{SourceId, Span};
-use agam_lexer::{Token, TokenKind};
+use agam_lexer::{tokenize, Token, TokenKind};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -1061,12 +1061,64 @@ impl Parser {
             }
             TokenKind::FStringLiteral => {
                 self.advance();
+                let lexeme = &tok.lexeme;
+                let inner = if lexeme.starts_with("f\"") && lexeme.ends_with('"') && lexeme.len() >= 3 {
+                    &lexeme[2..lexeme.len() - 1]
+                } else {
+                    ""
+                };
+                let mut parts = Vec::new();
+                let mut current_lit = String::new();
+                let mut chars = inner.chars().peekable();
+                while let Some(c) = chars.next() {
+                    if c == '{' {
+                        if chars.peek() == Some(&'{') {
+                            chars.next();
+                            current_lit.push('{');
+                            continue;
+                        }
+                        if !current_lit.is_empty() {
+                            parts.push(FStringPart::Literal(std::mem::take(&mut current_lit)));
+                        }
+                        let mut expr_str = String::new();
+                        let mut brace_depth = 1;
+                        while let Some(inner_c) = chars.next() {
+                            if inner_c == '{' {
+                                brace_depth += 1;
+                                expr_str.push('{');
+                            } else if inner_c == '}' {
+                                brace_depth -= 1;
+                                if brace_depth == 0 {
+                                    break;
+                                }
+                                expr_str.push('}');
+                            } else {
+                                expr_str.push(inner_c);
+                            }
+                        }
+                        if !expr_str.trim().is_empty() {
+                            let expr_tokens = tokenize(&expr_str, tok.span.source_id);
+                            let mut sub_parser = Parser::new(expr_tokens);
+                            if let Ok(sub_expr) = sub_parser.parse_expression(0) {
+                                parts.push(FStringPart::Expr(sub_expr));
+                            } else {
+                                parts.push(FStringPart::Literal(format!("{{{expr_str}}}")));
+                            }
+                        }
+                    } else if c == '}' && chars.peek() == Some(&'}') {
+                        chars.next();
+                        current_lit.push('}');
+                    } else {
+                        current_lit.push(c);
+                    }
+                }
+                if !current_lit.is_empty() || parts.is_empty() {
+                    parts.push(FStringPart::Literal(current_lit));
+                }
                 Ok(Expr {
                     id,
                     span: tok.span,
-                    kind: ExprKind::FStringLiteral {
-                        parts: vec![FStringPart::Literal(tok.lexeme.clone())],
-                    },
+                    kind: ExprKind::FStringLiteral { parts },
                 })
             }
             TokenKind::True => {
@@ -2268,6 +2320,21 @@ mod tests {
             assert_eq!(items[1].alias.as_ref().map(|a| a.name.as_str()), Some("cosine"));
         } else {
             panic!("expected Use declaration");
+        }
+    }
+
+    #[test]
+    fn test_parse_fstring_interpolation() {
+        let expr = parse_expr("f\"hello {name}, count is {count + 1}!\"");
+        if let ExprKind::FStringLiteral { parts } = &expr.kind {
+            assert_eq!(parts.len(), 5);
+            assert!(matches!(&parts[0], FStringPart::Literal(s) if s == "hello "));
+            assert!(matches!(&parts[1], FStringPart::Expr(_)));
+            assert!(matches!(&parts[2], FStringPart::Literal(s) if s == ", count is "));
+            assert!(matches!(&parts[3], FStringPart::Expr(_)));
+            assert!(matches!(&parts[4], FStringPart::Literal(s) if s == "!"));
+        } else {
+            panic!("expected FStringLiteral");
         }
     }
 }

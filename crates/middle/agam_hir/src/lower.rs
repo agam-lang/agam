@@ -1621,4 +1621,20 @@ mod tests {
         let has_method = hir.functions.iter().any(|f| f.name == "Point::magnitude");
         assert!(has_method, "expected lowered function Point::magnitude from impl block");
     }
+
+    #[test]
+    fn test_hir_fstring_lowering() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "fn greet(name: str) -> str { return f\"hello {name}!\"; }",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Return(Some(expr)) => match &expr.kind {
+                HirExprKind::Binary { op, .. } => assert_eq!(*op, HirBinOp::Add),
+                _ => panic!("expected chained binary add for f-string lowering"),
+            },
+            _ => panic!("expected return statement"),
+        }
+    }
 }
