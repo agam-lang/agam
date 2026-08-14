@@ -1009,11 +1009,46 @@ impl HirLowering {
                 }
             }
             PatternKind::Or(pats) => {
-                // Lower first alternative — or-patterns need full lowering later
-                if let Some(first) = pats.first() {
-                    self.lower_pattern(first)
+                let lowered: Vec<HirPattern> =
+                    pats.iter().map(|p| self.lower_pattern(p)).collect();
+                if lowered.len() == 1 {
+                    lowered.into_iter().next().unwrap_or(HirPattern::Wildcard)
                 } else {
-                    HirPattern::Wildcard
+                    HirPattern::Or(lowered)
+                }
+            }
+            PatternKind::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                // Extract literal expressions from Range sub-patterns.
+                // Range bounds are always literal patterns in practice.
+                let start_expr = if let PatternKind::Literal(expr) = &start.kind {
+                    self.lower_expr(expr)
+                } else {
+                    // Fallback: synthesize a zero constant
+                    let ty = self.types.i32();
+                    HirExpr {
+                        id: self.fresh_id(),
+                        ty,
+                        kind: HirExprKind::IntLit(0),
+                    }
+                };
+                let end_expr = if let PatternKind::Literal(expr) = &end.kind {
+                    self.lower_expr(expr)
+                } else {
+                    let ty = self.types.i32();
+                    HirExpr {
+                        id: self.fresh_id(),
+                        ty,
+                        kind: HirExprKind::IntLit(0),
+                    }
+                };
+                HirPattern::Range {
+                    start: Box::new(start_expr),
+                    end: Box::new(end_expr),
+                    inclusive: *inclusive,
                 }
             }
             _ => HirPattern::Wildcard,

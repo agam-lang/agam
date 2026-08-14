@@ -1755,6 +1755,39 @@ impl Parser {
     // ── Patterns ──
 
     fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        let first = self.parse_single_pattern()?;
+        if self.peek_kind() == TokenKind::Pipe {
+            let mut pats = vec![first];
+            while self.eat(TokenKind::Pipe) {
+                pats.push(self.parse_single_pattern()?);
+            }
+            let id = self.node_id();
+            let span = pats.first().unwrap().span.merge(pats.last().unwrap().span);
+            Ok(Pattern {
+                id,
+                span,
+                kind: PatternKind::Or(pats),
+            })
+        } else if self.eat(TokenKind::DotDot) {
+            let inclusive = self.eat(TokenKind::Eq);
+            let end = self.parse_single_pattern()?;
+            let id = self.node_id();
+            let span = first.span.merge(end.span);
+            Ok(Pattern {
+                id,
+                span,
+                kind: PatternKind::Range {
+                    start: Box::new(first),
+                    end: Box::new(end),
+                    inclusive,
+                },
+            })
+        } else {
+            Ok(first)
+        }
+    }
+
+    fn parse_single_pattern(&mut self) -> Result<Pattern, ParseError> {
         let id = self.node_id();
         let tok = self.peek().clone();
 

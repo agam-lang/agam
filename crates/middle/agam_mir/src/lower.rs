@@ -492,11 +492,85 @@ impl MirLowering {
         }
     }
 
+    /// Recursively destructure irrefutable patterns (bindings, tuples, structs, variants).
+    fn lower_irrefutable_pattern(
+        &mut self,
+        scrutinee: ValueId,
+        pattern: &HirPattern,
+        result_ty: TypeId,
+    ) {
+        match pattern {
+            HirPattern::Bind(name) => {
+                let ty = self.types.fresh_var();
+                self.emit(
+                    ty,
+                    Op::Alloca {
+                        name: name.clone(),
+                        ty,
+                    },
+                );
+                self.emit(
+                    result_ty,
+                    Op::StoreLocal {
+                        name: name.clone(),
+                        value: scrutinee,
+                    },
+                );
+            }
+            HirPattern::Tuple(sub_patterns) => {
+                for (elem_idx, elem_pat) in sub_patterns.iter().enumerate() {
+                    let elem_ty = self.types.fresh_var();
+                    let idx_val = self.emit(self.types.i32(), Op::ConstInt(elem_idx as i64));
+                    let elem_val = self.emit(
+                        elem_ty,
+                        Op::GetIndex {
+                            object: scrutinee,
+                            index: idx_val,
+                        },
+                    );
+                    self.lower_irrefutable_pattern(elem_val, elem_pat, result_ty);
+                }
+            }
+            HirPattern::Struct { fields, .. } => {
+                for (field_name, field_pat) in fields {
+                    let field_ty = self.types.fresh_var();
+                    let field_val = self.emit(
+                        field_ty,
+                        Op::GetField {
+                            object: scrutinee,
+                            field: field_name.clone(),
+                        },
+                    );
+                    self.lower_irrefutable_pattern(field_val, field_pat, result_ty);
+                }
+            }
+            HirPattern::Variant { fields, .. } => {
+                for (field_idx, field_pat) in fields.iter().enumerate() {
+                    let payload_ty = self.types.fresh_var();
+                    let payload = self.emit(
+                        payload_ty,
+                        Op::EnumPayload {
+                            value: scrutinee,
+                            field_index: field_idx as u32,
+                        },
+                    );
+                    self.lower_irrefutable_pattern(payload, field_pat, result_ty);
+                }
+            }
+            HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Or(_) | HirPattern::Range { .. } => {
+                // Non-binding or already matched
+            }
+        }
+    }
+
     /// Lower a match expression into MIR control flow.
     ///
     /// For variant patterns: emit Switch on EnumTag with per-arm blocks.
     /// For literal patterns: emit chained equality comparisons.
+    /// For range patterns: emit lower and upper bound comparisons.
+    /// For or-patterns: emit chained alternatives.
     /// For wildcard/bind patterns: direct jump to arm body.
+    /// Supports guard clauses (`if guard_expr`) on match arms.
     fn lower_match(
         &mut self,
         result_ty: TypeId,
@@ -521,14 +595,14 @@ impl MirLowering {
         );
 
         // Check if this is an enum-tag-based match (any arm has a Variant pattern)
-        let has_variant_pattern = arms
-            .iter()
-            .any(|arm| matches!(arm.pattern, HirPattern::Variant { .. }));
+        let has_variant_pattern = arms.iter().any(|arm| match &arm.pattern {
+            HirPattern::Variant { .. } => true,
+            HirPattern::Or(pats) => pats.iter().any(|p| matches!(p, HirPattern::Variant { .. })),
+            _ => false,
+        });
 
         if has_variant_pattern {
             // Enum match: extract the discriminant once, then dispatch directly
-            // to fully formed arm blocks.  Do not patch an already-finished
-            // block: that loses instructions accumulated for the first arm.
             let tag_val = self.emit(self.types.i32(), Op::EnumTag(scrutinee));
 
             let mut cases: Vec<(i64, BlockId)> = Vec::new();
@@ -541,78 +615,89 @@ impl MirLowering {
             for (arm, arm_block) in arms.iter().zip(arm_blocks) {
                 self.current_block = arm_block;
 
+                let mut arm_tags: Vec<i64> = Vec::new();
                 match &arm.pattern {
-                    HirPattern::Variant { name, fields } => {
+                    HirPattern::Variant { name, .. } => {
                         if let Some(tag) = self.variant_tags.get(name) {
-                            cases.push((*tag as i64, arm_block));
+                            arm_tags.push(*tag as i64);
                         }
-
-                        // Extract payload fields as local variables
-                        for (field_idx, field_pat) in fields.iter().enumerate() {
-                            if let HirPattern::Bind(name) = field_pat {
-                                let payload_ty = self.types.fresh_var();
-                                let payload = self.emit(
-                                    payload_ty,
-                                    Op::EnumPayload {
-                                        value: scrutinee,
-                                        field_index: field_idx as u32,
-                                    },
-                                );
-                                self.emit(
-                                    payload_ty,
-                                    Op::Alloca {
-                                        name: name.clone(),
-                                        ty: payload_ty,
-                                    },
-                                );
-                                self.emit(
-                                    result_ty,
-                                    Op::StoreLocal {
-                                        name: name.clone(),
-                                        value: payload,
-                                    },
-                                );
+                    }
+                    HirPattern::Or(pats) => {
+                        for pat in pats {
+                            if let HirPattern::Variant { name, .. } = pat {
+                                if let Some(tag) = self.variant_tags.get(name) {
+                                    arm_tags.push(*tag as i64);
+                                }
                             }
                         }
-
-                        let arm_result = self.lower_expr(&arm.body);
-                        self.emit(
-                            result_ty,
-                            Op::StoreLocal {
-                                name: result_name.clone(),
-                                value: arm_result,
-                            },
-                        );
-                        self.finish_block(Terminator::Jump(merge_block));
                     }
                     HirPattern::Wildcard | HirPattern::Bind(_) => {
                         default_block = Some(arm_block);
-                        let arm_result = self.lower_expr(&arm.body);
-                        self.emit(
-                            result_ty,
-                            Op::StoreLocal {
-                                name: result_name.clone(),
-                                value: arm_result,
-                            },
-                        );
-                        self.finish_block(Terminator::Jump(merge_block));
                     }
                     _ => {
-                        // A mixed enum match is validated earlier.  Preserve a
-                        // deterministic fallback here for recovery lowering.
                         default_block = Some(arm_block);
-                        let arm_result = self.lower_expr(&arm.body);
-                        self.emit(
-                            result_ty,
-                            Op::StoreLocal {
-                                name: result_name.clone(),
-                                value: arm_result,
-                            },
-                        );
-                        self.finish_block(Terminator::Jump(merge_block));
                     }
                 }
+                for tag in arm_tags {
+                    cases.push((tag, arm_block));
+                }
+
+                match &arm.pattern {
+                    HirPattern::Variant { .. } => {
+                        self.lower_irrefutable_pattern(scrutinee, &arm.pattern, result_ty);
+                    }
+                    HirPattern::Or(pats) => {
+                        for pat in pats {
+                            self.lower_irrefutable_pattern(scrutinee, pat, result_ty);
+                        }
+                    }
+                    HirPattern::Wildcard | HirPattern::Bind(_) => {
+                        self.lower_irrefutable_pattern(scrutinee, &arm.pattern, result_ty);
+                    }
+                    _ => {
+                        self.lower_irrefutable_pattern(scrutinee, &arm.pattern, result_ty);
+                    }
+                }
+
+                // Guard evaluation if present
+                if let Some(guard_expr) = &arm.guard {
+                    let guard_val = self.lower_expr(guard_expr);
+                    let body_block = self.fresh_block();
+                    let guard_fail_block = self.fresh_block();
+                    self.finish_block(Terminator::Branch {
+                        condition: guard_val,
+                        then_block: body_block,
+                        else_block: guard_fail_block,
+                    });
+
+                    // Body on guard true
+                    self.current_block = body_block;
+                    let arm_result = self.lower_expr(&arm.body);
+                    self.emit(
+                        result_ty,
+                        Op::StoreLocal {
+                            name: result_name.clone(),
+                            value: arm_result,
+                        },
+                    );
+                    self.finish_block(Terminator::Jump(merge_block));
+
+                    // Guard fail jumps to default or merge
+                    self.current_block = guard_fail_block;
+                    self.finish_block(Terminator::Jump(merge_block));
+                } else {
+                    let arm_result = self.lower_expr(&arm.body);
+                    self.emit(
+                        result_ty,
+                        Op::StoreLocal {
+                            name: result_name.clone(),
+                            value: arm_result,
+                        },
+                    );
+                    self.finish_block(Terminator::Jump(merge_block));
+                }
             }
+
             self.current_block = dispatch_block;
             self.finish_block(Terminator::Switch {
                 discriminant: tag_val,
@@ -620,22 +705,51 @@ impl MirLowering {
                 default: default_block.unwrap_or(merge_block),
             });
         } else {
-            // Non-enum match: chained if-else on literal equality or wildcard
+            // Non-enum match: chained if-else on pattern comparisons or wildcard
             for arm in arms {
+                let lower_arm_body_with_guard = |this: &mut Self, body_target_block: BlockId, else_target_block: BlockId| {
+                    this.current_block = body_target_block;
+                    if let Some(guard_expr) = &arm.guard {
+                        let guard_val = this.lower_expr(guard_expr);
+                        let guarded_body = this.fresh_block();
+                        this.finish_block(Terminator::Branch {
+                            condition: guard_val,
+                            then_block: guarded_body,
+                            else_block: else_target_block,
+                        });
+                        this.current_block = guarded_body;
+                    }
+                    let arm_result = this.lower_expr(&arm.body);
+                    this.emit(
+                        result_ty,
+                        Op::StoreLocal {
+                            name: result_name.clone(),
+                            value: arm_result,
+                        },
+                    );
+                    this.finish_block(Terminator::Jump(merge_block));
+                };
+
                 match &arm.pattern {
                     HirPattern::Wildcard | HirPattern::Bind(_) => {
-                        // Default arm: just lower body
-                        let arm_result = self.lower_expr(&arm.body);
-                        self.emit(
-                            result_ty,
-                            Op::StoreLocal {
-                                name: result_name.clone(),
-                                value: arm_result,
-                            },
-                        );
-                        self.finish_block(Terminator::Jump(merge_block));
-                        self.current_block = merge_block;
-                        break;
+                        self.lower_irrefutable_pattern(scrutinee, &arm.pattern, result_ty);
+                        if arm.guard.is_some() {
+                            let next_arm_block = self.fresh_block();
+                            lower_arm_body_with_guard(self, self.current_block, next_arm_block);
+                            self.current_block = next_arm_block;
+                        } else {
+                            let arm_result = self.lower_expr(&arm.body);
+                            self.emit(
+                                result_ty,
+                                Op::StoreLocal {
+                                    name: result_name.clone(),
+                                    value: arm_result,
+                                },
+                            );
+                            self.finish_block(Terminator::Jump(merge_block));
+                            self.current_block = merge_block;
+                            break;
+                        }
                     }
                     HirPattern::Literal(lit_expr) => {
                         let lit_val = self.lower_expr(lit_expr);
@@ -656,103 +770,142 @@ impl MirLowering {
                             else_block,
                         });
 
-                        self.current_block = then_block;
-                        let arm_result = self.lower_expr(&arm.body);
-                        self.emit(
-                            result_ty,
-                            Op::StoreLocal {
-                                name: result_name.clone(),
-                                value: arm_result,
-                            },
-                        );
-                        self.finish_block(Terminator::Jump(merge_block));
-
+                        lower_arm_body_with_guard(self, then_block, else_block);
                         self.current_block = else_block;
                     }
-                    HirPattern::Tuple(sub_patterns) => {
-                        // Irrefutable destructuring: extract each tuple element.
-                        for (elem_idx, elem_pat) in sub_patterns.iter().enumerate() {
-                            if let HirPattern::Bind(name) = elem_pat {
-                                let elem_ty = self.types.fresh_var();
-                                let idx_val =
-                                    self.emit(self.types.i32(), Op::ConstInt(elem_idx as i64));
-                                let elem_val = self.emit(
-                                    elem_ty,
-                                    Op::GetIndex {
-                                        object: scrutinee,
-                                        index: idx_val,
-                                    },
-                                );
-                                self.emit(
-                                    elem_ty,
-                                    Op::Alloca {
-                                        name: name.clone(),
-                                        ty: elem_ty,
-                                    },
-                                );
-                                self.emit(
-                                    result_ty,
-                                    Op::StoreLocal {
-                                        name: name.clone(),
-                                        value: elem_val,
-                                    },
-                                );
-                            }
-                        }
-                        let arm_result = self.lower_expr(&arm.body);
-                        self.emit(
-                            result_ty,
-                            Op::StoreLocal {
-                                name: result_name.clone(),
-                                value: arm_result,
+                    HirPattern::Range { start, end, inclusive } => {
+                        let start_val = self.lower_expr(start);
+                        let end_val = self.lower_expr(end);
+                        let ge_cmp = self.emit(
+                            self.types.bool(),
+                            Op::BinOp {
+                                op: MirBinOp::GtEq,
+                                left: scrutinee,
+                                right: start_val,
                             },
                         );
-                        self.finish_block(Terminator::Jump(merge_block));
-                        self.current_block = merge_block;
-                        break;
+                        let le_op = if *inclusive { MirBinOp::LtEq } else { MirBinOp::Lt };
+                        let le_cmp = self.emit(
+                            self.types.bool(),
+                            Op::BinOp {
+                                op: le_op,
+                                left: scrutinee,
+                                right: end_val,
+                            },
+                        );
+                        let in_range = self.emit(
+                            self.types.bool(),
+                            Op::BinOp {
+                                op: MirBinOp::And,
+                                left: ge_cmp,
+                                right: le_cmp,
+                            },
+                        );
+
+                        let then_block = self.fresh_block();
+                        let else_block = self.fresh_block();
+                        self.finish_block(Terminator::Branch {
+                            condition: in_range,
+                            then_block,
+                            else_block,
+                        });
+
+                        lower_arm_body_with_guard(self, then_block, else_block);
+                        self.current_block = else_block;
                     }
-                    HirPattern::Struct { name: _, fields } => {
-                        // Irrefutable destructuring: extract each named field.
-                        for (field_name, field_pat) in fields {
-                            if let HirPattern::Bind(bind_name) = field_pat {
-                                let field_ty = self.types.fresh_var();
-                                let field_val = self.emit(
-                                    field_ty,
-                                    Op::GetField {
-                                        object: scrutinee,
-                                        field: field_name.clone(),
-                                    },
-                                );
-                                self.emit(
-                                    field_ty,
-                                    Op::Alloca {
-                                        name: bind_name.clone(),
-                                        ty: field_ty,
-                                    },
-                                );
-                                self.emit(
-                                    result_ty,
-                                    Op::StoreLocal {
-                                        name: bind_name.clone(),
-                                        value: field_val,
-                                    },
-                                );
+                    HirPattern::Or(pats) => {
+                        let shared_body_block = self.fresh_block();
+                        let next_arm_block = self.fresh_block();
+
+                        let mut check_block = self.current_block;
+                        for (idx, pat) in pats.iter().enumerate() {
+                            self.current_block = check_block;
+                            let is_last = idx == pats.len() - 1;
+                            let alt_else = if is_last { next_arm_block } else { self.fresh_block() };
+
+                            match pat {
+                                HirPattern::Literal(lit_expr) => {
+                                    let lit_val = self.lower_expr(lit_expr);
+                                    let cmp = self.emit(
+                                        self.types.bool(),
+                                        Op::BinOp {
+                                            op: MirBinOp::Eq,
+                                            left: scrutinee,
+                                            right: lit_val,
+                                        },
+                                    );
+                                    self.finish_block(Terminator::Branch {
+                                        condition: cmp,
+                                        then_block: shared_body_block,
+                                        else_block: alt_else,
+                                    });
+                                }
+                                HirPattern::Range { start, end, inclusive } => {
+                                    let start_val = self.lower_expr(start);
+                                    let end_val = self.lower_expr(end);
+                                    let ge_cmp = self.emit(
+                                        self.types.bool(),
+                                        Op::BinOp {
+                                            op: MirBinOp::GtEq,
+                                            left: scrutinee,
+                                            right: start_val,
+                                        },
+                                    );
+                                    let le_op = if *inclusive { MirBinOp::LtEq } else { MirBinOp::Lt };
+                                    let le_cmp = self.emit(
+                                        self.types.bool(),
+                                        Op::BinOp {
+                                            op: le_op,
+                                            left: scrutinee,
+                                            right: end_val,
+                                        },
+                                    );
+                                    let in_range = self.emit(
+                                        self.types.bool(),
+                                        Op::BinOp {
+                                            op: MirBinOp::And,
+                                            left: ge_cmp,
+                                            right: le_cmp,
+                                        },
+                                    );
+                                    self.finish_block(Terminator::Branch {
+                                        condition: in_range,
+                                        then_block: shared_body_block,
+                                        else_block: alt_else,
+                                    });
+                                }
+                                _ => {
+                                    self.lower_irrefutable_pattern(scrutinee, pat, result_ty);
+                                    self.finish_block(Terminator::Jump(shared_body_block));
+                                }
                             }
+                            check_block = alt_else;
                         }
-                        let arm_result = self.lower_expr(&arm.body);
-                        self.emit(
-                            result_ty,
-                            Op::StoreLocal {
-                                name: result_name.clone(),
-                                value: arm_result,
-                            },
-                        );
-                        self.finish_block(Terminator::Jump(merge_block));
-                        self.current_block = merge_block;
-                        break;
+
+                        lower_arm_body_with_guard(self, shared_body_block, next_arm_block);
+                        self.current_block = next_arm_block;
+                    }
+                    HirPattern::Tuple(_) | HirPattern::Struct { .. } => {
+                        self.lower_irrefutable_pattern(scrutinee, &arm.pattern, result_ty);
+                        if arm.guard.is_some() {
+                            let next_arm_block = self.fresh_block();
+                            lower_arm_body_with_guard(self, self.current_block, next_arm_block);
+                            self.current_block = next_arm_block;
+                        } else {
+                            let arm_result = self.lower_expr(&arm.body);
+                            self.emit(
+                                result_ty,
+                                Op::StoreLocal {
+                                    name: result_name.clone(),
+                                    value: arm_result,
+                                },
+                            );
+                            self.finish_block(Terminator::Jump(merge_block));
+                            self.current_block = merge_block;
+                            break;
+                        }
                     }
                     _ => {
-                        // Unsupported pattern type — skip
                         let arm_result = self.lower_expr(&arm.body);
                         self.emit(
                             result_ty,
@@ -768,7 +921,7 @@ impl MirLowering {
                 }
             }
 
-            // If we didn't hit a default arm, jump to merge anyway
+            // If we didn't hit a terminal branch, jump to merge
             if self.current_block != merge_block {
                 self.finish_block(Terminator::Jump(merge_block));
             }
@@ -1207,5 +1360,74 @@ mod tests {
         );
         let layout = &mir.struct_layouts["Point"];
         assert_eq!(layout.fields, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn test_mir_match_guard_produces_conditional_branch() {
+        let mir = lower_to_mir(
+            "fn main() { let x = 42; match x { n if n > 0 => 1, _ => 0 }; }",
+        );
+        let f = &mir.functions[0];
+        let branch_count = f
+            .blocks
+            .iter()
+            .filter(|b| matches!(&b.terminator, Terminator::Branch { .. }))
+            .count();
+        assert!(
+            branch_count >= 1,
+            "expected at least one branch for match guard clause"
+        );
+    }
+
+    #[test]
+    fn test_mir_or_pattern_generates_multiple_test_blocks() {
+        let mir = lower_to_mir(
+            "fn main() { let x = 42; match x { 1 | 2 | 3 => 10, _ => 20 }; }",
+        );
+        let f = &mir.functions[0];
+        let branch_count = f
+            .blocks
+            .iter()
+            .filter(|b| matches!(&b.terminator, Terminator::Branch { .. }))
+            .count();
+        assert!(
+            branch_count >= 3,
+            "expected at least 3 branches for 3-alternative or-pattern, got {branch_count}"
+        );
+    }
+
+    #[test]
+    fn test_mir_range_pattern_generates_comparison_chain() {
+        let mir = lower_to_mir(
+            "fn main() { let x = 42; match x { 1..=10 => 100, _ => 200 }; }",
+        );
+        let f = &mir.functions[0];
+        let has_and = f.blocks.iter().any(|b| {
+            b.instructions
+                .iter()
+                .any(|i| matches!(&i.op, Op::BinOp { op: MirBinOp::And, .. }))
+        });
+        assert!(
+            has_and,
+            "expected MirBinOp::And combining range lower and upper bounds"
+        );
+    }
+
+    #[test]
+    fn test_mir_nested_tuple_destructure() {
+        let mir = lower_to_mir(
+            "fn main() { let pair = ((1, 2), 3); match pair { ((a, b), c) => a + b + c, _ => 0 }; }",
+        );
+        let f = &mir.functions[0];
+        let get_index_count = f
+            .blocks
+            .iter()
+            .flat_map(|b| &b.instructions)
+            .filter(|i| matches!(&i.op, Op::GetIndex { .. }))
+            .count();
+        assert!(
+            get_index_count >= 3,
+            "expected at least 3 GetIndex ops for nested tuple destructuring ((a, b), c), got {get_index_count}"
+        );
     }
 }

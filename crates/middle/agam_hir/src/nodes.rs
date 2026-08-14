@@ -148,6 +148,14 @@ pub enum HirPattern {
         name: String,
         fields: Vec<(String, HirPattern)>,
     },
+    /// Or-pattern: `A | B | C`
+    Or(Vec<HirPattern>),
+    /// Range pattern: `1..=10` or `1..10`
+    Range {
+        start: Box<HirExpr>,
+        end: Box<HirExpr>,
+        inclusive: bool,
+    },
 }
 
 /// HIR expressions — all have a resolved type.
