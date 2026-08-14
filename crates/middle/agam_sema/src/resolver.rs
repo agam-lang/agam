@@ -187,6 +187,20 @@ impl Resolver {
     fn resolve_function(&mut self, f: &FunctionDecl) {
         self.scopes.push_scope();
 
+        // Declare generic type parameters
+        for gp in &f.generics {
+            let bounds: Vec<TypeId> = gp
+                .bounds
+                .iter()
+                .map(|b| self.resolve_type_expr_to_id(b))
+                .collect();
+            let _ = self.scopes.declare(
+                gp.name.name.clone(),
+                SymbolKind::TypeParam { bounds },
+                gp.span,
+            );
+        }
+
         // Declare parameters
         for param in &f.params {
             let ty = self.resolve_type_expr_to_id(&param.ty);
@@ -586,7 +600,12 @@ impl Resolver {
                         // User-defined type — look it up
                         if let Some(sym_id) = self.scopes.lookup(name) {
                             self.scopes.mark_used(sym_id);
-                            self.types.insert(Type::Named(sym_id))
+                            let sym = self.scopes.get(sym_id);
+                            if let SymbolKind::TypeParam { .. } = &sym.kind {
+                                self.types.insert(Type::TypeParam(name.to_string()))
+                            } else {
+                                self.types.insert(Type::Named(sym_id))
+                            }
                         } else {
                             self.errors.push(ResolveError {
                                 message: format!("unknown type '{}'", name),
@@ -882,6 +901,12 @@ fn main():
     #[test]
     fn test_wide_integer_gpu_types_resolve_without_errors() {
         let r = parse_and_resolve("fn kern(a: i256, b: *mut u512): return 0");
+        assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
+    }
+
+    #[test]
+    fn test_generic_function_resolution() {
+        let r = parse_and_resolve("fn identity<T>(x: T) -> T { return x; }");
         assert!(r.errors.is_empty(), "errors: {:?}", r.errors);
     }
 }

@@ -35,6 +35,18 @@ impl MirLowering {
         }
     }
 
+    pub fn new_with_types(types: TypeStore) -> Self {
+        Self {
+            next_value: 0,
+            next_block: 0,
+            blocks: Vec::new(),
+            current_instrs: Vec::new(),
+            current_block: BlockId(0),
+            types,
+            variant_tags: std::collections::HashMap::new(),
+        }
+    }
+
     fn fresh_value(&mut self) -> ValueId {
         let id = ValueId(self.next_value);
         self.next_value += 1;
@@ -156,7 +168,7 @@ impl MirLowering {
 
         MirFunction {
             name: func.name.clone(),
-            generics: vec![],
+            generics: func.generics.iter().map(|g| g.name.clone()).collect(),
             params,
             return_ty: func.return_ty,
             blocks: std::mem::take(&mut self.blocks),
@@ -1031,7 +1043,7 @@ mod tests {
         let mut hir_lower = HirLowering::new();
         let hir = hir_lower.lower_module(&module);
 
-        let mut mir_lower = MirLowering::new();
+        let mut mir_lower = MirLowering::new_with_types(hir_lower.take_types());
         mir_lower.lower_module(&hir)
     }
 
@@ -1429,5 +1441,35 @@ mod tests {
             get_index_count >= 3,
             "expected at least 3 GetIndex ops for nested tuple destructuring ((a, b), c), got {get_index_count}"
         );
+    }
+
+    #[test]
+    fn test_end_to_end_monomorphization() {
+        let source = "fn identity<T>(x: T) -> T { return x; }\nfn main() { let a = identity(42); }";
+        let source_id = SourceId(0);
+        let mut lexer = Lexer::new(source, source_id);
+        let mut tokens = Vec::new();
+        loop {
+            let tok = lexer.next_token();
+            let is_eof = tok.kind == agam_lexer::TokenKind::Eof;
+            tokens.push(tok);
+            if is_eof {
+                break;
+            }
+        }
+        let mut parser = agam_parser::Parser::new(tokens);
+        let module = parser.parse_module(source_id).expect("parse failed");
+
+        let mut hir_lower = HirLowering::new();
+        let hir = hir_lower.lower_module(&module);
+
+        let mut mir_lower = MirLowering::new_with_types(hir_lower.take_types());
+        let mut mir = mir_lower.lower_module(&hir);
+
+        let res = crate::monomorphize::monomorphize(&mir, &mut mir_lower.types);
+        crate::monomorphize::apply_monomorphization(&mut mir, res);
+
+        let has_specialized = mir.functions.iter().any(|f| f.name.starts_with("identity__"));
+        assert!(has_specialized, "expected monomorphized identity function specialization");
     }
 }

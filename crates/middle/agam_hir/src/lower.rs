@@ -35,6 +35,8 @@ pub struct HirLowering {
     pub diagnostics: Vec<String>,
     /// Source-level enum constructor names resolved during the module pre-pass.
     enum_variants: HashMap<String, String>,
+    /// Active generic parameter names for the function currently being lowered.
+    active_generics: Vec<String>,
 }
 
 impl HirLowering {
@@ -46,7 +48,12 @@ impl HirLowering {
             current_target: TargetProfile::Default,
             diagnostics: Vec::new(),
             enum_variants: HashMap::new(),
+            active_generics: Vec::new(),
         }
+    }
+
+    pub fn take_types(&mut self) -> TypeStore {
+        std::mem::replace(&mut self.types, TypeStore::new())
     }
 
     fn fresh_id(&mut self) -> HirId {
@@ -155,6 +162,7 @@ impl HirLowering {
 
     fn lower_function(&mut self, f: &FunctionDecl) -> HirFunction {
         self.push_scope();
+        self.active_generics = f.generics.iter().map(|g| g.name.name.clone()).collect();
 
         let target = agam_sema::target::resolve_target_profile(&f.annotations)
             .unwrap_or(TargetProfile::Default);
@@ -205,10 +213,29 @@ impl HirLowering {
             }
         };
 
+        let generics = f
+            .generics
+            .iter()
+            .map(|g| {
+                let bounds = g
+                    .bounds
+                    .iter()
+                    .map(|b| match &b.kind {
+                        TypeExprKind::Named(path) => path_name(path),
+                        _ => "".to_string(),
+                    })
+                    .collect();
+                HirGenericParam {
+                    name: g.name.name.clone(),
+                    bounds,
+                }
+            })
+            .collect();
+
         let lowered = HirFunction {
             id: self.fresh_id(),
             name: f.name.name.clone(),
-            generics: vec![],
+            generics,
             params,
             return_ty: f
                 .return_type
@@ -752,11 +779,32 @@ impl HirLowering {
         match &ty.kind {
             agam_ast::types::TypeExprKind::Named(path) => {
                 if let Some(segment) = path.segments.last() {
-                    builtin_type_id_for_name(&self.types, &segment.name)
-                        .unwrap_or_else(|| self.types.fresh_var())
+                    if self.active_generics.contains(&segment.name) {
+                        self.types.insert(Type::TypeParam(segment.name.clone()))
+                    } else if let Some(builtin) = builtin_type_id_for_name(&self.types, &segment.name) {
+                        builtin
+                    } else {
+                        self.types.fresh_var()
+                    }
                 } else {
                     self.types.error()
                 }
+            }
+            agam_ast::types::TypeExprKind::Generic { base, args } => {
+                let base_id = self.resolve_type_expr(&TypeExpr {
+                    id: ty.id,
+                    span: ty.span,
+                    kind: agam_ast::types::TypeExprKind::Named(base.clone()),
+                    mode: ty.mode,
+                });
+                let arg_ids = args
+                    .iter()
+                    .map(|arg| self.resolve_type_expr(arg))
+                    .collect();
+                self.types.insert(Type::Generic {
+                    base: base_id,
+                    args: arg_ids,
+                })
             }
             agam_ast::types::TypeExprKind::Inferred => self.types.fresh_var(),
             agam_ast::types::TypeExprKind::Dynamic | agam_ast::types::TypeExprKind::Any => {
@@ -1517,5 +1565,16 @@ mod tests {
             },
             _ => panic!("expected let binding"),
         }
+    }
+
+    #[test]
+    fn test_generic_function_lowering() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "fn identity<T>(x: T) -> T { return x; }",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let f = &hir.functions[0];
+        assert_eq!(f.generics.len(), 1);
+        assert_eq!(f.generics[0].name, "T");
     }
 }
