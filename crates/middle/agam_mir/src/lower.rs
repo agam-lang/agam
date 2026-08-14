@@ -501,6 +501,41 @@ impl MirLowering {
                 let scrutinee_val = self.lower_expr(scrutinee);
                 self.lower_match(ty, scrutinee_val, arms)
             }
+
+            HirExprKind::Try(inner) => {
+                let inner_val = self.lower_expr(inner);
+                let tag = self.emit(self.types.i32(), Op::EnumTag(inner_val));
+                let ok_block = self.fresh_block();
+                let err_block = self.fresh_block();
+                let zero = self.emit(self.types.i32(), Op::ConstInt(0));
+                let is_ok = self.emit(
+                    self.types.bool(),
+                    Op::BinOp {
+                        op: MirBinOp::Eq,
+                        left: tag,
+                        right: zero,
+                    },
+                );
+                self.finish_block(Terminator::Branch {
+                    condition: is_ok,
+                    then_block: ok_block,
+                    else_block: err_block,
+                });
+
+                // Error / None branch: early return the error/none value
+                self.current_block = err_block;
+                self.finish_block(Terminator::Return(inner_val));
+
+                // Ok / Some branch: extract payload (field 0) and continue
+                self.current_block = ok_block;
+                self.emit(
+                    ty,
+                    Op::EnumPayload {
+                        value: inner_val,
+                        field_index: 0,
+                    },
+                )
+            }
         }
     }
 
@@ -1471,5 +1506,21 @@ mod tests {
 
         let has_specialized = mir.functions.iter().any(|f| f.name.starts_with("identity__"));
         assert!(has_specialized, "expected monomorphized identity function specialization");
+    }
+
+    #[test]
+    fn test_mir_try_operator_lowering() {
+        let mir = lower_to_mir(
+            "fn compute(res: i32) -> i32 { return res?; }",
+        );
+        let f = &mir.functions[0];
+        let has_tag = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| matches!(&i.op, Op::EnumTag(_)))
+        });
+        let has_payload = f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| matches!(&i.op, Op::EnumPayload { .. }))
+        });
+        assert!(has_tag, "expected EnumTag op for try operator");
+        assert!(has_payload, "expected EnumPayload op for try operator ok unwrapping");
     }
 }

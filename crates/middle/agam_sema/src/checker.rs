@@ -460,8 +460,12 @@ impl TypeChecker {
 
             // ── Try ──
             ExprKind::Try(inner) => {
-                self.infer_expr(inner);
-                self.types.fresh_var()
+                let inner_ty = self.infer_expr(inner);
+                match self.types.get(inner_ty) {
+                    Type::Result { ok, .. } => *ok,
+                    Type::Optional(val) => *val,
+                    _ => self.types.fresh_var(),
+                }
             }
 
             // ── Range ──
@@ -740,6 +744,13 @@ mod tests {
         let tc = check_source(
             "@gpu\nfn kern(a: i256, b: *mut u512): let scratch: [u256; 32] = agam.gpu.shared_alloc(32)",
         );
+        assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn test_checker_try_operator_type_inference() {
+        let tc = check_source("fn compute(x: i32) -> i32 { let y = x?; return y; }");
+        // In the absence of error annotations, try runs and returns type variable without sema crash
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
     }
 }

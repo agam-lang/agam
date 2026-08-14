@@ -247,6 +247,10 @@ pub enum HirExprKind {
         target_ty: TypeId,
     },
 
+    // ── Try ──
+    /// Try expression: `expr?` (early return on error/none).
+    Try(Box<HirExpr>),
+
     // ── Effects ──
     /// Perform an effect operation: `perform Effect.operation(args)`.
     Perform {

@@ -768,6 +768,11 @@ impl HirLowering {
                 )
             }
 
+            ExprKind::Try(inner) => {
+                let hir_inner = self.lower_expr(inner);
+                (self.types.fresh_var(), HirExprKind::Try(Box::new(hir_inner)))
+            }
+
             // Fallback for unhandled expressions
             _ => (self.types.unit(), HirExprKind::Tuple(vec![])), // Unit value
         };
@@ -1576,5 +1581,24 @@ mod tests {
         let f = &hir.functions[0];
         assert_eq!(f.generics.len(), 1);
         assert_eq!(f.generics[0].name, "T");
+    }
+
+    #[test]
+    fn test_try_operator_lowering() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "fn parse_val(res: i32) -> i32 { return res?; }",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let f = &hir.functions[0];
+        match &f.body.stmts[0] {
+            HirStmt::Return(Some(expr)) => match &expr.kind {
+                HirExprKind::Try(inner) => match &inner.kind {
+                    HirExprKind::Var(name) => assert_eq!(name, "res"),
+                    _ => panic!("expected variable in try expression"),
+                },
+                _ => panic!("expected try expression in return"),
+            },
+            _ => panic!("expected return statement"),
+        }
     }
 }
