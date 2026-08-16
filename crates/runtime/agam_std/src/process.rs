@@ -14,7 +14,11 @@ pub struct ProcessError {
 
 impl std::fmt::Display for ProcessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ProcessError for command '{}': {}", self.command, self.message)
+        write!(
+            f,
+            "ProcessError for command '{}': {}",
+            self.command, self.message
+        )
     }
 }
 

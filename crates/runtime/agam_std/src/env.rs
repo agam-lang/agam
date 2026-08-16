@@ -15,7 +15,11 @@ pub struct EnvError {
 
 impl std::fmt::Display for EnvError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "EnvError for variable '{}': {}", self.variable, self.message)
+        write!(
+            f,
+            "EnvError for variable '{}': {}",
+            self.variable, self.message
+        )
     }
 }
 

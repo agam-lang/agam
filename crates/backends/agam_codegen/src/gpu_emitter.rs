@@ -334,7 +334,11 @@ fn kernel_param_type(param: &MirParam) -> String {
         if param.gpu_abi.is_pointer() {
             // Strip the trailing `*`, insert addrspace, re-add `*`
             if let Some(pointee) = base_ty.strip_suffix('*') {
-                return format!("{}{}*", pointee.trim_end(), mem_type.llvm_addrspace_suffix());
+                return format!(
+                    "{}{}*",
+                    pointee.trim_end(),
+                    mem_type.llvm_addrspace_suffix()
+                );
             }
         }
     }
@@ -378,7 +382,11 @@ fn analyze_kernel_layout(func: &MirFunction) -> KernelLayout {
     };
 
     for (index, param) in func.params.iter().enumerate() {
-        let ty = layout.param_types.get(index).map(|s| s.as_str()).unwrap_or("i32");
+        let ty = layout
+            .param_types
+            .get(index)
+            .map(|s| s.as_str())
+            .unwrap_or("i32");
         // Leak into 'static so existing code using &'static str works
         let ty_static: &'static str = Box::leak(ty.to_string().into_boxed_str());
         layout.value_types.insert(param.value, ty_static);
@@ -471,7 +479,11 @@ fn default_value_for_ir(ty: &str) -> &'static str {
 
 fn emit_kernel_param_bindings(out: &mut String, func: &MirFunction, layout: &KernelLayout) {
     for (index, param) in func.params.iter().enumerate() {
-        let ty = layout.param_types.get(index).map(|s| s.as_str()).unwrap_or("i32");
+        let ty = layout
+            .param_types
+            .get(index)
+            .map(|s| s.as_str())
+            .unwrap_or("i32");
         // Emit memory type comment for qualified pointers
         if let Some(mem_type) = param.memory_type {
             write!(out, "  ; memory_type: {:?}\n", mem_type).unwrap();
@@ -579,7 +591,11 @@ fn emit_kernel_function(out: &mut String, func: &MirFunction) {
         if i > 0 {
             out.push_str(", ");
         }
-        let ty = layout.param_types.get(i).map(|s| s.as_str()).unwrap_or("i32");
+        let ty = layout
+            .param_types
+            .get(i)
+            .map(|s| s.as_str())
+            .unwrap_or("i32");
         // Emit noalias for restrict-qualified params
         if param.memory_type.is_some() && param.gpu_abi.is_pointer() {
             write!(out, "{} noalias %p{}", ty, i).unwrap();

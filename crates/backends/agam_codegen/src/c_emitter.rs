@@ -5,7 +5,7 @@
 //! Agam programs natively without requiring LLVM bindings.
 
 use agam_mir::ir::*;
-use agam_sema::types::{builtin_type_by_id, FloatSize, Type};
+use agam_sema::types::{FloatSize, Type, builtin_type_by_id};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -583,7 +583,12 @@ pub fn emit_c(module: &MirModule) -> String {
     output
 }
 
-fn emit_function(out: &mut String, func: &MirFunction, layout: &FunctionLayout, struct_layouts: &std::collections::HashMap<String, StructLayout>) {
+fn emit_function(
+    out: &mut String,
+    func: &MirFunction,
+    layout: &FunctionLayout,
+    struct_layouts: &std::collections::HashMap<String, StructLayout>,
+) {
     // Function signature
     if func.name == "main" {
         writeln!(out, "int main(int argc, char** argv) {{").unwrap();
@@ -630,7 +635,13 @@ fn emit_function(out: &mut String, func: &MirFunction, layout: &FunctionLayout, 
     writeln!(out, "}}").unwrap();
 }
 
-fn emit_block(out: &mut String, block: &BasicBlock, layout: &FunctionLayout, is_main: bool, struct_layouts: &std::collections::HashMap<String, StructLayout>) {
+fn emit_block(
+    out: &mut String,
+    block: &BasicBlock,
+    layout: &FunctionLayout,
+    is_main: bool,
+    struct_layouts: &std::collections::HashMap<String, StructLayout>,
+) {
     writeln!(out, "block_{}:", block.id.0).unwrap();
 
     for instr in &block.instructions {
@@ -640,7 +651,12 @@ fn emit_block(out: &mut String, block: &BasicBlock, layout: &FunctionLayout, is_
     emit_terminator(out, &block.terminator, layout, is_main);
 }
 
-fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayout, struct_layouts: &std::collections::HashMap<String, StructLayout>) {
+fn emit_instruction(
+    out: &mut String,
+    instr: &Instruction,
+    layout: &FunctionLayout,
+    struct_layouts: &std::collections::HashMap<String, StructLayout>,
+) {
     let v = format!("__v{}", instr.result.0);
     let result_ty = value_type(layout, instr.result);
 
@@ -802,9 +818,7 @@ fn emit_instruction(out: &mut String, instr: &Instruction, layout: &FunctionLayo
             // Resolve field name to index via struct_layouts.
             let field_index = struct_layouts
                 .values()
-                .find_map(|layout| {
-                    layout.fields.iter().position(|f| f == field)
-                })
+                .find_map(|layout| layout.fields.iter().position(|f| f == field))
                 .unwrap_or(0);
             let payload_field = enum_payload_field(result_ty);
             writeln!(
@@ -1221,7 +1235,9 @@ mod tests {
 
     #[test]
     fn test_emit_enum_constructor_uses_tagged_union_layout() {
-        let c = compile_to_c_unoptimized("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
+        let c = compile_to_c_unoptimized(
+            "enum Option { Some(i32), None }\nfn main(): let value = Some(42)",
+        );
         assert!(c.contains("} AgamEnumPayload;"));
         assert!(c.contains("} AgamEnum;"));
         assert!(c.contains("AgamEnum __v"));

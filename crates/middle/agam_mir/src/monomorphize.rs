@@ -82,11 +82,7 @@ pub struct MonomorphResult {
 /// Substitute all `TypeParam` occurrences in a TypeId according to the
 /// given mapping. Returns the substituted TypeId, inserting new compound
 /// types into the store as needed.
-fn substitute_type(
-    ty: TypeId,
-    subst: &HashMap<String, TypeId>,
-    types: &mut TypeStore,
-) -> TypeId {
+fn substitute_type(ty: TypeId, subst: &HashMap<String, TypeId>, types: &mut TypeStore) -> TypeId {
     match types.get(ty).clone() {
         Type::TypeParam(name) => {
             if let Some(&concrete) = subst.get(&name) {
@@ -100,7 +96,10 @@ fn substitute_type(
             if new_elem == element {
                 ty
             } else {
-                types.insert(Type::Array { element: new_elem, size })
+                types.insert(Type::Array {
+                    element: new_elem,
+                    size,
+                })
             }
         }
         Type::Slice(inner) => {
@@ -112,7 +111,10 @@ fn substitute_type(
             }
         }
         Type::Tuple(elems) => {
-            let new_elems: Vec<TypeId> = elems.iter().map(|&e| substitute_type(e, subst, types)).collect();
+            let new_elems: Vec<TypeId> = elems
+                .iter()
+                .map(|&e| substitute_type(e, subst, types))
+                .collect();
             if new_elems == elems {
                 ty
             } else {
@@ -124,7 +126,10 @@ fn substitute_type(
             if new_inner == inner {
                 ty
             } else {
-                types.insert(Type::Ref { mutable, inner: new_inner })
+                types.insert(Type::Ref {
+                    mutable,
+                    inner: new_inner,
+                })
             }
         }
         Type::Ptr { mutable, inner } => {
@@ -132,7 +137,10 @@ fn substitute_type(
             if new_inner == inner {
                 ty
             } else {
-                types.insert(Type::Ptr { mutable, inner: new_inner })
+                types.insert(Type::Ptr {
+                    mutable,
+                    inner: new_inner,
+                })
             }
         }
         Type::Optional(inner) => {
@@ -149,25 +157,40 @@ fn substitute_type(
             if new_ok == ok && new_err == err {
                 ty
             } else {
-                types.insert(Type::Result { ok: new_ok, err: new_err })
+                types.insert(Type::Result {
+                    ok: new_ok,
+                    err: new_err,
+                })
             }
         }
         Type::Generic { base, args } => {
             let new_base = substitute_type(base, subst, types);
-            let new_args: Vec<TypeId> = args.iter().map(|&a| substitute_type(a, subst, types)).collect();
+            let new_args: Vec<TypeId> = args
+                .iter()
+                .map(|&a| substitute_type(a, subst, types))
+                .collect();
             if new_base == base && new_args == args {
                 ty
             } else {
-                types.insert(Type::Generic { base: new_base, args: new_args })
+                types.insert(Type::Generic {
+                    base: new_base,
+                    args: new_args,
+                })
             }
         }
         Type::Function { params, ret } => {
-            let new_params: Vec<TypeId> = params.iter().map(|&p| substitute_type(p, subst, types)).collect();
+            let new_params: Vec<TypeId> = params
+                .iter()
+                .map(|&p| substitute_type(p, subst, types))
+                .collect();
             let new_ret = substitute_type(ret, subst, types);
             if new_params == params && new_ret == ret {
                 ty
             } else {
-                types.insert(Type::Function { params: new_params, ret: new_ret })
+                types.insert(Type::Function {
+                    params: new_params,
+                    ret: new_ret,
+                })
             }
         }
         // Primitives, Named, Var, Any, Error, etc. — no type params inside.
@@ -253,7 +276,10 @@ pub fn monomorphize(module: &MirModule, types: &mut TypeStore) -> MonomorphResul
         .collect();
 
     if generic_fns.is_empty() {
-        return MonomorphResult { specialized, renames };
+        return MonomorphResult {
+            specialized,
+            renames,
+        };
     }
 
     // Also identify generic functions by TypeParam in params (backward compat).
@@ -319,8 +345,7 @@ pub fn monomorphize(module: &MirModule, types: &mut TypeStore) -> MonomorphResul
                             .map(|(name, &ty)| (name.clone(), ty))
                             .collect();
 
-                        let spec_func =
-                            substitute_function(generic_func, &subst, &mangled, types);
+                        let spec_func = substitute_function(generic_func, &subst, &mangled, types);
                         specialized.push(spec_func);
                     }
                 }
@@ -382,9 +407,7 @@ pub fn apply_monomorphization(module: &mut MirModule, result: MonomorphResult) {
     }
 
     // Remove the original generic functions (they're replaced by specializations).
-    module
-        .functions
-        .retain(|f| f.generics.is_empty());
+    module.functions.retain(|f| f.generics.is_empty());
 
     // Append specialized functions.
     module.functions.extend(result.specialized);
@@ -455,7 +478,10 @@ mod tests {
     fn test_substitute_type_recurses_into_array() {
         let mut types = TypeStore::new();
         let t_param = types.insert(Type::TypeParam("T".into()));
-        let arr_ty = types.insert(Type::Array { element: t_param, size: 10 });
+        let arr_ty = types.insert(Type::Array {
+            element: t_param,
+            size: 10,
+        });
         let mut subst = HashMap::new();
         subst.insert("T".into(), types.f64());
 
@@ -622,12 +648,21 @@ mod tests {
 
         // Generic function should be removed, specialization added.
         assert!(!module.functions.iter().any(|f| f.name == "identity"));
-        assert!(module.functions.iter().any(|f| f.name.contains("identity__")));
+        assert!(
+            module
+                .functions
+                .iter()
+                .any(|f| f.name.contains("identity__"))
+        );
 
         // Call in main should be rewritten.
         let main_fn = module.functions.iter().find(|f| f.name == "main").unwrap();
         if let Op::Call { callee, .. } = &main_fn.blocks[0].instructions[1].op {
-            assert!(callee.contains("identity__"), "call not rewritten: {}", callee);
+            assert!(
+                callee.contains("identity__"),
+                "call not rewritten: {}",
+                callee
+            );
         } else {
             panic!("expected Call op");
         }

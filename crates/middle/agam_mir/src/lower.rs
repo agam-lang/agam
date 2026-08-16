@@ -91,7 +91,8 @@ impl MirLowering {
         for f in &hir.functions {
             if f.name.contains("::") {
                 if let Some(short_name) = f.name.split("::").last() {
-                    self.known_methods.insert(short_name.to_string(), f.name.clone());
+                    self.known_methods
+                        .insert(short_name.to_string(), f.name.clone());
                 }
             }
         }
@@ -622,7 +623,10 @@ impl MirLowering {
                     self.lower_irrefutable_pattern(payload, field_pat, result_ty);
                 }
             }
-            HirPattern::Wildcard | HirPattern::Literal(_) | HirPattern::Or(_) | HirPattern::Range { .. } => {
+            HirPattern::Wildcard
+            | HirPattern::Literal(_)
+            | HirPattern::Or(_)
+            | HirPattern::Range { .. } => {
                 // Non-binding or already matched
             }
         }
@@ -772,28 +776,29 @@ impl MirLowering {
         } else {
             // Non-enum match: chained if-else on pattern comparisons or wildcard
             for arm in arms {
-                let lower_arm_body_with_guard = |this: &mut Self, body_target_block: BlockId, else_target_block: BlockId| {
-                    this.current_block = body_target_block;
-                    if let Some(guard_expr) = &arm.guard {
-                        let guard_val = this.lower_expr(guard_expr);
-                        let guarded_body = this.fresh_block();
-                        this.finish_block(Terminator::Branch {
-                            condition: guard_val,
-                            then_block: guarded_body,
-                            else_block: else_target_block,
-                        });
-                        this.current_block = guarded_body;
-                    }
-                    let arm_result = this.lower_expr(&arm.body);
-                    this.emit(
-                        result_ty,
-                        Op::StoreLocal {
-                            name: result_name.clone(),
-                            value: arm_result,
-                        },
-                    );
-                    this.finish_block(Terminator::Jump(merge_block));
-                };
+                let lower_arm_body_with_guard =
+                    |this: &mut Self, body_target_block: BlockId, else_target_block: BlockId| {
+                        this.current_block = body_target_block;
+                        if let Some(guard_expr) = &arm.guard {
+                            let guard_val = this.lower_expr(guard_expr);
+                            let guarded_body = this.fresh_block();
+                            this.finish_block(Terminator::Branch {
+                                condition: guard_val,
+                                then_block: guarded_body,
+                                else_block: else_target_block,
+                            });
+                            this.current_block = guarded_body;
+                        }
+                        let arm_result = this.lower_expr(&arm.body);
+                        this.emit(
+                            result_ty,
+                            Op::StoreLocal {
+                                name: result_name.clone(),
+                                value: arm_result,
+                            },
+                        );
+                        this.finish_block(Terminator::Jump(merge_block));
+                    };
 
                 match &arm.pattern {
                     HirPattern::Wildcard | HirPattern::Bind(_) => {
@@ -838,7 +843,11 @@ impl MirLowering {
                         lower_arm_body_with_guard(self, then_block, else_block);
                         self.current_block = else_block;
                     }
-                    HirPattern::Range { start, end, inclusive } => {
+                    HirPattern::Range {
+                        start,
+                        end,
+                        inclusive,
+                    } => {
                         let start_val = self.lower_expr(start);
                         let end_val = self.lower_expr(end);
                         let ge_cmp = self.emit(
@@ -849,7 +858,11 @@ impl MirLowering {
                                 right: start_val,
                             },
                         );
-                        let le_op = if *inclusive { MirBinOp::LtEq } else { MirBinOp::Lt };
+                        let le_op = if *inclusive {
+                            MirBinOp::LtEq
+                        } else {
+                            MirBinOp::Lt
+                        };
                         let le_cmp = self.emit(
                             self.types.bool(),
                             Op::BinOp {
@@ -886,7 +899,11 @@ impl MirLowering {
                         for (idx, pat) in pats.iter().enumerate() {
                             self.current_block = check_block;
                             let is_last = idx == pats.len() - 1;
-                            let alt_else = if is_last { next_arm_block } else { self.fresh_block() };
+                            let alt_else = if is_last {
+                                next_arm_block
+                            } else {
+                                self.fresh_block()
+                            };
 
                             match pat {
                                 HirPattern::Literal(lit_expr) => {
@@ -905,7 +922,11 @@ impl MirLowering {
                                         else_block: alt_else,
                                     });
                                 }
-                                HirPattern::Range { start, end, inclusive } => {
+                                HirPattern::Range {
+                                    start,
+                                    end,
+                                    inclusive,
+                                } => {
                                     let start_val = self.lower_expr(start);
                                     let end_val = self.lower_expr(end);
                                     let ge_cmp = self.emit(
@@ -916,7 +937,11 @@ impl MirLowering {
                                             right: start_val,
                                         },
                                     );
-                                    let le_op = if *inclusive { MirBinOp::LtEq } else { MirBinOp::Lt };
+                                    let le_op = if *inclusive {
+                                        MirBinOp::LtEq
+                                    } else {
+                                        MirBinOp::Lt
+                                    };
                                     let le_cmp = self.emit(
                                         self.types.bool(),
                                         Op::BinOp {
@@ -1416,9 +1441,7 @@ mod tests {
 
     #[test]
     fn test_mir_struct_layout_propagated_from_hir() {
-        let mir = lower_to_mir(
-            "struct Point { x: i32, y: i32 }\nfn main(): return 0",
-        );
+        let mir = lower_to_mir("struct Point { x: i32, y: i32 }\nfn main(): return 0");
         assert!(
             mir.struct_layouts.contains_key("Point"),
             "expected struct layout for Point in MIR module"
@@ -1429,9 +1452,7 @@ mod tests {
 
     #[test]
     fn test_mir_match_guard_produces_conditional_branch() {
-        let mir = lower_to_mir(
-            "fn main() { let x = 42; match x { n if n > 0 => 1, _ => 0 }; }",
-        );
+        let mir = lower_to_mir("fn main() { let x = 42; match x { n if n > 0 => 1, _ => 0 }; }");
         let f = &mir.functions[0];
         let branch_count = f
             .blocks
@@ -1446,9 +1467,7 @@ mod tests {
 
     #[test]
     fn test_mir_or_pattern_generates_multiple_test_blocks() {
-        let mir = lower_to_mir(
-            "fn main() { let x = 42; match x { 1 | 2 | 3 => 10, _ => 20 }; }",
-        );
+        let mir = lower_to_mir("fn main() { let x = 42; match x { 1 | 2 | 3 => 10, _ => 20 }; }");
         let f = &mir.functions[0];
         let branch_count = f
             .blocks
@@ -1463,14 +1482,18 @@ mod tests {
 
     #[test]
     fn test_mir_range_pattern_generates_comparison_chain() {
-        let mir = lower_to_mir(
-            "fn main() { let x = 42; match x { 1..=10 => 100, _ => 200 }; }",
-        );
+        let mir = lower_to_mir("fn main() { let x = 42; match x { 1..=10 => 100, _ => 200 }; }");
         let f = &mir.functions[0];
         let has_and = f.blocks.iter().any(|b| {
-            b.instructions
-                .iter()
-                .any(|i| matches!(&i.op, Op::BinOp { op: MirBinOp::And, .. }))
+            b.instructions.iter().any(|i| {
+                matches!(
+                    &i.op,
+                    Op::BinOp {
+                        op: MirBinOp::And,
+                        ..
+                    }
+                )
+            })
         });
         assert!(
             has_and,
@@ -1522,24 +1545,35 @@ mod tests {
         let res = crate::monomorphize::monomorphize(&mir, &mut mir_lower.types);
         crate::monomorphize::apply_monomorphization(&mut mir, res);
 
-        let has_specialized = mir.functions.iter().any(|f| f.name.starts_with("identity__"));
-        assert!(has_specialized, "expected monomorphized identity function specialization");
+        let has_specialized = mir
+            .functions
+            .iter()
+            .any(|f| f.name.starts_with("identity__"));
+        assert!(
+            has_specialized,
+            "expected monomorphized identity function specialization"
+        );
     }
 
     #[test]
     fn test_mir_try_operator_lowering() {
-        let mir = lower_to_mir(
-            "fn compute(res: i32) -> i32 { return res?; }",
-        );
+        let mir = lower_to_mir("fn compute(res: i32) -> i32 { return res?; }");
         let f = &mir.functions[0];
         let has_tag = f.blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| matches!(&i.op, Op::EnumTag(_)))
+            b.instructions
+                .iter()
+                .any(|i| matches!(&i.op, Op::EnumTag(_)))
         });
         let has_payload = f.blocks.iter().any(|b| {
-            b.instructions.iter().any(|i| matches!(&i.op, Op::EnumPayload { .. }))
+            b.instructions
+                .iter()
+                .any(|i| matches!(&i.op, Op::EnumPayload { .. }))
         });
         assert!(has_tag, "expected EnumTag op for try operator");
-        assert!(has_payload, "expected EnumPayload op for try operator ok unwrapping");
+        assert!(
+            has_payload,
+            "expected EnumPayload op for try operator ok unwrapping"
+        );
     }
 
     #[test]
@@ -1554,6 +1588,9 @@ mod tests {
                 _ => false,
             })
         });
-        assert!(has_call, "expected Op::Call to Point::get_x with receiver as first arg");
+        assert!(
+            has_call,
+            "expected Op::Call to Point::get_x with receiver as first arg"
+        );
     }
 }

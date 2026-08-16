@@ -733,10 +733,22 @@ mod tests {
 
     #[test]
     fn gpu_memory_type_from_str() {
-        assert_eq!(GpuMemoryType::from_str("global"), Some(GpuMemoryType::Global));
-        assert_eq!(GpuMemoryType::from_str("shared"), Some(GpuMemoryType::Shared));
-        assert_eq!(GpuMemoryType::from_str("constant"), Some(GpuMemoryType::Constant));
-        assert_eq!(GpuMemoryType::from_str("const"), Some(GpuMemoryType::Constant));
+        assert_eq!(
+            GpuMemoryType::from_str("global"),
+            Some(GpuMemoryType::Global)
+        );
+        assert_eq!(
+            GpuMemoryType::from_str("shared"),
+            Some(GpuMemoryType::Shared)
+        );
+        assert_eq!(
+            GpuMemoryType::from_str("constant"),
+            Some(GpuMemoryType::Constant)
+        );
+        assert_eq!(
+            GpuMemoryType::from_str("const"),
+            Some(GpuMemoryType::Constant)
+        );
         assert_eq!(GpuMemoryType::from_str("local"), Some(GpuMemoryType::Local));
         assert_eq!(GpuMemoryType::from_str("unknown"), None);
     }
@@ -751,9 +763,18 @@ mod tests {
 
     #[test]
     fn gpu_memory_type_llvm_suffix() {
-        assert_eq!(GpuMemoryType::Global.llvm_addrspace_suffix(), " addrspace(1)");
-        assert_eq!(GpuMemoryType::Shared.llvm_addrspace_suffix(), " addrspace(3)");
-        assert_eq!(GpuMemoryType::Constant.llvm_addrspace_suffix(), " addrspace(4)");
+        assert_eq!(
+            GpuMemoryType::Global.llvm_addrspace_suffix(),
+            " addrspace(1)"
+        );
+        assert_eq!(
+            GpuMemoryType::Shared.llvm_addrspace_suffix(),
+            " addrspace(3)"
+        );
+        assert_eq!(
+            GpuMemoryType::Constant.llvm_addrspace_suffix(),
+            " addrspace(4)"
+        );
     }
 
     #[test]

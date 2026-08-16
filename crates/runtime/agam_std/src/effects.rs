@@ -302,15 +302,14 @@ fn net_recv(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
             operation: "recv".into(),
             message: e.to_string(),
         })?;
-    Ok(EffectValue::String(String::from_utf8_lossy(&bytes).to_string()))
+    Ok(EffectValue::String(
+        String::from_utf8_lossy(&bytes).to_string(),
+    ))
 }
 
 fn net_close(args: &[EffectValue]) -> Result<EffectValue, EffectError> {
     let id = require_int_arg("Network", "close", args, 0)?;
-    let closed = crate::net::global_net_manager()
-        .lock()
-        .unwrap()
-        .close(id);
+    let closed = crate::net::global_net_manager().lock().unwrap().close(id);
     Ok(EffectValue::Bool(closed))
 }
 

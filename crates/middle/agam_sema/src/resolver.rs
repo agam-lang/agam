@@ -180,17 +180,13 @@ impl Resolver {
                         );
                     }
                 } else {
-                    let name = u
-                        .alias
-                        .as_ref()
-                        .map(|a| a.name.clone())
-                        .unwrap_or_else(|| {
-                            u.path
-                                .segments
-                                .last()
-                                .map(|s| s.name.clone())
-                                .unwrap_or_default()
-                        });
+                    let name = u.alias.as_ref().map(|a| a.name.clone()).unwrap_or_else(|| {
+                        u.path
+                            .segments
+                            .last()
+                            .map(|s| s.name.clone())
+                            .unwrap_or_default()
+                    });
                     if !name.is_empty() {
                         let _ = self.scopes.declare(name, SymbolKind::Module, u.span);
                     }
@@ -940,12 +936,18 @@ fn main():
 
     #[test]
     fn test_resolve_selective_use_decl() {
-        let r = parse_and_resolve("import std.math::{sin, cos as cosine};\nfn test_use(): return sin + cosine");
+        let r = parse_and_resolve(
+            "import std.math::{sin, cos as cosine};\nfn test_use(): return sin + cosine",
+        );
         let undeclared: Vec<_> = r
             .errors
             .iter()
             .filter(|e| e.message.contains("undeclared"))
             .collect();
-        assert!(undeclared.is_empty(), "expected imported symbols sin and cosine to resolve: {:?}", undeclared);
+        assert!(
+            undeclared.is_empty(),
+            "expected imported symbols sin and cosine to resolve: {:?}",
+            undeclared
+        );
     }
 }

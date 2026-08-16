@@ -2397,9 +2397,7 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                         signed: false,
                     })
                 }
-                Op::GetIndex { object, .. } => {
-                    value_type(&layout, *object)
-                }
+                Op::GetIndex { object, .. } => value_type(&layout, *object),
                 Op::Phi(entries) => {
                     if let Some(slots) = merged_enum_payload_slots(&layout, entries) {
                         layout.enum_payload_slots.insert(instr.result, slots);

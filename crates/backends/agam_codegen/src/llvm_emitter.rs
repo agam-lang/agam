@@ -21,9 +21,9 @@ use agam_mir::analysis::{
 };
 use agam_mir::ir::*;
 use agam_profile::{
-    specialization_feedback_signature, CallCacheSpecializationPlan, StableScalarValueProfile,
+    CallCacheSpecializationPlan, StableScalarValueProfile, specialization_feedback_signature,
 };
-use agam_sema::types::{builtin_type_by_id, FloatSize, IntSize, Type};
+use agam_sema::types::{FloatSize, IntSize, Type, builtin_type_by_id};
 
 use crate::gpu_emitter::emit_host_cuda_declarations;
 
@@ -810,7 +810,11 @@ fn supports_call_cache_type(ty: LlvmType) -> bool {
     match ty {
         LlvmType::Int(int_ty) => int_ty.bits <= 64,
         LlvmType::Float(LlvmFloatType::F32 | LlvmFloatType::F64) | LlvmType::Bool => true,
-        LlvmType::Str | LlvmType::OpaquePtr | LlvmType::Enum | LlvmType::Struct | LlvmType::StructField => false,
+        LlvmType::Str
+        | LlvmType::OpaquePtr
+        | LlvmType::Enum
+        | LlvmType::Struct
+        | LlvmType::StructField => false,
     }
 }
 
@@ -918,12 +922,10 @@ fn module_uses_enum_values(module: &MirModule) -> bool {
 fn module_uses_struct_values(module: &MirModule) -> bool {
     module.functions.iter().any(|func| {
         func.blocks.iter().any(|block| {
-            block.instructions.iter().any(|instr| {
-                matches!(
-                    &instr.op,
-                    Op::StructConstruct { .. } | Op::GetField { .. }
-                )
-            })
+            block
+                .instructions
+                .iter()
+                .any(|instr| matches!(&instr.op, Op::StructConstruct { .. } | Op::GetField { .. }))
         })
     })
 }
@@ -2458,12 +2460,7 @@ impl LlvmEmitter {
                 let field_index = self
                     .struct_layouts
                     .values()
-                    .find_map(|layout| {
-                        layout
-                            .fields
-                            .iter()
-                            .position(|f| f == field)
-                    })
+                    .find_map(|layout| layout.fields.iter().position(|f| f == field))
                     .unwrap_or(0);
                 if field_index >= 8 {
                     return Err(format!(
@@ -3285,11 +3282,7 @@ impl LlvmEmitter {
             LlvmType::Int(int_ty) => {
                 let temp = format!("%tmp{}", self.fresh_temp_id());
                 let opcode = if int_ty.bits < 64 {
-                    if int_ty.signed {
-                        "sext"
-                    } else {
-                        "zext"
-                    }
+                    if int_ty.signed { "sext" } else { "zext" }
                 } else {
                     "trunc"
                 };
@@ -3327,7 +3320,9 @@ impl LlvmEmitter {
                 temp
             }
             LlvmType::Enum | LlvmType::Struct | LlvmType::StructField => {
-                return Err("nested aggregate payloads are not implemented in the LLVM backend".into());
+                return Err(
+                    "nested aggregate payloads are not implemented in the LLVM backend".into(),
+                );
             }
         };
         Ok(ValueRef::new(
@@ -3390,7 +3385,9 @@ impl LlvmEmitter {
                 temp
             }
             LlvmType::Enum | LlvmType::Struct | LlvmType::StructField => {
-                return Err("nested aggregate payloads are not implemented in the LLVM backend".into());
+                return Err(
+                    "nested aggregate payloads are not implemented in the LLVM backend".into(),
+                );
             }
         };
         Ok(ValueRef::new(target, repr, default_sign_for_type(target)))
@@ -6662,8 +6659,9 @@ mod tests {
 
     #[test]
     fn test_emit_enum_constructor_uses_tagged_union_layout() {
-        let llvm =
-            compile_to_llvm_unoptimized("enum Option { Some(i32), None }\nfn main(): let value = Some(42)");
+        let llvm = compile_to_llvm_unoptimized(
+            "enum Option { Some(i32), None }\nfn main(): let value = Some(42)",
+        );
         assert!(llvm.contains("%AgamEnum = type { i32, [8 x i64] }"));
         assert!(llvm.contains("insertvalue %AgamEnum undef, i32 0, 0"));
         assert!(llvm.contains("to i64"));

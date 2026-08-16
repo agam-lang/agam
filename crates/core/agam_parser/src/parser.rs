@@ -11,7 +11,7 @@ use agam_ast::stmt::*;
 use agam_ast::types::*;
 use agam_ast::*;
 use agam_errors::span::{SourceId, Span};
-use agam_lexer::{tokenize, Token, TokenKind};
+use agam_lexer::{Token, TokenKind, tokenize};
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -1062,11 +1062,12 @@ impl Parser {
             TokenKind::FStringLiteral => {
                 self.advance();
                 let lexeme = &tok.lexeme;
-                let inner = if lexeme.starts_with("f\"") && lexeme.ends_with('"') && lexeme.len() >= 3 {
-                    &lexeme[2..lexeme.len() - 1]
-                } else {
-                    ""
-                };
+                let inner =
+                    if lexeme.starts_with("f\"") && lexeme.ends_with('"') && lexeme.len() >= 3 {
+                        &lexeme[2..lexeme.len() - 1]
+                    } else {
+                        ""
+                    };
                 let mut parts = Vec::new();
                 let mut current_lit = String::new();
                 let mut chars = inner.chars().peekable();
@@ -2317,7 +2318,10 @@ mod tests {
             assert_eq!(items[0].name.name, "sin");
             assert_eq!(items[0].alias, None);
             assert_eq!(items[1].name.name, "cos");
-            assert_eq!(items[1].alias.as_ref().map(|a| a.name.as_str()), Some("cosine"));
+            assert_eq!(
+                items[1].alias.as_ref().map(|a| a.name.as_str()),
+                Some("cosine")
+            );
         } else {
             panic!("expected Use declaration");
         }

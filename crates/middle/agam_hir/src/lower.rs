@@ -15,10 +15,10 @@ use agam_ast::types::{TypeExpr, TypeExprKind};
 use agam_ast::*;
 use agam_sema::consteval::ConstEvaluator;
 use agam_sema::gpu::{
-    resolve_gpu_builtin_expr, resolve_gpu_builtin_member, resolve_gpu_memory_annotation,
-    GpuBuiltin, GpuKernelParamAbi,
+    GpuBuiltin, GpuKernelParamAbi, resolve_gpu_builtin_expr, resolve_gpu_builtin_member,
+    resolve_gpu_memory_annotation,
 };
-use agam_sema::types::{builtin_type_id_for_name, FloatSize, IntSize, Type, TypeStore};
+use agam_sema::types::{FloatSize, IntSize, Type, TypeStore, builtin_type_id_for_name};
 
 use agam_sema::target::TargetProfile;
 
@@ -780,7 +780,10 @@ impl HirLowering {
 
             ExprKind::Try(inner) => {
                 let hir_inner = self.lower_expr(inner);
-                (self.types.fresh_var(), HirExprKind::Try(Box::new(hir_inner)))
+                (
+                    self.types.fresh_var(),
+                    HirExprKind::Try(Box::new(hir_inner)),
+                )
             }
 
             // Fallback for unhandled expressions
@@ -796,7 +799,9 @@ impl HirLowering {
                 if let Some(segment) = path.segments.last() {
                     if self.active_generics.contains(&segment.name) {
                         self.types.insert(Type::TypeParam(segment.name.clone()))
-                    } else if let Some(builtin) = builtin_type_id_for_name(&self.types, &segment.name) {
+                    } else if let Some(builtin) =
+                        builtin_type_id_for_name(&self.types, &segment.name)
+                    {
                         builtin
                     } else {
                         self.types.fresh_var()
@@ -812,10 +817,7 @@ impl HirLowering {
                     kind: agam_ast::types::TypeExprKind::Named(base.clone()),
                     mode: ty.mode,
                 });
-                let arg_ids = args
-                    .iter()
-                    .map(|arg| self.resolve_type_expr(arg))
-                    .collect();
+                let arg_ids = args.iter().map(|arg| self.resolve_type_expr(arg)).collect();
                 self.types.insert(Type::Generic {
                     base: base_id,
                     args: arg_ids,
@@ -1072,8 +1074,7 @@ impl HirLowering {
                 }
             }
             PatternKind::Or(pats) => {
-                let lowered: Vec<HirPattern> =
-                    pats.iter().map(|p| self.lower_pattern(p)).collect();
+                let lowered: Vec<HirPattern> = pats.iter().map(|p| self.lower_pattern(p)).collect();
                 if lowered.len() == 1 {
                     lowered.into_iter().next().unwrap_or(HirPattern::Wildcard)
                 } else {
@@ -1584,9 +1585,8 @@ mod tests {
 
     #[test]
     fn test_generic_function_lowering() {
-        let (hir, diagnostics) = lower_source_with_diagnostics(
-            "fn identity<T>(x: T) -> T { return x; }",
-        );
+        let (hir, diagnostics) =
+            lower_source_with_diagnostics("fn identity<T>(x: T) -> T { return x; }");
         assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
         let f = &hir.functions[0];
         assert_eq!(f.generics.len(), 1);
@@ -1595,9 +1595,8 @@ mod tests {
 
     #[test]
     fn test_try_operator_lowering() {
-        let (hir, diagnostics) = lower_source_with_diagnostics(
-            "fn parse_val(res: i32) -> i32 { return res?; }",
-        );
+        let (hir, diagnostics) =
+            lower_source_with_diagnostics("fn parse_val(res: i32) -> i32 { return res?; }");
         assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
         let f = &hir.functions[0];
         match &f.body.stmts[0] {
@@ -1619,7 +1618,10 @@ mod tests {
         );
         assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
         let has_method = hir.functions.iter().any(|f| f.name == "Point::magnitude");
-        assert!(has_method, "expected lowered function Point::magnitude from impl block");
+        assert!(
+            has_method,
+            "expected lowered function Point::magnitude from impl block"
+        );
     }
 
     #[test]
