@@ -721,4 +721,76 @@ fn test_higher_order() -> bool:
         assert_eq!(summary.total(), 1);
         assert_eq!(summary.passed(), 1);
     }
+
+    #[test]
+    fn run_source_floating_point_math_and_conversions() {
+        let summary = run_source(
+            r#"
+fn compute_area(radius: f64) -> f64:
+    let pi: f64 = 3.14159
+    return pi * radius * radius
+
+@test
+fn test_float_math() -> bool:
+    let area = compute_area(2.0)
+    # 3.14159 * 4.0 = 12.56636
+    return area > 12.56 && area < 12.57
+"#,
+            "memory://floats.agam",
+        )
+        .expect("run float tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_gcd_euclidean_algorithm() {
+        let summary = run_source(
+            r#"
+fn gcd(a: i64, b: i64) -> i64:
+    if b == 0:
+        return a
+    return gcd(b, a % b)
+
+@test
+fn test_gcd() -> bool:
+    let g1 = gcd(48, 18)  # 6
+    let g2 = gcd(101, 10) # 1
+    let g3 = gcd(54, 24)  # 6
+    return g1 == 6 && g2 == 1 && g3 == 6
+"#,
+            "memory://gcd.agam",
+        )
+        .expect("run gcd tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_multi_return_and_conditional_branching() {
+        let summary = run_source(
+            r#"
+fn sign_check(n: i64) -> i64:
+    if n > 0:
+        return 1
+    if n < 0:
+        return -1
+    return 0
+
+@test
+fn test_sign_check() -> bool:
+    let pos = sign_check(42)
+    let neg = sign_check(-99)
+    let zero = sign_check(0)
+    return pos == 1 && neg == -1 && zero == 0
+"#,
+            "memory://sign_check.agam",
+        )
+        .expect("run sign check tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
 }
