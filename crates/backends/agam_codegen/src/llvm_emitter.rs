@@ -97,8 +97,7 @@ enum LlvmType {
     OpaquePtr,
     Enum,
     Struct,
-    /// A struct field access result — we know it came from a struct, but
-    /// the decoded scalar type is tracked via the instruction's TypeId.
+    #[allow(dead_code)]
     StructField,
 }
 
@@ -2106,7 +2105,7 @@ impl LlvmEmitter {
         let mut fn_attr_suffix = format_function_attrs(attrs);
         if layout.return_ty.float_spec().is_some()
             || func.params.iter().any(|param| {
-                infer_llvm_type_from_type_id(param.ty).map_or(false, |t| t.float_spec().is_some())
+                infer_llvm_type_from_type_id(param.ty).is_some_and(|t| t.float_spec().is_some())
             })
         {
             if fn_attr_suffix.is_empty() {

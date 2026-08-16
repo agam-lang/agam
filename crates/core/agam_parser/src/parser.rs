@@ -379,7 +379,12 @@ impl Parser {
         self.eat(TokenKind::Colon);
         self.skip_newlines();
         let mut fields = Vec::new();
-        self.eat(TokenKind::LBrace);
+        let has_brace = self.eat(TokenKind::LBrace);
+        let has_indent = if !has_brace {
+            self.eat(TokenKind::Indent)
+        } else {
+            false
+        };
         // Parse until we hit something that isn't a field
         self.skip_newlines();
         while self.peek_kind() == TokenKind::Identifier || self.peek_kind() == TokenKind::Pub {
@@ -403,11 +408,19 @@ impl Parser {
             self.eat(TokenKind::Comma);
             self.eat(TokenKind::Semicolon);
             self.skip_newlines();
-            if self.peek_kind() == TokenKind::RBrace {
+            if has_brace && self.peek_kind() == TokenKind::RBrace {
+                break;
+            }
+            if has_indent && self.peek_kind() == TokenKind::Dedent {
                 break;
             }
         }
-        self.eat(TokenKind::RBrace);
+        if has_brace {
+            self.eat(TokenKind::RBrace);
+        }
+        if has_indent {
+            self.eat(TokenKind::Dedent);
+        }
         Ok(StructDecl {
             name,
             generics,
@@ -425,7 +438,12 @@ impl Parser {
         let generics = self.parse_generic_params()?;
         self.eat(TokenKind::Colon);
         self.skip_newlines();
-        self.eat(TokenKind::LBrace);
+        let has_brace = self.eat(TokenKind::LBrace);
+        let has_indent = if !has_brace {
+            self.eat(TokenKind::Indent)
+        } else {
+            false
+        };
         self.skip_newlines();
         let mut variants = Vec::new();
         while self.peek_kind() == TokenKind::Identifier {
@@ -477,8 +495,19 @@ impl Parser {
             });
             self.eat(TokenKind::Comma);
             self.skip_newlines();
+            if has_brace && self.peek_kind() == TokenKind::RBrace {
+                break;
+            }
+            if has_indent && self.peek_kind() == TokenKind::Dedent {
+                break;
+            }
         }
-        self.eat(TokenKind::RBrace);
+        if has_brace {
+            self.eat(TokenKind::RBrace);
+        }
+        if has_indent {
+            self.eat(TokenKind::Dedent);
+        }
         Ok(EnumDecl {
             name,
             generics,
@@ -495,15 +524,31 @@ impl Parser {
         let generics = self.parse_generic_params()?;
         self.eat(TokenKind::Colon);
         self.skip_newlines();
-        self.eat(TokenKind::LBrace);
+        let has_brace = self.eat(TokenKind::LBrace);
+        let has_indent = if !has_brace {
+            self.eat(TokenKind::Indent)
+        } else {
+            false
+        };
         self.skip_newlines();
         let mut items = Vec::new();
         while self.peek_kind() == TokenKind::Fn || self.peek_kind() == TokenKind::Async {
             let f = self.parse_function_decl(Visibility::Public, vec![])?;
             items.push(TraitItem::Method(f));
             self.skip_newlines();
+            if has_brace && self.peek_kind() == TokenKind::RBrace {
+                break;
+            }
+            if has_indent && self.peek_kind() == TokenKind::Dedent {
+                break;
+            }
         }
-        self.eat(TokenKind::RBrace);
+        if has_brace {
+            self.eat(TokenKind::RBrace);
+        }
+        if has_indent {
+            self.eat(TokenKind::Dedent);
+        }
         Ok(TraitDecl {
             name,
             generics,
@@ -520,7 +565,12 @@ impl Parser {
         let target = self.parse_type_expr()?;
         self.eat(TokenKind::Colon);
         self.skip_newlines();
-        self.eat(TokenKind::LBrace);
+        let has_brace = self.eat(TokenKind::LBrace);
+        let has_indent = if !has_brace {
+            self.eat(TokenKind::Indent)
+        } else {
+            false
+        };
         self.skip_newlines();
         let mut items = Vec::new();
         while self.peek_kind() == TokenKind::Fn
@@ -529,8 +579,19 @@ impl Parser {
         {
             items.push(self.parse_declaration()?);
             self.skip_newlines();
+            if has_brace && self.peek_kind() == TokenKind::RBrace {
+                break;
+            }
+            if has_indent && self.peek_kind() == TokenKind::Dedent {
+                break;
+            }
         }
-        self.eat(TokenKind::RBrace);
+        if has_brace {
+            self.eat(TokenKind::RBrace);
+        }
+        if has_indent {
+            self.eat(TokenKind::Dedent);
+        }
         Ok(ImplDecl {
             generics,
             trait_path: None,
@@ -1083,7 +1144,7 @@ impl Parser {
                         }
                         let mut expr_str = String::new();
                         let mut brace_depth = 1;
-                        while let Some(inner_c) = chars.next() {
+                        for inner_c in chars.by_ref() {
                             if inner_c == '{' {
                                 brace_depth += 1;
                                 expr_str.push('{');
@@ -1140,12 +1201,71 @@ impl Parser {
             }
             TokenKind::Identifier | TokenKind::Self_ => {
                 self.advance();
-                let ident = Ident::new(&tok.lexeme, tok.span);
-                Ok(Expr {
-                    id,
-                    span: tok.span,
-                    kind: ExprKind::Identifier(ident),
-                })
+                let mut segments = vec![Ident::new(&tok.lexeme, tok.span)];
+                while self.eat(TokenKind::ColonColon) {
+                    let next = self.expect(TokenKind::Identifier)?;
+                    segments.push(Ident::new(&next.lexeme, next.span));
+                }
+                let span = Span::new(
+                    tok.span.source_id,
+                    tok.span.start,
+                    segments.last().unwrap().span.end,
+                );
+                let path = Path {
+                    segments: segments.clone(),
+                    span,
+                };
+
+                // Struct literal: Path { field: expr, ... }
+                if self.peek_kind() == TokenKind::LBrace
+                    && (self.peek_at(1) == TokenKind::Identifier
+                        || self.peek_at(1) == TokenKind::RBrace)
+                    && (self.peek_at(2) == TokenKind::Colon || self.peek_at(1) == TokenKind::RBrace)
+                {
+                    self.advance(); // {
+                    self.skip_newlines();
+                    let mut fields = Vec::new();
+                    while self.peek_kind() == TokenKind::Identifier {
+                        let fname_tok = self.advance().clone();
+                        let fname = Ident::new(&fname_tok.lexeme, fname_tok.span);
+                        let value = if self.eat(TokenKind::Colon) {
+                            self.parse_expression(0)?
+                        } else {
+                            Expr {
+                                id: self.node_id(),
+                                span: fname_tok.span,
+                                kind: ExprKind::Identifier(fname.clone()),
+                            }
+                        };
+                        fields.push(FieldInit {
+                            name: fname,
+                            value,
+                            span: fname_tok.span,
+                        });
+                        self.eat(TokenKind::Comma);
+                        self.skip_newlines();
+                    }
+                    let end = self.expect(TokenKind::RBrace)?.span;
+                    return Ok(Expr {
+                        id,
+                        span: Span::new(tok.span.source_id, tok.span.start, end.end),
+                        kind: ExprKind::StructLiteral { path, fields },
+                    });
+                }
+
+                if segments.len() == 1 {
+                    Ok(Expr {
+                        id,
+                        span: tok.span,
+                        kind: ExprKind::Identifier(segments.pop().unwrap()),
+                    })
+                } else {
+                    Ok(Expr {
+                        id,
+                        span,
+                        kind: ExprKind::PathExpr(path),
+                    })
+                }
             }
             TokenKind::Pipe => {
                 self.advance();

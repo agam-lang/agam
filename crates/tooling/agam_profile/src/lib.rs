@@ -279,9 +279,11 @@ where
             reasons.push("moderate reuse distance".into());
         }
     }
-    if observation.total_calls > 0 {
-        let hit_per_thousand =
-            observation.total_hits.saturating_mul(1000) / observation.total_calls;
+    if let Some(hit_per_thousand) = observation
+        .total_hits
+        .saturating_mul(1000)
+        .checked_div(observation.total_calls)
+    {
         if hit_per_thousand >= ADAPTIVE_ADMISSION_STRONG_HIT_RATE_PER_THOUSAND {
             payoff_score += ADAPTIVE_ADMISSION_STRONG_HIT_RATE_SCORE;
             reasons.push("strong hit rate".into());
@@ -427,11 +429,11 @@ pub fn recommended_optimize_functions(profile: &PersistentCallCacheProfile) -> V
         .iter()
         .filter(|function| function.total_calls >= 16)
         .filter(|function| {
-            let hit_rate_per_thousand = if function.total_calls == 0 {
-                0
-            } else {
-                function.total_hits.saturating_mul(1000) / function.total_calls
-            };
+            let hit_rate_per_thousand = function
+                .total_hits
+                .saturating_mul(1000)
+                .checked_div(function.total_calls)
+                .unwrap_or(0);
             let reuse_is_favorable = matches!(
                 reuse_distance_signal(function),
                 Some(ReuseDistanceSignal::Favorable)
@@ -823,15 +825,8 @@ fn weighted_avg_option(
     match (left, right) {
         (Some(left_value), Some(right_value)) => {
             let total_weight = left_weight.saturating_add(right_weight);
-            if total_weight == 0 {
-                None
-            } else {
-                Some(
-                    (left_value.saturating_mul(left_weight)
-                        + right_value.saturating_mul(right_weight))
-                        / total_weight,
-                )
-            }
+            (left_value.saturating_mul(left_weight) + right_value.saturating_mul(right_weight))
+                .checked_div(total_weight)
         }
         (Some(value), None) | (None, Some(value)) => Some(value),
         (None, None) => None,

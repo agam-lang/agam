@@ -106,19 +106,19 @@ pub fn to_sarif(diagnostics: &[Diagnostic], source_file: Option<&SourceFile>) ->
     let mut seen_rules = std::collections::HashSet::new();
 
     for diag in diagnostics {
-        let rule_id = diag.code.map(|c| c.0.to_string());
-        if let Some(ref code) = rule_id {
-            if seen_rules.insert(code.clone()) {
+        let rule_id = diag.code.map(|c| {
+            if seen_rules.insert(c.0) {
                 rules.push(SarifRule {
-                    id: code.clone(),
-                    name: format!("Agam{}", code),
+                    id: c.0.to_string(),
+                    name: format!("Agam{}", c.0),
                     short_description: SarifMessage {
                         text: diag.message.clone(),
                     },
-                    help_uri: Some(format!("https://agam-lang.org/errors/{}", code)),
+                    help_uri: Some(format!("https://agam-lang.org/errors/{}", c.0)),
                 });
             }
-        }
+            c.0.to_string()
+        });
 
         let level = match diag.level {
             DiagnosticLevel::Error | DiagnosticLevel::Ice => "error".to_string(),

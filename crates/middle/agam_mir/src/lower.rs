@@ -22,6 +22,8 @@ pub struct MirLowering {
     variant_tags: std::collections::HashMap<String, u32>,
     /// Qualified method names mapped from short names (e.g. "magnitude" -> "Point::magnitude").
     known_methods: std::collections::HashMap<String, String>,
+    /// Local variable aliases tracking function and lambda assignments (e.g. "f" -> "__lambda_0").
+    var_aliases: std::collections::HashMap<String, String>,
 }
 
 impl MirLowering {
@@ -35,6 +37,7 @@ impl MirLowering {
             types: TypeStore::new(),
             variant_tags: std::collections::HashMap::new(),
             known_methods: std::collections::HashMap::new(),
+            var_aliases: std::collections::HashMap::new(),
         }
     }
 
@@ -48,6 +51,7 @@ impl MirLowering {
             types,
             variant_tags: std::collections::HashMap::new(),
             known_methods: std::collections::HashMap::new(),
+            var_aliases: std::collections::HashMap::new(),
         }
     }
 
@@ -89,11 +93,11 @@ impl MirLowering {
 
         self.known_methods.clear();
         for f in &hir.functions {
-            if f.name.contains("::") {
-                if let Some(short_name) = f.name.split("::").last() {
-                    self.known_methods
-                        .insert(short_name.to_string(), f.name.clone());
-                }
+            if f.name.contains("::")
+                && let Some(short_name) = f.name.split("::").last()
+            {
+                self.known_methods
+                    .insert(short_name.to_string(), f.name.clone());
             }
         }
 
@@ -148,6 +152,7 @@ impl MirLowering {
     fn lower_function(&mut self, func: &HirFunction) -> MirFunction {
         self.blocks.clear();
         self.current_instrs.clear();
+        self.var_aliases.clear();
 
         let entry = self.fresh_block();
         self.current_block = entry;
@@ -213,6 +218,14 @@ impl MirLowering {
                 );
                 if let Some(val_expr) = value {
                     let val = self.lower_expr(val_expr);
+                    if let HirExprKind::Var(target) = &val_expr.kind {
+                        let resolved = self
+                            .var_aliases
+                            .get(target)
+                            .cloned()
+                            .unwrap_or_else(|| target.clone());
+                        self.var_aliases.insert(name.clone(), resolved);
+                    }
                     self.emit(
                         *ty,
                         Op::StoreLocal {
@@ -344,7 +357,11 @@ impl MirLowering {
                     );
                 }
                 let callee_name = match &callee.kind {
-                    HirExprKind::Var(name) => name.clone(),
+                    HirExprKind::Var(name) => self
+                        .var_aliases
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| name.clone()),
                     _ => "__indirect_call".into(),
                 };
                 self.emit(
@@ -693,10 +710,10 @@ impl MirLowering {
                     }
                     HirPattern::Or(pats) => {
                         for pat in pats {
-                            if let HirPattern::Variant { name, .. } = pat {
-                                if let Some(tag) = self.variant_tags.get(name) {
-                                    arm_tags.push(*tag as i64);
-                                }
+                            if let HirPattern::Variant { name, .. } = pat
+                                && let Some(tag) = self.variant_tags.get(name)
+                            {
+                                arm_tags.push(*tag as i64);
                             }
                         }
                     }

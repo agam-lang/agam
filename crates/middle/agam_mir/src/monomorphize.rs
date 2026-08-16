@@ -113,11 +113,7 @@ impl MonomorphGraph {
 
         for node in &self.nodes {
             if !visited.contains(node) {
-                if let Err(cycle) =
-                    self.dfs_check(node, max_depth, &mut visited, &mut in_stack, &mut path)
-                {
-                    return Err(cycle);
-                }
+                self.dfs_check(node, max_depth, &mut visited, &mut in_stack, &mut path)?;
             }
         }
         Ok(())

@@ -74,6 +74,7 @@ impl GpuMemoryType {
     }
 
     /// Parse from a string annotation value.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "global" => Some(GpuMemoryType::Global),
@@ -82,6 +83,14 @@ impl GpuMemoryType {
             "local" => Some(GpuMemoryType::Local),
             _ => None,
         }
+    }
+}
+
+impl std::str::FromStr for GpuMemoryType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::from_str(s).ok_or(())
     }
 }
 

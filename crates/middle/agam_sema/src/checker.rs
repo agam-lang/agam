@@ -341,8 +341,7 @@ impl TypeChecker {
                 let arg_tys: Vec<TypeId> = args.iter().map(|arg| self.infer_expr(arg)).collect();
                 if let Some(builtin) = resolve_gpu_builtin_expr(callee) {
                     let expected_arg_tys = builtin.arg_types(&self.types);
-                    for (expected, actual) in expected_arg_tys.into_iter().zip(arg_tys.into_iter())
-                    {
+                    for (expected, actual) in expected_arg_tys.into_iter().zip(arg_tys) {
                         self.engine.constrain(
                             expected,
                             actual,
@@ -360,8 +359,7 @@ impl TypeChecker {
                     && let Some(builtin) = resolve_gpu_builtin_member(object, &method.name)
                 {
                     let expected_arg_tys = builtin.arg_types(&self.types);
-                    for (expected, actual) in expected_arg_tys.into_iter().zip(arg_tys.into_iter())
-                    {
+                    for (expected, actual) in expected_arg_tys.into_iter().zip(arg_tys) {
                         self.engine.constrain(
                             expected,
                             actual,

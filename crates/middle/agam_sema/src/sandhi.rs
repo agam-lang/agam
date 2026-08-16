@@ -129,10 +129,10 @@ impl SandhiGraph {
             }
 
             while let Some(current) = stack.pop() {
-                if visited.insert(current) {
-                    if let Some(parent) = self.nodes.get(&current) {
-                        stack.extend(parent.direct_supertraits.iter().copied());
-                    }
+                if visited.insert(current)
+                    && let Some(parent) = self.nodes.get(&current)
+                {
+                    stack.extend(parent.direct_supertraits.iter().copied());
                 }
             }
 
@@ -264,7 +264,7 @@ impl SandhiGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::{ImplEntry, MethodSig, TraitDef};
+    use crate::traits::{ImplEntry, TraitDef};
     use agam_errors::Span;
 
     #[test]

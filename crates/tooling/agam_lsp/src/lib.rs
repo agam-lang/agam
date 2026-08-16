@@ -28,10 +28,7 @@ pub fn run_stdio() -> Result<(), String> {
     let mut writer = stdout.lock();
     let mut state = ServerState::default();
 
-    loop {
-        let Some(payload) = read_message(&mut reader)? else {
-            break;
-        };
+    while let Some(payload) = read_message(&mut reader)? {
         let message: Value =
             serde_json::from_slice(&payload).map_err(|e| format!("invalid LSP payload: {e}"))?;
         let should_exit = message.get("method").and_then(Value::as_str) == Some("exit");

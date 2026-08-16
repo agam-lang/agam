@@ -1,7 +1,7 @@
 //! Shared compiler orchestration between the CLI and other tooling.
 
 use std::collections::{BTreeSet, HashSet};
-use std::path::PathBuf;
+use std::path::Path;
 
 use agam_ast::decl::DeclKind;
 use agam_errors::{Diagnostic, DiagnosticEmitter, Label, SourceFile, SourceId, Span};
@@ -125,7 +125,7 @@ pub struct WarmState {
     pub mir: Option<agam_mir::ir::MirModule>,
 }
 
-pub fn parse_source_file(path: &PathBuf, verbose: bool) -> Result<ParsedSource, String> {
+pub fn parse_source_file(path: &Path, verbose: bool) -> Result<ParsedSource, String> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("could not read `{}`: {}", path.display(), e))?;
     let source_file = SourceFile::new(
@@ -172,7 +172,7 @@ pub fn parse_source_file(path: &PathBuf, verbose: bool) -> Result<ParsedSource, 
 }
 
 pub fn semantic_check_parsed_source(
-    path: &PathBuf,
+    path: &Path,
     parsed: &ParsedSource,
     verbose: bool,
 ) -> Result<(), String> {
@@ -325,7 +325,7 @@ pub fn lower_module_to_hir_and_optimized_mir(
         }
     }
 
-    let purity = agam_mir::opt::escape::CalleePurityInfo::default();
+    let purity = agam_mir::opt::escape::CalleePurityInfo;
     let (escape_results, promo_results) = agam_mir::opt::run_escape_and_promote(&mut mir, &purity);
 
     if verbose {
@@ -357,7 +357,7 @@ pub fn lower_module_to_hir_and_optimized_mir(
 }
 
 pub fn build_warm_state(
-    path: &PathBuf,
+    path: &Path,
     parsed: ParsedSource,
     verbose: bool,
 ) -> Result<WarmState, String> {
@@ -376,7 +376,7 @@ pub fn build_warm_state(
     })
 }
 
-pub fn compile_file_with_warm_state(path: &PathBuf, verbose: bool) -> Result<WarmState, String> {
+pub fn compile_file_with_warm_state(path: &Path, verbose: bool) -> Result<WarmState, String> {
     let parsed = parse_source_file(path, verbose)?;
     build_warm_state(path, parsed, verbose)
 }
@@ -390,7 +390,7 @@ pub fn lower_parsed_to_optimized_mir(
 }
 
 pub fn lower_to_optimized_mir(
-    path: &PathBuf,
+    path: &Path,
     verbose: bool,
 ) -> Result<(agam_mir::ir::MirModule, SourceFeatureFlags), String> {
     let parsed = parse_source_file(path, verbose)?;

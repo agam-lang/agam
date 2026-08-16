@@ -3123,19 +3123,19 @@ fn validate_llvm_target_config(tuning: &ReleaseTuning) -> Result<(), String> {
         );
     }
     match target_config.platform {
-        LlvmTargetPlatform::Android if target_config.target_triple.is_some() => {
-            if target_config.sysroot.is_none() {
-                return Err(format!(
-                    "Android LLVM targets require a sysroot; set `{LLVM_SYSROOT_ENV}` or `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT`"
-                ));
-            }
+        LlvmTargetPlatform::Android
+            if target_config.target_triple.is_some() && target_config.sysroot.is_none() =>
+        {
+            return Err(format!(
+                "Android LLVM targets require a sysroot; set `{LLVM_SYSROOT_ENV}` or `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT`"
+            ));
         }
-        LlvmTargetPlatform::Ios if target_config.target_triple.is_some() => {
-            if target_config.sdk_root.is_none() {
-                return Err(format!(
-                    "iOS LLVM targets require an Apple SDK root; set `{LLVM_SDKROOT_ENV}` or `SDKROOT`"
-                ));
-            }
+        LlvmTargetPlatform::Ios
+            if target_config.target_triple.is_some() && target_config.sdk_root.is_none() =>
+        {
+            return Err(format!(
+                "iOS LLVM targets require an Apple SDK root; set `{LLVM_SDKROOT_ENV}` or `SDKROOT`"
+            ));
         }
         _ => {}
     }

@@ -138,7 +138,7 @@ impl HirLowering {
                 _ => {}
             }
         }
-        functions.extend(self.extra_functions.drain(..));
+        functions.append(&mut self.extra_functions);
         HirModule {
             functions,
             enum_layouts,

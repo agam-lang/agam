@@ -30,6 +30,12 @@ pub struct NetworkManager {
     udp_sockets: HashMap<i64, UdpSocket>,
 }
 
+impl Default for NetworkManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NetworkManager {
     pub fn new() -> Self {
         Self {

@@ -330,16 +330,16 @@ fn kernel_param_type(param: &MirParam) -> String {
         abi => abi.llvm_ir(),
     };
     // If a memory type is set and this is a pointer param, qualify with address space
-    if let Some(mem_type) = param.memory_type {
-        if param.gpu_abi.is_pointer() {
-            // Strip the trailing `*`, insert addrspace, re-add `*`
-            if let Some(pointee) = base_ty.strip_suffix('*') {
-                return format!(
-                    "{}{}*",
-                    pointee.trim_end(),
-                    mem_type.llvm_addrspace_suffix()
-                );
-            }
+    if let Some(mem_type) = param.memory_type
+        && param.gpu_abi.is_pointer()
+    {
+        // Strip the trailing `*`, insert addrspace, re-add `*`
+        if let Some(pointee) = base_ty.strip_suffix('*') {
+            return format!(
+                "{}{}*",
+                pointee.trim_end(),
+                mem_type.llvm_addrspace_suffix()
+            );
         }
     }
     base_ty.to_string()
@@ -440,7 +440,7 @@ fn analyze_kernel_layout(func: &MirFunction) -> KernelLayout {
     layout
 }
 
-fn kernel_value_type<'a>(layout: &'a KernelLayout, value: ValueId) -> &'a str {
+fn kernel_value_type(layout: &KernelLayout, value: ValueId) -> &str {
     layout.value_types.get(&value).copied().unwrap_or("i32")
 }
 

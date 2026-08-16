@@ -486,11 +486,9 @@ impl CallCacheFunctionState {
     }
 
     fn profile_snapshot(&self) -> CallCacheFunctionProfile {
-        let avg_reuse_distance = if self.reuse_distance_samples > 0 {
-            Some(self.reuse_distance_total / self.reuse_distance_samples)
-        } else {
-            None
-        };
+        let avg_reuse_distance = self
+            .reuse_distance_total
+            .checked_div(self.reuse_distance_samples);
         let stable_values: Vec<StableScalarValueProfile> = self
             .arg_profiles
             .iter()
@@ -1100,24 +1098,38 @@ impl AgamJit {
                 }
             }
             Op::GetField { object, field } => {
-                // Resolve field name to index via struct_layouts.
                 let field_index = self
                     .struct_layouts
                     .values()
                     .find_map(|sl| sl.fields.iter().position(|f| f == field))
                     .unwrap_or(0) as u32;
-                // Extract field from packed struct value using the same
-                // mechanism as enum payload extraction.
-                emit_enum_payload(
+                let result_ty = value_type(layout, instr.result);
+                let fallback_slot = EnumPayloadSlot {
+                    offset_bits: (field_index as u16).saturating_mul(32),
+                    width_bits: enum_payload_slot_width(result_ty),
+                    ty: result_ty,
+                };
+                let slot = layout
+                    .enum_payload_slots
+                    .get(object)
+                    .and_then(|slots| slots.get(field_index as usize).copied())
+                    .unwrap_or(fallback_slot);
+                if slot.width_bits == 0 {
+                    return Ok(default_value(builder, result_ty, pointer_type));
+                }
+                let packed = enum_value_as_pack(
                     builder,
-                    layout,
-                    values,
-                    instr.result,
-                    *object,
-                    field_index,
-                    mem_flags,
+                    lookup_value(values, *object)?,
+                    value_type(layout, *object),
                     pointer_type,
-                )
+                )?;
+                let shifted = if slot.offset_bits == 0 {
+                    packed
+                } else {
+                    builder.ins().ushr_imm(packed, i64::from(slot.offset_bits))
+                };
+                let bits = mask_low_bits(builder, shifted, slot.width_bits);
+                enum_bits_to_payload_value(builder, bits, result_ty, mem_flags, pointer_type)
             }
             Op::GetIndex { object, .. } => lookup_value(values, *object),
             Op::StoreIndex { .. } => Err(
@@ -1190,16 +1202,12 @@ impl AgamJit {
                 pointer_type,
             ),
             Op::StructConstruct { fields, .. } => {
-                // Pack struct fields into a single i64 value using the
-                // same bit-packing as enum payloads (without a tag).
                 let payload_ids: Vec<ValueId> = fields.iter().map(|(_, v)| *v).collect();
-                // Reuse enum construct with tag=0 (no tag bits consumed).
-                emit_enum_construct(
+                emit_struct_construct(
                     builder,
                     layout,
                     values,
                     instr.result,
-                    0,
                     &payload_ids,
                     mem_flags,
                     pointer_type,
@@ -2422,10 +2430,15 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     bits: 32,
                     signed: true,
                 },
-                Op::StructConstruct { .. } => JitType::Int {
-                    bits: 64,
-                    signed: false,
-                },
+                Op::StructConstruct { fields, .. } => {
+                    let payload_ids: Vec<ValueId> = fields.iter().map(|(_, v)| *v).collect();
+                    let slots = struct_payload_slots_from_values(&layout, &payload_ids);
+                    layout.enum_payload_slots.insert(instr.result, slots);
+                    JitType::Int {
+                        bits: 64,
+                        signed: false,
+                    }
+                }
                 Op::EnumPayload { value, field_index } => layout
                     .enum_payload_slots
                     .get(value)
@@ -2583,6 +2596,27 @@ fn enum_payload_slots_from_values(
     payload: &[ValueId],
 ) -> Vec<EnumPayloadSlot> {
     let mut offset_bits = ENUM_TAG_BITS;
+    payload
+        .iter()
+        .map(|value| {
+            let ty = value_type(layout, *value);
+            let width_bits = enum_payload_slot_width(ty);
+            let slot = EnumPayloadSlot {
+                offset_bits,
+                width_bits,
+                ty,
+            };
+            offset_bits = offset_bits.saturating_add(width_bits);
+            slot
+        })
+        .collect()
+}
+
+fn struct_payload_slots_from_values(
+    layout: &FunctionLayout,
+    payload: &[ValueId],
+) -> Vec<EnumPayloadSlot> {
+    let mut offset_bits = 0;
     payload
         .iter()
         .map(|value| {
@@ -2864,6 +2898,57 @@ fn emit_enum_construct(
     Ok(packed)
 }
 
+fn emit_struct_construct(
+    builder: &mut FunctionBuilder<'_>,
+    layout: &FunctionLayout,
+    values: &HashMap<ValueId, Value>,
+    result: ValueId,
+    payload: &[ValueId],
+    mem_flags: cranelift_codegen::ir::MemFlags,
+    pointer_type: ClifType,
+) -> Result<Value, String> {
+    let mut packed = builder.ins().iconst(types::I64, 0);
+    let fallback_slots = struct_payload_slots_from_values(layout, payload);
+    let slots = layout
+        .enum_payload_slots
+        .get(&result)
+        .map(Vec::as_slice)
+        .unwrap_or(fallback_slots.as_slice());
+
+    for (index, payload_id) in payload.iter().enumerate() {
+        let Some(slot) = slots.get(index).copied() else {
+            continue;
+        };
+        if slot.width_bits == 0 {
+            continue;
+        }
+        if slot.offset_bits.saturating_add(slot.width_bits) > ENUM_PACK_BITS {
+            return Err(format!(
+                "struct field {index} exceeds the current 64-bit JIT struct representation"
+            ));
+        }
+
+        let payload_value = lookup_value(values, *payload_id)?;
+        let payload_ty = value_type(layout, *payload_id);
+        let bits = enum_payload_value_to_bits(
+            builder,
+            payload_value,
+            payload_ty,
+            slot.width_bits,
+            mem_flags,
+            pointer_type,
+        )?;
+        let shifted = if slot.offset_bits == 0 {
+            bits
+        } else {
+            builder.ins().ishl_imm(bits, i64::from(slot.offset_bits))
+        };
+        packed = builder.ins().bor(packed, shifted);
+    }
+
+    Ok(packed)
+}
+
 fn emit_enum_payload(
     builder: &mut FunctionBuilder<'_>,
     layout: &FunctionLayout,
@@ -2922,10 +3007,7 @@ fn enum_payload_value_to_bits(
             let bits = builder.ins().bitcast(types::I32, mem_flags, value);
             builder.ins().uextend(types::I64, bits)
         }
-        JitType::Float64 => {
-            let bits = builder.ins().bitcast(types::I64, mem_flags, value);
-            bits
-        }
+        JitType::Float64 => builder.ins().bitcast(types::I64, mem_flags, value),
         JitType::Str | JitType::OpaquePtr => {
             let pointer_bits = pointer_type.bits() as u16;
             normalize_int(
@@ -3098,6 +3180,8 @@ fn emit_cast(
                 .ins()
                 .bitcast(target_ty.clif_type(pointer_type), mem_flags, value)
         }
+        (_, JitType::Unit) => default_value(builder, JitType::Unit, pointer_type),
+        (JitType::Unit, target) => default_value(builder, target, pointer_type),
         _ => {
             return Err(format!(
                 "unsupported JIT cast from {source_ty:?} to {target_ty:?}"
@@ -3177,8 +3261,9 @@ fn normalize_int(
     target_bits: u16,
     target_signed: bool,
 ) -> Value {
-    let (source_bits, source_signed) = source_ty.int_spec().unwrap_or((8, false));
-    let current = source_ty.clif_type(types::I64);
+    let (_, source_signed) = source_ty.int_spec().unwrap_or((8, false));
+    let current_type = builder.func.dfg.value_type(value);
+    let current_bits = current_type.bits() as u16;
     let target = match target_bits {
         8 => types::I8,
         16 => types::I16,
@@ -3188,18 +3273,12 @@ fn normalize_int(
         _ => panic!("JIT backend cannot normalize {target_bits}-bit integers"),
     };
 
-    if source_bits == target_bits {
+    if current_bits == target_bits {
         value
-    } else if source_bits > target_bits {
+    } else if current_bits > target_bits {
         builder.ins().ireduce(target, value)
     } else if source_signed || target_signed {
-        if current == target {
-            value
-        } else {
-            builder.ins().sextend(target, value)
-        }
-    } else if current == target {
-        value
+        builder.ins().sextend(target, value)
     } else {
         builder.ins().uextend(target, value)
     }
