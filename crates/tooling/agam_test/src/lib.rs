@@ -480,4 +480,146 @@ fn test_nested_arithmetic() -> bool:
         assert_eq!(summary.total(), 1);
         assert_eq!(summary.passed(), 1);
     }
+
+    #[test]
+    fn run_source_if_else_expressions() {
+        let summary = run_source(
+            r#"
+fn pick_value(flag: bool) -> i64:
+    return if flag: 100 else: 200
+
+@test
+fn test_if_else_expr() -> bool:
+    let v1 = pick_value(true)
+    let v2 = pick_value(false)
+    return v1 == 100 && v2 == 200
+"#,
+            "memory://if_else_expr.agam",
+        )
+        .expect("run if-else expression tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_compound_assignments() {
+        let summary = run_source(
+            r#"
+@test
+fn test_compound_ops() -> bool:
+    let mut x: i64 = 10
+    x += 5
+    x -= 3
+    x *= 4
+    x /= 2
+    return x == 24
+"#,
+            "memory://compound_assign.agam",
+        )
+        .expect("run compound assign tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_early_returns_in_loops() {
+        let summary = run_source(
+            r#"
+fn find_first_divisible(limit: i64, divisor: i64) -> i64:
+    let mut i: i64 = 1
+    while i <= limit:
+        if i % divisor == 0:
+            return i
+        i += 1
+    return 0
+
+@test
+fn test_early_return() -> bool:
+    let r1 = find_first_divisible(20, 7)
+    let r2 = find_first_divisible(10, 13)
+    return r1 == 7 && r2 == 0
+"#,
+            "memory://early_returns.agam",
+        )
+        .expect("run early return tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_trait_definition_and_implementation() {
+        let summary = run_source(
+            r#"
+trait Describable:
+    fn describe(self) -> i64
+
+struct Item:
+    id: i64
+
+impl Describable for Item:
+    fn describe(self) -> i64:
+        return self.id * 10
+
+@test
+fn test_trait_impl() -> bool:
+    let item = Item { id: 7 }
+    let desc = Describable::describe(item)
+    return desc == 70
+"#,
+            "memory://traits.agam",
+        )
+        .expect("run trait tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_generics_multi_type_params() {
+        let summary = run_source(
+            r#"
+fn pick_first<T, U>(a: T, b: U) -> T:
+    return a
+
+fn pick_second<T, U>(a: T, b: U) -> U:
+    return b
+
+@test
+fn test_generic_picks() -> bool:
+    let r1 = pick_first(42, true)
+    let r2 = pick_second(100, 999)
+    return r1 == 42 && r2 == 999
+"#,
+            "memory://generics.agam",
+        )
+        .expect("run generics tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_chained_if_else_expressions() {
+        let summary = run_source(
+            r#"
+fn categorize(score: i64) -> i64:
+    return if score >= 90: 1 else if score >= 70: 2 else: 3
+
+@test
+fn test_chained_if_else() -> bool:
+    let c1 = categorize(95)
+    let c2 = categorize(80)
+    let c3 = categorize(50)
+    return c1 == 1 && c2 == 2 && c3 == 3
+"#,
+            "memory://chained_if.agam",
+        )
+        .expect("run chained if tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
 }

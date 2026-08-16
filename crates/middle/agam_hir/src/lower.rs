@@ -127,11 +127,18 @@ impl HirLowering {
                         TypeExprKind::Named(path) => path_name(path),
                         _ => "Self".to_string(),
                     };
+                    let trait_name = impl_decl.trait_path.as_ref().map(path_name);
                     for item in &impl_decl.items {
                         if let DeclKind::Function(f) = &item.kind {
                             let mut method_decl = f.clone();
                             method_decl.name.name = format!("{}::{}", type_name, f.name.name);
                             functions.push(self.lower_function(&method_decl));
+
+                            if let Some(tname) = &trait_name {
+                                let mut trait_method = f.clone();
+                                trait_method.name.name = format!("{}::{}", tname, f.name.name);
+                                functions.push(self.lower_function(&trait_method));
+                            }
                         }
                     }
                 }
@@ -885,6 +892,48 @@ impl HirLowering {
                     HirExprKind::Match {
                         scrutinee: Box::new(hir_scrutinee),
                         arms: hir_arms,
+                    },
+                )
+            }
+
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let cond_hir = self.lower_expr(condition);
+                let then_hir = self.lower_expr(then_branch);
+                let else_hir = if let Some(eb) = else_branch {
+                    self.lower_expr(eb)
+                } else {
+                    HirExpr {
+                        id: self.fresh_id(),
+                        ty: self.types.unit(),
+                        kind: HirExprKind::Tuple(Vec::new()),
+                    }
+                };
+                let ty = then_hir.ty;
+                let arms = vec![
+                    HirMatchArm {
+                        pattern: HirPattern::Literal(HirExpr {
+                            id: self.fresh_id(),
+                            ty: self.types.bool(),
+                            kind: HirExprKind::BoolLit(true),
+                        }),
+                        guard: None,
+                        body: then_hir,
+                    },
+                    HirMatchArm {
+                        pattern: HirPattern::Wildcard,
+                        guard: None,
+                        body: else_hir,
+                    },
+                ];
+                (
+                    ty,
+                    HirExprKind::Match {
+                        scrutinee: Box::new(cond_hir),
+                        arms,
                     },
                 )
             }

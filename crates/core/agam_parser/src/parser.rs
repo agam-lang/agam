@@ -562,7 +562,17 @@ impl Parser {
     fn parse_impl_decl(&mut self) -> Result<ImplDecl, ParseError> {
         let start = self.advance().span; // impl
         let generics = self.parse_generic_params()?;
-        let target = self.parse_type_expr()?;
+        let first_type = self.parse_type_expr()?;
+        let (trait_path, target) = if self.eat(TokenKind::For) {
+            let target_type = self.parse_type_expr()?;
+            let trait_p = match first_type.kind {
+                TypeExprKind::Named(p) => Some(p),
+                _ => None,
+            };
+            (trait_p, target_type)
+        } else {
+            (None, first_type)
+        };
         self.eat(TokenKind::Colon);
         self.skip_newlines();
         let has_brace = self.eat(TokenKind::LBrace);
@@ -594,7 +604,7 @@ impl Parser {
         }
         Ok(ImplDecl {
             generics,
-            trait_path: None,
+            trait_path,
             target_type: target,
             items,
             span: start,
@@ -1501,8 +1511,71 @@ impl Parser {
                 })
             }
             TokenKind::Match => self.parse_match_expr(),
+            TokenKind::If => self.parse_if_expr(),
             _ => Err(self.error(format!("expected expression, found {:?}", tok.kind))),
         }
+    }
+
+    fn parse_if_expr(&mut self) -> Result<Expr, ParseError> {
+        let start = self.advance().span; // if
+        let cond = self.parse_expression(0)?;
+        let then_branch = if self.peek_kind() == TokenKind::LBrace {
+            let block = self.parse_block()?;
+            Expr {
+                id: self.node_id(),
+                span: block.span,
+                kind: ExprKind::BlockExpr(block),
+            }
+        } else {
+            self.eat(TokenKind::Colon);
+            self.skip_newlines();
+            let has_indent = self.eat(TokenKind::Indent);
+            let expr = self.parse_expression(0)?;
+            if has_indent {
+                self.eat(TokenKind::Dedent);
+            }
+            expr
+        };
+
+        let else_branch = if self.eat(TokenKind::Else) {
+            let else_expr = if self.peek_kind() == TokenKind::If {
+                self.parse_if_expr()?
+            } else if self.peek_kind() == TokenKind::LBrace {
+                let block = self.parse_block()?;
+                Expr {
+                    id: self.node_id(),
+                    span: block.span,
+                    kind: ExprKind::BlockExpr(block),
+                }
+            } else {
+                self.eat(TokenKind::Colon);
+                self.skip_newlines();
+                let has_indent = self.eat(TokenKind::Indent);
+                let expr = self.parse_expression(0)?;
+                if has_indent {
+                    self.eat(TokenKind::Dedent);
+                }
+                expr
+            };
+            Some(Box::new(else_expr))
+        } else {
+            None
+        };
+
+        let end_span = else_branch
+            .as_ref()
+            .map(|b| b.span)
+            .unwrap_or(then_branch.span);
+
+        Ok(Expr {
+            id: self.node_id(),
+            span: Span::new(start.source_id, start.start, end_span.end),
+            kind: ExprKind::If {
+                condition: Box::new(cond),
+                then_branch: Box::new(then_branch),
+                else_branch,
+            },
+        })
     }
 
     fn parse_match_expr(&mut self) -> Result<Expr, ParseError> {
