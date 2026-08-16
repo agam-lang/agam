@@ -186,13 +186,16 @@ impl<'src> Lexer<'src> {
                 }
             }
 
-            // ── Dot / DotDot / DotDotDot ──
+            // ── Dot / DotDot / DotDotEq / DotDotDot ──
             '.' => {
                 if self.cursor.peek() == Some('.') {
                     self.cursor.advance();
                     if self.cursor.peek() == Some('.') {
                         self.cursor.advance();
                         self.make_token(TokenKind::DotDotDot, start, "...")
+                    } else if self.cursor.peek() == Some('=') {
+                        self.cursor.advance();
+                        self.make_token(TokenKind::DotDotEq, start, "..=")
                     } else {
                         self.make_token(TokenKind::DotDot, start, "..")
                     }

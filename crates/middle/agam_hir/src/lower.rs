@@ -37,6 +37,8 @@ pub struct HirLowering {
     enum_variants: HashMap<String, String>,
     /// Active generic parameter names for the function currently being lowered.
     active_generics: Vec<String>,
+    /// Additional top-level functions generated during lowering (e.g. lambdas / closures).
+    extra_functions: Vec<HirFunction>,
 }
 
 impl HirLowering {
@@ -49,6 +51,7 @@ impl HirLowering {
             diagnostics: Vec::new(),
             enum_variants: HashMap::new(),
             active_generics: Vec::new(),
+            extra_functions: Vec::new(),
         }
     }
 
@@ -135,6 +138,7 @@ impl HirLowering {
                 _ => {}
             }
         }
+        functions.extend(self.extra_functions.drain(..));
         HirModule {
             functions,
             enum_layouts,
@@ -307,14 +311,136 @@ impl HirLowering {
             StmtKind::Loop { body } => HirStmt::Loop {
                 body: self.lower_block(body),
             },
-            // Desugar for-in → while + iterator pattern
+            // Desugar for-in → while + iterator pattern (with direct counting loop for ranges)
             StmtKind::For {
                 pattern,
                 iterable,
                 body,
             } => {
-                let iter_name = format!("__iter_{}", self.next_id);
                 let item_name = self.pattern_name(pattern).unwrap_or_else(|| "_".into());
+
+                if let ExprKind::Range {
+                    start,
+                    end,
+                    inclusive,
+                } = &iterable.kind
+                {
+                    let start_val =
+                        start
+                            .as_ref()
+                            .map(|s| self.lower_expr(s))
+                            .unwrap_or_else(|| HirExpr {
+                                id: self.fresh_id(),
+                                ty: self.types.i32(),
+                                kind: HirExprKind::IntLit(0),
+                            });
+                    let end_val =
+                        end.as_ref()
+                            .map(|e| self.lower_expr(e))
+                            .unwrap_or_else(|| HirExpr {
+                                id: self.fresh_id(),
+                                ty: self.types.i32(),
+                                kind: HirExprKind::IntLit(0),
+                            });
+                    let loop_ty = start_val.ty;
+                    let end_name = format!("__end_{}", self.next_id);
+                    self.next_id += 1;
+
+                    let var_init = HirStmt::Let {
+                        name: item_name.clone(),
+                        ty: loop_ty,
+                        value: Some(start_val),
+                        mutable: true,
+                    };
+
+                    let end_init = HirStmt::Let {
+                        name: end_name.clone(),
+                        ty: loop_ty,
+                        value: Some(end_val),
+                        mutable: false,
+                    };
+
+                    let cmp_op = if *inclusive {
+                        HirBinOp::LtEq
+                    } else {
+                        HirBinOp::Lt
+                    };
+                    let condition = HirExpr {
+                        id: self.fresh_id(),
+                        ty: self.types.bool(),
+                        kind: HirExprKind::Binary {
+                            op: cmp_op,
+                            left: Box::new(HirExpr {
+                                id: self.fresh_id(),
+                                ty: loop_ty,
+                                kind: HirExprKind::Var(item_name.clone()),
+                            }),
+                            right: Box::new(HirExpr {
+                                id: self.fresh_id(),
+                                ty: loop_ty,
+                                kind: HirExprKind::Var(end_name),
+                            }),
+                        },
+                    };
+
+                    self.push_scope();
+                    self.bind_local(item_name.clone(), loop_ty);
+                    let inner_block = self.lower_block(body);
+                    self.pop_scope();
+
+                    let increment = HirStmt::Expr(HirExpr {
+                        id: self.fresh_id(),
+                        ty: loop_ty,
+                        kind: HirExprKind::Assign {
+                            target: Box::new(HirExpr {
+                                id: self.fresh_id(),
+                                ty: loop_ty,
+                                kind: HirExprKind::Var(item_name.clone()),
+                            }),
+                            value: Box::new(HirExpr {
+                                id: self.fresh_id(),
+                                ty: loop_ty,
+                                kind: HirExprKind::Binary {
+                                    op: HirBinOp::Add,
+                                    left: Box::new(HirExpr {
+                                        id: self.fresh_id(),
+                                        ty: loop_ty,
+                                        kind: HirExprKind::Var(item_name),
+                                    }),
+                                    right: Box::new(HirExpr {
+                                        id: self.fresh_id(),
+                                        ty: loop_ty,
+                                        kind: HirExprKind::IntLit(1),
+                                    }),
+                                },
+                            }),
+                        },
+                    });
+
+                    let mut loop_stmts = inner_block.stmts;
+                    loop_stmts.push(increment);
+
+                    return HirStmt::Expr(HirExpr {
+                        id: self.fresh_id(),
+                        ty: self.types.unit(),
+                        kind: HirExprKind::Block(HirBlock {
+                            stmts: vec![
+                                var_init,
+                                end_init,
+                                HirStmt::While {
+                                    condition,
+                                    body: HirBlock {
+                                        stmts: loop_stmts,
+                                        expr: inner_block.expr,
+                                    },
+                                },
+                            ],
+                            expr: None,
+                        }),
+                    });
+                }
+
+                let iter_name = format!("__iter_{}", self.next_id);
                 let iter_ty = self.types.fresh_var();
                 let item_ty = self.types.fresh_var();
 
@@ -784,6 +910,90 @@ impl HirLowering {
                     self.types.fresh_var(),
                     HirExprKind::Try(Box::new(hir_inner)),
                 )
+            }
+
+            ExprKind::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let mut fields = Vec::new();
+                if let Some(s) = start {
+                    fields.push(("start".to_string(), self.lower_expr(s)));
+                }
+                if let Some(e) = end {
+                    fields.push(("end".to_string(), self.lower_expr(e)));
+                }
+                let range_name = if *inclusive {
+                    "RangeInclusive"
+                } else {
+                    "Range"
+                };
+                (
+                    self.types.fresh_var(),
+                    HirExprKind::StructLiteral {
+                        name: range_name.to_string(),
+                        fields,
+                    },
+                )
+            }
+
+            ExprKind::Lambda {
+                params,
+                return_type,
+                body,
+            } => {
+                let lambda_name = format!("__lambda_{}", self.next_id);
+                self.next_id += 1;
+
+                self.push_scope();
+                let hir_params: Vec<HirParam> = params
+                    .iter()
+                    .map(|p| {
+                        let ty =
+                            p.ty.as_ref()
+                                .map(|t| self.resolve_type_expr(t))
+                                .unwrap_or_else(|| self.types.fresh_var());
+                        self.bind_local(p.name.name.clone(), ty);
+                        HirParam {
+                            name: p.name.name.clone(),
+                            ty,
+                            mutable: false,
+                            gpu_abi: p
+                                .ty
+                                .as_ref()
+                                .map(classify_gpu_kernel_param_abi)
+                                .unwrap_or_default(),
+                            memory_type: None,
+                        }
+                    })
+                    .collect();
+
+                let return_ty = return_type
+                    .as_ref()
+                    .map(|t| self.resolve_type_expr(t))
+                    .unwrap_or_else(|| self.types.fresh_var());
+                let lowered_body_expr = self.lower_expr(body);
+                let body_block = HirBlock {
+                    stmts: vec![HirStmt::Return(Some(lowered_body_expr))],
+                    expr: None,
+                };
+                self.pop_scope();
+
+                let lambda_func = HirFunction {
+                    id: self.fresh_id(),
+                    name: lambda_name.clone(),
+                    generics: Vec::new(),
+                    params: hir_params,
+                    return_ty,
+                    body: body_block,
+                    is_async: false,
+                    target: self.current_target,
+                    gpu_config: None,
+                };
+                self.extra_functions.push(lambda_func);
+
+                (self.types.fresh_var(), HirExprKind::Var(lambda_name))
             }
 
             // Fallback for unhandled expressions
@@ -1638,5 +1848,46 @@ mod tests {
             },
             _ => panic!("expected return statement"),
         }
+    }
+
+    #[test]
+    fn test_hir_for_range_lowering() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "fn count_sum() -> i32 { var sum = 0; for i in 0..10 { sum += i; } return sum; }",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        let f = &hir.functions[0];
+        assert_eq!(f.body.stmts.len(), 3);
+        // Stmt 1 is the desugared for loop block containing var_init, end_init, while
+        match &f.body.stmts[1] {
+            HirStmt::Expr(expr) => match &expr.kind {
+                HirExprKind::Block(block) => {
+                    assert_eq!(block.stmts.len(), 3);
+                    assert!(matches!(&block.stmts[0], HirStmt::Let { name, .. } if name == "i"));
+                    assert!(matches!(&block.stmts[1], HirStmt::Let { .. }));
+                    assert!(matches!(&block.stmts[2], HirStmt::While { .. }));
+                }
+                _ => panic!("expected Block expression for for-loop desugaring"),
+            },
+            _ => panic!("expected expression statement for for-loop"),
+        }
+    }
+
+    #[test]
+    fn test_hir_lambda_lowering() {
+        let (hir, diagnostics) = lower_source_with_diagnostics(
+            "fn apply_op() -> i32 { let add = |x: i32, y: i32| x + y; return 0; }",
+        );
+        assert!(diagnostics.is_empty(), "diagnostics: {:?}", diagnostics);
+        // There should be 2 functions: apply_op and the generated lambda function
+        assert_eq!(hir.functions.len(), 2);
+        let lambda_func = hir
+            .functions
+            .iter()
+            .find(|f| f.name.starts_with("__lambda_"))
+            .expect("expected generated lambda function");
+        assert_eq!(lambda_func.params.len(), 2);
+        assert_eq!(lambda_func.params[0].name, "x");
+        assert_eq!(lambda_func.params[1].name, "y");
     }
 }

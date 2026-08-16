@@ -178,6 +178,8 @@ pub enum TokenKind {
     ColonColon,
     /// `..`
     DotDot,
+    /// `..=`
+    DotDotEq,
     /// `...`
     DotDotDot,
     /// `?`

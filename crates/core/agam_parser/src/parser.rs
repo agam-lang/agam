@@ -1355,6 +1355,31 @@ impl Parser {
                     },
                 })
             }
+            TokenKind::DotDot | TokenKind::DotDotEq => {
+                let inclusive = tok.kind == TokenKind::DotDotEq;
+                self.advance();
+                let end = if self.peek_kind() == TokenKind::RBrace
+                    || self.peek_kind() == TokenKind::RParen
+                    || self.peek_kind() == TokenKind::RBracket
+                    || self.peek_kind() == TokenKind::Semicolon
+                    || self.peek_kind() == TokenKind::Comma
+                    || self.peek_kind() == TokenKind::LBrace
+                    || self.peek_kind() == TokenKind::Colon
+                {
+                    None
+                } else {
+                    Some(Box::new(self.parse_expression(0)?))
+                };
+                Ok(Expr {
+                    id,
+                    span: tok.span,
+                    kind: ExprKind::Range {
+                        start: None,
+                        end,
+                        inclusive,
+                    },
+                })
+            }
             TokenKind::Match => self.parse_match_expr(),
             _ => Err(self.error(format!("expected expression, found {:?}", tok.kind))),
         }
@@ -1436,6 +1461,7 @@ impl Parser {
             | TokenKind::MinusEq
             | TokenKind::StarEq
             | TokenKind::SlashEq => Some((1, Assoc::Right)),
+            TokenKind::DotDot | TokenKind::DotDotEq => Some((2, Assoc::Left)),
             TokenKind::PipePipe => Some((2, Assoc::Left)),
             TokenKind::AmpAmp => Some((3, Assoc::Left)),
             TokenKind::Pipe => Some((4, Assoc::Left)),
@@ -1491,6 +1517,32 @@ impl Parser {
                         op,
                         target: Box::new(left),
                         value: Box::new(right),
+                    },
+                })
+            }
+            // Range ops
+            TokenKind::DotDot | TokenKind::DotDotEq => {
+                let inclusive = op_tok.kind == TokenKind::DotDotEq;
+                self.advance();
+                let end = if self.peek_kind() == TokenKind::RBrace
+                    || self.peek_kind() == TokenKind::RParen
+                    || self.peek_kind() == TokenKind::RBracket
+                    || self.peek_kind() == TokenKind::Semicolon
+                    || self.peek_kind() == TokenKind::Comma
+                    || self.peek_kind() == TokenKind::LBrace
+                    || self.peek_kind() == TokenKind::Colon
+                {
+                    None
+                } else {
+                    Some(Box::new(self.parse_expression(min_prec)?))
+                };
+                Ok(Expr {
+                    id,
+                    span: op_tok.span,
+                    kind: ExprKind::Range {
+                        start: Some(Box::new(left)),
+                        end,
+                        inclusive,
                     },
                 })
             }
@@ -1866,8 +1918,9 @@ impl Parser {
                 span,
                 kind: PatternKind::Or(pats),
             })
-        } else if self.eat(TokenKind::DotDot) {
-            let inclusive = self.eat(TokenKind::Eq);
+        } else if self.peek_kind() == TokenKind::DotDot || self.peek_kind() == TokenKind::DotDotEq {
+            let inclusive = self.eat(TokenKind::DotDotEq)
+                || (self.eat(TokenKind::DotDot) && self.eat(TokenKind::Eq));
             let end = self.parse_single_pattern()?;
             let id = self.node_id();
             let span = first.span.merge(end.span);
@@ -2339,6 +2392,37 @@ mod tests {
             assert!(matches!(&parts[4], FStringPart::Literal(s) if s == "!"));
         } else {
             panic!("expected FStringLiteral");
+        }
+    }
+
+    #[test]
+    fn test_parse_range_expressions() {
+        let expr = parse_expr("0..10");
+        if let ExprKind::Range {
+            start,
+            end,
+            inclusive,
+        } = &expr.kind
+        {
+            assert!(start.is_some());
+            assert!(end.is_some());
+            assert!(!inclusive);
+        } else {
+            panic!("expected Range expression");
+        }
+
+        let expr_inc = parse_expr("1..=100");
+        if let ExprKind::Range {
+            start,
+            end,
+            inclusive,
+        } = &expr_inc.kind
+        {
+            assert!(start.is_some());
+            assert!(end.is_some());
+            assert!(inclusive);
+        } else {
+            panic!("expected inclusive Range expression");
         }
     }
 }
