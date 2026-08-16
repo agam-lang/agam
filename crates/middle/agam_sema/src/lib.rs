@@ -35,8 +35,11 @@ pub mod infer;
 pub mod lifetime;
 pub mod ownership;
 pub mod resolver;
+pub mod sandhi;
 pub mod scope;
 pub mod symbol;
 pub mod target;
 pub mod traits;
 pub mod types;
+
+pub use sandhi::{SandhiGraph, SandhiNode, TraitLattice};

@@ -12,7 +12,7 @@ use agam_errors::Span;
 use serde::{Deserialize, Serialize};
 
 /// Unique identifier for a symbol within the compilation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SymbolId(pub u32);
 
 /// The kind of entity a symbol represents.
@@ -49,7 +49,7 @@ pub enum SymbolKind {
 }
 
 /// Unique identifier for an internal resolved type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TypeId(pub u32);
 
 /// A resolved symbol entry in the symbol table.

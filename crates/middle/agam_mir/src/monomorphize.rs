@@ -79,6 +79,120 @@ pub struct MonomorphResult {
     pub renames: HashMap<MonomorphKey, String>,
 }
 
+/// A dependency graph for generic instantiations.
+#[derive(Debug, Clone, Default)]
+pub struct MonomorphGraph {
+    /// All registered instantiation nodes.
+    pub nodes: HashSet<MonomorphKey>,
+    /// Directed edges: caller -> callee instantiations.
+    pub edges: HashMap<MonomorphKey, Vec<MonomorphKey>>,
+}
+
+impl MonomorphGraph {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add an instantiation node.
+    pub fn add_instantiation(&mut self, key: MonomorphKey) {
+        self.nodes.insert(key);
+    }
+
+    /// Add a call dependency from caller instantiation to callee instantiation.
+    pub fn add_dependency(&mut self, caller: MonomorphKey, callee: MonomorphKey) {
+        self.nodes.insert(caller.clone());
+        self.nodes.insert(callee.clone());
+        self.edges.entry(caller).or_default().push(callee);
+    }
+
+    /// Detect if there are dependency cycles or if recursion depth exceeds `max_depth`.
+    pub fn detect_cycles(&self, max_depth: usize) -> Result<(), Vec<MonomorphKey>> {
+        let mut visited = HashSet::new();
+        let mut in_stack = HashSet::new();
+        let mut path = Vec::new();
+
+        for node in &self.nodes {
+            if !visited.contains(node) {
+                if let Err(cycle) =
+                    self.dfs_check(node, max_depth, &mut visited, &mut in_stack, &mut path)
+                {
+                    return Err(cycle);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn dfs_check(
+        &self,
+        node: &MonomorphKey,
+        max_depth: usize,
+        visited: &mut HashSet<MonomorphKey>,
+        in_stack: &mut HashSet<MonomorphKey>,
+        path: &mut Vec<MonomorphKey>,
+    ) -> Result<(), Vec<MonomorphKey>> {
+        if path.len() >= max_depth {
+            let mut cycle = path.clone();
+            cycle.push(node.clone());
+            return Err(cycle);
+        }
+
+        visited.insert(node.clone());
+        in_stack.insert(node.clone());
+        path.push(node.clone());
+
+        if let Some(callees) = self.edges.get(node) {
+            for callee in callees {
+                if in_stack.contains(callee) {
+                    let mut cycle = path.clone();
+                    cycle.push(callee.clone());
+                    return Err(cycle);
+                }
+                if !visited.contains(callee) {
+                    self.dfs_check(callee, max_depth, visited, in_stack, path)?;
+                }
+            }
+        }
+
+        path.pop();
+        in_stack.remove(node);
+        Ok(())
+    }
+
+    /// Compute a topological schedule (leaves/callees first, callers last) for specialization.
+    pub fn topological_schedule(&self) -> Result<Vec<MonomorphKey>, Vec<MonomorphKey>> {
+        self.detect_cycles(64)?;
+
+        let mut order = Vec::new();
+        let mut visited = HashSet::new();
+
+        for node in &self.nodes {
+            if !visited.contains(node) {
+                self.dfs_topo(node, &mut visited, &mut order);
+            }
+        }
+
+        Ok(order)
+    }
+
+    fn dfs_topo(
+        &self,
+        node: &MonomorphKey,
+        visited: &mut HashSet<MonomorphKey>,
+        order: &mut Vec<MonomorphKey>,
+    ) {
+        visited.insert(node.clone());
+        if let Some(callees) = self.edges.get(node) {
+            for callee in callees {
+                if !visited.contains(callee) {
+                    self.dfs_topo(callee, visited, order);
+                }
+            }
+        }
+        order.push(node.clone());
+    }
+}
+
 /// Substitute all `TypeParam` occurrences in a TypeId according to the
 /// given mapping. Returns the substituted TypeId, inserting new compound
 /// types into the store as needed.
@@ -666,5 +780,58 @@ mod tests {
         } else {
             panic!("expected Call op");
         }
+    }
+
+    #[test]
+    fn test_monomorph_graph_topological_schedule() {
+        let mut graph = MonomorphGraph::new();
+        let key_main = MonomorphKey {
+            base_name: "main".to_string(),
+            type_args: vec![],
+        };
+        let key_process = MonomorphKey {
+            base_name: "process".to_string(),
+            type_args: vec![TypeId(1)],
+        };
+        let key_helper = MonomorphKey {
+            base_name: "helper".to_string(),
+            type_args: vec![TypeId(1)],
+        };
+
+        // main calls process<i32>, process<i32> calls helper<i32>
+        graph.add_dependency(key_main.clone(), key_process.clone());
+        graph.add_dependency(key_process.clone(), key_helper.clone());
+
+        let schedule = graph
+            .topological_schedule()
+            .expect("schedule should succeed");
+        assert_eq!(schedule.len(), 3);
+        // helper must be processed before process, and process before main
+        let helper_idx = schedule.iter().position(|k| k == &key_helper).unwrap();
+        let process_idx = schedule.iter().position(|k| k == &key_process).unwrap();
+        let main_idx = schedule.iter().position(|k| k == &key_main).unwrap();
+
+        assert!(helper_idx < process_idx);
+        assert!(process_idx < main_idx);
+    }
+
+    #[test]
+    fn test_monomorph_graph_cycle_detection() {
+        let mut graph = MonomorphGraph::new();
+        let key_a = MonomorphKey {
+            base_name: "recursive_a".to_string(),
+            type_args: vec![TypeId(1)],
+        };
+        let key_b = MonomorphKey {
+            base_name: "recursive_b".to_string(),
+            type_args: vec![TypeId(2)],
+        };
+
+        // Cycle: a -> b -> a
+        graph.add_dependency(key_a.clone(), key_b.clone());
+        graph.add_dependency(key_b.clone(), key_a.clone());
+
+        assert!(graph.detect_cycles(64).is_err());
+        assert!(graph.topological_schedule().is_err());
     }
 }
