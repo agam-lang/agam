@@ -62,6 +62,8 @@ use agam_notebook::{
     HeadlessExecutionResponse,
 };
 
+pub(crate) mod mcp;
+
 /// The Agam programming language compiler.
 #[derive(Parser, Debug)]
 #[command(
@@ -604,6 +606,22 @@ enum Command {
         /// Enable code coverage
         #[arg(long)]
         coverage: bool,
+    },
+
+    /// Start an MCP (Model Context Protocol) server for AI agent integration
+    Mcp {
+        #[command(subcommand)]
+        command: Option<McpCommand>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpCommand {
+    /// Start the standard stdio MCP JSON-RPC server
+    Serve {
+        /// Optional workspace root directory
+        #[arg(long)]
+        workspace: Option<PathBuf>,
     },
 }
 
@@ -1971,6 +1989,17 @@ fn main() {
                     "\nresult: \x1b[1;32mok\x1b[0m. {} passed; 0 failed.",
                     totals.passed
                 );
+            }
+        }
+
+        Command::Mcp { command } => {
+            let workspace = match command {
+                Some(McpCommand::Serve { workspace }) => workspace,
+                None => None,
+            };
+            if let Err(e) = mcp::run_mcp_server(workspace) {
+                eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                process::exit(1);
             }
         }
     }

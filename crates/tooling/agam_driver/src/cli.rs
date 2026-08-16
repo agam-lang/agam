@@ -389,6 +389,22 @@ pub(crate) enum Command {
         #[arg(long)]
         coverage: bool,
     },
+
+    /// Start an MCP (Model Context Protocol) server for AI agent integration
+    Mcp {
+        #[command(subcommand)]
+        command: Option<McpCommand>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum McpCommand {
+    /// Start the standard stdio MCP JSON-RPC server
+    Serve {
+        /// Optional workspace root directory
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

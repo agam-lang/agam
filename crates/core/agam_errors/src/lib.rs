@@ -8,8 +8,10 @@
 
 pub mod diagnostic;
 pub mod report;
+pub mod sarif;
 pub mod span;
 
 pub use diagnostic::{Diagnostic, DiagnosticLevel, Label};
 pub use report::DiagnosticEmitter;
+pub use sarif::{SarifLog, to_sarif, to_sarif_json};
 pub use span::{SourceFile, SourceId, Span};
