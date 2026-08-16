@@ -327,4 +327,157 @@ fn test_struct_methods() -> bool:
         assert_eq!(summary.total(), 1);
         assert_eq!(summary.passed(), 1);
     }
+
+    #[test]
+    fn run_source_multi_function_recursion() {
+        let summary = run_source(
+            r#"
+fn fib(n: i64) -> i64:
+    if n <= 1:
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+@test
+fn test_fibonacci() -> bool:
+    let f0 = fib(0)
+    let f1 = fib(1)
+    let f7 = fib(7)
+    let f10 = fib(10)
+    return f0 == 0 && f1 == 1 && f7 == 13 && f10 == 55
+"#,
+            "memory://recursion.agam",
+        )
+        .expect("run recursion tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_while_and_break_continue() {
+        let summary = run_source(
+            r#"
+@test
+fn test_while_accumulation() -> bool:
+    let mut i: i64 = 0
+    let mut sum: i64 = 0
+    while i < 10:
+        i = i + 1
+        sum = sum + i
+    return sum == 55
+"#,
+            "memory://while_loops.agam",
+        )
+        .expect("run while loop tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_multi_field_struct() {
+        let summary = run_source(
+            r#"
+struct Point:
+    x: i32
+    y: i32
+
+fn sum_point(p: Point) -> i32:
+    return p.x + p.y
+
+@test
+fn test_multi_field_struct() -> bool:
+    let p = Point { x: 15, y: 25 }
+    let s = sum_point(p)
+    return p.x == 15 && p.y == 25 && s == 40
+"#,
+            "memory://point_struct.agam",
+        )
+        .expect("run struct tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_enum_payloads_and_matching() {
+        let summary = run_source(
+            r#"
+enum OptionInt:
+    Some(i32),
+    None
+
+fn unwrap_or(opt: OptionInt, default_val: i32) -> i32:
+    return match opt:
+        OptionInt::Some(v) => v,
+        OptionInt::None => default_val
+
+@test
+fn test_enum_some() -> bool:
+    let s = OptionInt::Some(42)
+    let r1 = unwrap_or(s, 0)
+    return r1 == 42
+
+@test
+fn test_enum_none() -> bool:
+    let n = OptionInt::None
+    let r2 = unwrap_or(n, 99)
+    return r2 == 99
+"#,
+            "memory://enums.agam",
+        )
+        .expect("run enum tests");
+
+        assert_eq!(summary.total(), 2);
+        assert_eq!(summary.passed(), 2);
+    }
+
+    #[test]
+    fn run_source_boolean_logic_and_short_circuit() {
+        let summary = run_source(
+            r#"
+fn check_bool(a: bool, b: bool, c: bool) -> bool:
+    return (a && b) || (!a && c)
+
+@test
+fn test_complex_booleans() -> bool:
+    let r1 = check_bool(true, true, false)
+    let r2 = check_bool(true, false, true)
+    let r3 = check_bool(false, false, true)
+    let r4 = check_bool(false, true, false)
+    return r1 == true && r2 == false && r3 == true && r4 == false
+"#,
+            "memory://booleans.agam",
+        )
+        .expect("run boolean tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_nested_function_calls_and_arithmetic() {
+        let summary = run_source(
+            r#"
+fn square(x: i64) -> i64:
+    return x * x
+
+fn double_val(x: i64) -> i64:
+    return x * 2
+
+fn compute(a: i64, b: i64) -> i64:
+    return double_val(square(a)) + square(double_val(b))
+
+@test
+fn test_nested_arithmetic() -> bool:
+    let res = compute(3, 4)
+    return res == 82
+"#,
+            "memory://nested_arithmetic.agam",
+        )
+        .expect("run nested arithmetic tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
 }

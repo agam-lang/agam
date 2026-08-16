@@ -2302,14 +2302,14 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
             .iter()
             .map(|param| {
                 infer_jit_type_from_type_id(param.ty).unwrap_or(JitType::Int {
-                    bits: 32,
-                    signed: true,
+                    bits: 64,
+                    signed: false,
                 })
             })
             .collect(),
         return_ty: infer_jit_type_from_type_id(func.return_ty).unwrap_or(JitType::Int {
-            bits: 32,
-            signed: true,
+            bits: 64,
+            signed: false,
         }),
         value_types: HashMap::new(),
         local_types: HashMap::new(),
@@ -2498,9 +2498,16 @@ fn infer_jit_type_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<Jit
         Type::Str => Some(JitType::Str),
         Type::Unit | Type::Never => Some(JitType::Unit),
         Type::Ref { .. } | Type::Ptr { .. } => Some(JitType::OpaquePtr),
-        Type::Any | Type::Named(_) | Type::Function { .. } | Type::DynTrait(_) => {
-            Some(JitType::OpaquePtr)
-        }
+        Type::Any
+        | Type::Named(_)
+        | Type::Function { .. }
+        | Type::DynTrait(_)
+        | Type::Generic { .. }
+        | Type::Optional(_)
+        | Type::Result { .. } => Some(JitType::Int {
+            bits: 64,
+            signed: false,
+        }),
         _ => None,
     }
 }

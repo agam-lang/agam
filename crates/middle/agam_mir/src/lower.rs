@@ -87,8 +87,14 @@ impl MirLowering {
         self.variant_tags = hir
             .enum_layouts
             .values()
-            .flat_map(|layout| layout.variants.iter())
-            .map(|variant| (variant.name.clone(), variant.tag))
+            .flat_map(|layout| {
+                layout.variants.iter().flat_map(|variant| {
+                    vec![
+                        (variant.name.clone(), variant.tag),
+                        (format!("{}::{}", layout.name, variant.name), variant.tag),
+                    ]
+                })
+            })
             .collect();
 
         self.known_methods.clear();
@@ -667,7 +673,6 @@ impl MirLowering {
             return self.emit(result_ty, Op::Unit);
         }
 
-        let dispatch_block = self.current_block;
         let merge_block = self.fresh_block();
 
         // Allocate a local to hold the match result (phi-like)
@@ -698,9 +703,7 @@ impl MirLowering {
                 arm_blocks.push(self.fresh_block());
             }
 
-            for (arm, arm_block) in arms.iter().zip(arm_blocks) {
-                self.current_block = arm_block;
-
+            for (arm, &arm_block) in arms.iter().zip(&arm_blocks) {
                 let mut arm_tags: Vec<i64> = Vec::new();
                 match &arm.pattern {
                     HirPattern::Variant { name, .. } => {
@@ -727,7 +730,17 @@ impl MirLowering {
                 for tag in arm_tags {
                     cases.push((tag, arm_block));
                 }
+            }
 
+            // Finish dispatch_block before starting any arm blocks to preserve CFG order
+            self.finish_block(Terminator::Switch {
+                discriminant: tag_val,
+                cases,
+                default: default_block.unwrap_or(merge_block),
+            });
+
+            for (arm, arm_block) in arms.iter().zip(arm_blocks) {
+                self.current_block = arm_block;
                 match &arm.pattern {
                     HirPattern::Variant { .. } => {
                         self.lower_irrefutable_pattern(scrutinee, &arm.pattern, result_ty);
@@ -783,13 +796,6 @@ impl MirLowering {
                     self.finish_block(Terminator::Jump(merge_block));
                 }
             }
-
-            self.current_block = dispatch_block;
-            self.finish_block(Terminator::Switch {
-                discriminant: tag_val,
-                cases,
-                default: default_block.unwrap_or(merge_block),
-            });
         } else {
             // Non-enum match: chained if-else on pattern comparisons or wildcard
             for arm in arms {

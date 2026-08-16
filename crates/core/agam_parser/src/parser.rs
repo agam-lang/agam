@@ -2065,7 +2065,21 @@ impl Parser {
         match tok.kind {
             TokenKind::Identifier | TokenKind::Self_ => {
                 self.advance();
-                let name = Ident::new(&tok.lexeme, tok.span);
+                let mut segments = vec![Ident::new(&tok.lexeme, tok.span)];
+                while self.eat(TokenKind::ColonColon) {
+                    let next = self.expect(TokenKind::Identifier)?;
+                    segments.push(Ident::new(&next.lexeme, next.span));
+                }
+                let span = Span::new(
+                    tok.span.source_id,
+                    tok.span.start,
+                    segments.last().unwrap().span.end,
+                );
+                let path = Path {
+                    segments: segments.clone(),
+                    span,
+                };
+
                 if self.eat(TokenKind::LParen) {
                     let mut fields = Vec::new();
                     while self.peek_kind() != TokenKind::RParen && !self.at_end() {
@@ -2074,24 +2088,30 @@ impl Parser {
                             break;
                         }
                     }
-                    self.expect(TokenKind::RParen)?;
+                    let end_span = self.expect(TokenKind::RParen)?.span;
                     return Ok(Pattern {
                         id,
-                        span: tok.span,
+                        span: Span::new(tok.span.source_id, tok.span.start, end_span.end),
+                        kind: PatternKind::Variant { path, fields },
+                    });
+                }
+
+                if segments.len() > 1 {
+                    return Ok(Pattern {
+                        id,
+                        span,
                         kind: PatternKind::Variant {
-                            path: Path {
-                                segments: vec![name],
-                                span: tok.span,
-                            },
-                            fields,
+                            path,
+                            fields: Vec::new(),
                         },
                     });
                 }
+
                 Ok(Pattern {
                     id,
                     span: tok.span,
                     kind: PatternKind::Identifier {
-                        name,
+                        name: segments.pop().unwrap(),
                         mutable: false,
                     },
                 })
