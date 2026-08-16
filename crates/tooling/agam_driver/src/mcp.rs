@@ -500,6 +500,42 @@ fn get_nyaya_error_explanation(code: &str) -> NyayaProofExplanation {
         },
     );
 
+    explanations.insert(
+        "E0384",
+        NyayaProofExplanation {
+            code: "E0384".to_string(),
+            title: "Cannot Assign Twice to Immutable Variable".to_string(),
+            fact_pratijna: "Assignment operation targets an immutable binding (`let`).".to_string(),
+            reason_hetu: "Mutation attempted on a binding not declared with the `mut` modifier.".to_string(),
+            fix_udaharana: "Declare the binding as mutable: `let mut variable = initial_value`.".to_string(),
+            law_nigamana: "Agam Memory & Immutability Model §3.1: Variables are immutable by default unless explicitly declared `mut`.".to_string(),
+        },
+    );
+
+    explanations.insert(
+        "E0502",
+        NyayaProofExplanation {
+            code: "E0502".to_string(),
+            title: "Cannot Borrow as Mutable While Also Borrowed as Immutable".to_string(),
+            fact_pratijna: "Concurrent active borrow paths overlap with conflicting exclusivity permissions.".to_string(),
+            reason_hetu: "Aliasing XOR Mutability theorem violation: cannot co-exist with active shared references.".to_string(),
+            fix_udaharana: "Limit the lexical scope of the shared reference or clone data before mutation.".to_string(),
+            law_nigamana: "Agam Safe Concurrency & Memory Safety Guarantee §5.0: Memory must have either multiple readers OR a single writer.".to_string(),
+        },
+    );
+
+    explanations.insert(
+        "E0599",
+        NyayaProofExplanation {
+            code: "E0599".to_string(),
+            title: "No Method Named Found on Type in Current Scope".to_string(),
+            fact_pratijna: "Method invocation expression attempted on a receiver that does not declare or implement the method.".to_string(),
+            reason_hetu: "Method resolution in receiver struct definition, inherent `impl`, and in-scope traits found no matching signature.".to_string(),
+            fix_udaharana: "Implement the required method in an `impl Type` block or import the governing `trait` into scope.".to_string(),
+            law_nigamana: "Agam Object & Trait System §6.2: Method dispatch requires explicit inherent implementation or an in-scope trait binding.".to_string(),
+        },
+    );
+
     explanations
         .remove(code)
         .unwrap_or_else(|| NyayaProofExplanation {

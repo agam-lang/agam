@@ -71,6 +71,42 @@ impl fmt::Display for ErrorCode {
     }
 }
 
+/// A formal 4-part Nyāya proof (*Fact, Reason, Fix, Law*) for a compiler diagnostic.
+///
+/// Grounded in classical Indian epistemology (Nyāya-śāstra):
+/// 1. **Pratijñā (Fact)**: The thesis or empirical condition observed at the code locus.
+/// 2. **Hetu (Reason)**: The underlying formal semantic/type/effect invariant violation.
+/// 3. **Udāharaṇa (Fix/Example)**: The actionable code modification / suggestion.
+/// 4. **Nigamana (Law/Conclusion)**: The universal language specification axiom or constraint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NyayaProof {
+    /// Fact / Pratijñā: The empirical condition observed at the code locus.
+    pub fact: String,
+    /// Reason / Hetu: The formal semantic/type/effect invariant violated.
+    pub reason: String,
+    /// Fix / Udāharaṇa: The actionable fix or example correcting the violation.
+    pub fix: Option<String>,
+    /// Law / Nigamana: The governing language rule or invariant constraint.
+    pub law: String,
+}
+
+impl NyayaProof {
+    /// Construct a new formal 4-part Nyāya proof.
+    pub fn new(
+        fact: impl Into<String>,
+        reason: impl Into<String>,
+        fix: Option<impl Into<String>>,
+        law: impl Into<String>,
+    ) -> Self {
+        Self {
+            fact: fact.into(),
+            reason: reason.into(),
+            fix: fix.map(Into::into),
+            law: law.into(),
+        }
+    }
+}
+
 /// A compiler diagnostic: an error, warning, or note with source locations.
 ///
 /// # Example
@@ -95,6 +131,8 @@ pub struct Diagnostic {
     pub help: Option<String>,
     /// Optional longer explanation of the error.
     pub note: Option<String>,
+    /// Optional formal 4-part Nyāya proof.
+    pub proof: Option<NyayaProof>,
 }
 
 impl Diagnostic {
@@ -107,6 +145,7 @@ impl Diagnostic {
             labels: Vec::new(),
             help: None,
             note: None,
+            proof: None,
         }
     }
 
@@ -119,6 +158,7 @@ impl Diagnostic {
             labels: Vec::new(),
             help: None,
             note: None,
+            proof: None,
         }
     }
 
@@ -131,6 +171,7 @@ impl Diagnostic {
             labels: Vec::new(),
             help: None,
             note: None,
+            proof: None,
         }
     }
 
@@ -143,6 +184,7 @@ impl Diagnostic {
             labels: Vec::new(),
             help: None,
             note: None,
+            proof: None,
         }
     }
 
@@ -161,6 +203,12 @@ impl Diagnostic {
     /// Add a note.
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.note = Some(note.into());
+        self
+    }
+
+    /// Add a formal 4-part Nyāya proof.
+    pub fn with_proof(mut self, proof: NyayaProof) -> Self {
+        self.proof = Some(proof);
         self
     }
 
@@ -202,5 +250,17 @@ mod tests {
         let diag = Diagnostic::ice("assertion failed in type checker");
         assert!(diag.is_error());
         assert_eq!(diag.level, DiagnosticLevel::Ice);
+    }
+
+    #[test]
+    fn test_nyaya_proof_creation() {
+        let proof = NyayaProof::new(
+            "expression evaluated to type `str`",
+            "function return contract expects type `i32`",
+            Some("use `.parse::<i32>()` or cast expression"),
+            "every returned expression must strictly match function signature",
+        );
+        let diag = Diagnostic::error("E0308", "mismatched types").with_proof(proof.clone());
+        assert_eq!(diag.proof, Some(proof));
     }
 }

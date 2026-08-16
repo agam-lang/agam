@@ -57,6 +57,25 @@ pub struct SarifResult {
     pub message: SarifMessage,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub locations: Vec<SarifLocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<SarifProperties>,
+}
+
+/// Optional properties bag attached to a SARIF result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SarifProperties {
+    #[serde(rename = "nyayaProof", skip_serializing_if = "Option::is_none")]
+    pub nyaya_proof: Option<SarifNyayaProof>,
+}
+
+/// Serialized Nyāya 4-part proof structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SarifNyayaProof {
+    pub fact: String,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+    pub law: String,
 }
 
 /// Location in source code.
@@ -153,6 +172,15 @@ pub fn to_sarif(diagnostics: &[Diagnostic], source_file: Option<&SourceFile>) ->
             });
         }
 
+        let properties = diag.proof.as_ref().map(|p| SarifProperties {
+            nyaya_proof: Some(SarifNyayaProof {
+                fact: p.fact.clone(),
+                reason: p.reason.clone(),
+                fix: p.fix.clone(),
+                law: p.law.clone(),
+            }),
+        });
+
         results.push(SarifResult {
             rule_id,
             level,
@@ -160,6 +188,7 @@ pub fn to_sarif(diagnostics: &[Diagnostic], source_file: Option<&SourceFile>) ->
                 text: diag.message.clone(),
             },
             locations,
+            properties,
         });
     }
 
@@ -221,5 +250,26 @@ mod tests {
         );
         assert!(json.contains("W0001"));
         assert!(json.contains("warning"));
+    }
+
+    #[test]
+    fn test_sarif_with_nyaya_proof() {
+        let proof = crate::diagnostic::NyayaProof::new(
+            "unresolved name `foobar`",
+            "symbol `foobar` does not exist in current scope",
+            Some("define `foobar` or import from module"),
+            "every referenced identifier must be declared in scope",
+        );
+        let diag = Diagnostic::error("E0425", "cannot find value `foobar` in this scope")
+            .with_proof(proof);
+
+        let sarif = to_sarif(&[diag], None);
+        let result = &sarif.runs[0].results[0];
+        assert!(result.properties.is_some());
+        let props = result.properties.as_ref().unwrap();
+        assert!(props.nyaya_proof.is_some());
+        let np = props.nyaya_proof.as_ref().unwrap();
+        assert_eq!(np.fact, "unresolved name `foobar`");
+        assert_eq!(np.reason, "symbol `foobar` does not exist in current scope");
     }
 }

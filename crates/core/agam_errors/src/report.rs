@@ -1,7 +1,7 @@
 //! Diagnostic emitter — renders diagnostics to the terminal.
 //!
 //! Produces `rustc`-style error output with colored source snippets,
-//! line numbers, and underlined error locations.
+//! line numbers, underlined error locations, and formal 4-part Nyāya proofs.
 
 use crate::diagnostic::{Diagnostic, DiagnosticLevel};
 use crate::span::SourceFile;
@@ -62,7 +62,7 @@ impl DiagnosticEmitter {
         self.diagnostics.push(diagnostic);
     }
 
-    /// Render a diagnostic to stderr.
+    /// Render a diagnostic.
     fn render(&mut self, diag: &Diagnostic) {
         // Level prefix with color
         let level_str = match diag.level {
@@ -147,6 +147,26 @@ impl DiagnosticEmitter {
             self.render_line(&format!(" \x1b[1;36mnote\x1b[0m: {}", note));
         }
 
+        // Formal Nyāya 4-part proof
+        if let Some(proof) = &diag.proof {
+            self.render_line(" \x1b[1;35m--- Nyāya 4-Part Proof (Nyāya-śāstra) ---\x1b[0m");
+            self.render_line(&format!(
+                "   \x1b[1;33m[Fact / Pratijñā]\x1b[0m   {}",
+                proof.fact
+            ));
+            self.render_line(&format!(
+                "   \x1b[1;31m[Reason / Hetu]\x1b[0m    {}",
+                proof.reason
+            ));
+            if let Some(fix) = &proof.fix {
+                self.render_line(&format!("   \x1b[1;32m[Fix / Udāharaṇa]\x1b[0m  {}", fix));
+            }
+            self.render_line(&format!(
+                "   \x1b[1;36m[Law / Nigamana]\x1b[0m   {}",
+                proof.law
+            ));
+        }
+
         self.render_line("");
     }
 
@@ -218,7 +238,7 @@ impl Default for DiagnosticEmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diagnostic::{Diagnostic, Label};
+    use crate::diagnostic::{Diagnostic, Label, NyayaProof};
     use crate::span::{SourceFile, SourceId, Span};
 
     #[test]
@@ -282,5 +302,29 @@ mod tests {
         assert!(rendered.contains("unknown name"));
         assert!(rendered.contains("test.agam:1:9"));
         assert!(rendered.contains("not found"));
+    }
+
+    #[test]
+    fn test_buffered_emitter_renders_nyaya_proof() {
+        let mut emitter = DiagnosticEmitter::buffered();
+        let proof = NyayaProof::new(
+            "assignment target `x` is immutable",
+            "cannot mutate value bound with immutable `let`",
+            Some("change declaration to `let mut x`"),
+            "variables in Agam are immutable by default",
+        );
+        let diag = Diagnostic::error("E0384", "cannot assign twice to immutable variable")
+            .with_proof(proof);
+
+        emitter.emit(diag);
+        let rendered = emitter.take_rendered_output();
+        assert!(rendered.contains("Nyāya 4-Part Proof"));
+        assert!(rendered.contains("[Fact / Pratijñā]"));
+        assert!(rendered.contains("assignment target `x` is immutable"));
+        assert!(rendered.contains("[Reason / Hetu]"));
+        assert!(rendered.contains("[Fix / Udāharaṇa]"));
+        assert!(rendered.contains("change declaration to `let mut x`"));
+        assert!(rendered.contains("[Law / Nigamana]"));
+        assert!(rendered.contains("variables in Agam are immutable by default"));
     }
 }
