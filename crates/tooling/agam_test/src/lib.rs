@@ -622,4 +622,103 @@ fn test_chained_if_else() -> bool:
         assert_eq!(summary.total(), 1);
         assert_eq!(summary.passed(), 1);
     }
+
+    #[test]
+    fn run_source_nested_loops_grid_sum() {
+        let summary = run_source(
+            r#"
+fn grid_sum(rows: i64, cols: i64) -> i64:
+    let mut total: i64 = 0
+    let mut r: i64 = 0
+    while r < rows:
+        let mut c: i64 = 0
+        while c < cols:
+            total += r * cols + c
+            c += 1
+        r += 1
+    return total
+
+@test
+fn test_grid_sum() -> bool:
+    let sum = grid_sum(3, 4)
+    # Sum of 0..11 = 66
+    return sum == 66
+"#,
+            "memory://grid_sum.agam",
+        )
+        .expect("run grid sum tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_bitwise_operations_and_shifts() {
+        let summary = run_source(
+            r#"
+@test
+fn test_bitwise_ops() -> bool:
+    let a: i64 = 12   # 0b1100
+    let b: i64 = 10   # 0b1010
+    let and_res = a & b   # 0b1000 = 8
+    let or_res = a | b    # 0b1110 = 14
+    let xor_res = a ^ b   # 0b0110 = 6
+    let shl_res = a << 2  # 48
+    let shr_res = a >> 1  # 6
+    return and_res == 8 && or_res == 14 && xor_res == 6 && shl_res == 48 && shr_res == 6
+"#,
+            "memory://bitwise.agam",
+        )
+        .expect("run bitwise tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_collatz_conjecture_recursion() {
+        let summary = run_source(
+            r#"
+fn collatz_steps(n: i64) -> i64:
+    if n == 1:
+        return 0
+    if n % 2 == 0:
+        return 1 + collatz_steps(n / 2)
+    return 1 + collatz_steps(3 * n + 1)
+
+@test
+fn test_collatz() -> bool:
+    let s1 = collatz_steps(1)
+    let s2 = collatz_steps(6)   # 6 -> 3 -> 10 -> 5 -> 16 -> 8 -> 4 -> 2 -> 1 (8 steps)
+    let s3 = collatz_steps(12)  # 12 -> 6 (1 + 8 = 9 steps)
+    return s1 == 0 && s2 == 8 && s3 == 9
+"#,
+            "memory://collatz.agam",
+        )
+        .expect("run collatz tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
+
+    #[test]
+    fn run_source_higher_order_functions_and_composition() {
+        let summary = run_source(
+            r#"
+fn apply_twice(x: i64, f: |i64| -> i64) -> i64:
+    return f(f(x))
+
+@test
+fn test_higher_order() -> bool:
+    let res = apply_twice(5, |v| v * 2 + 1)
+    # v = 5 -> 11 -> 23
+    return res == 23
+"#,
+            "memory://higher_order.agam",
+        )
+        .expect("run higher order tests");
+
+        assert_eq!(summary.total(), 1);
+        assert_eq!(summary.passed(), 1);
+    }
 }

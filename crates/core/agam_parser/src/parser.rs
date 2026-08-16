@@ -2082,6 +2082,67 @@ impl Parser {
                     mode: TypeMode::Static,
                 })
             }
+            TokenKind::Fn => {
+                self.advance(); // fn
+                self.expect(TokenKind::LParen)?;
+                let mut params = Vec::new();
+                while self.peek_kind() != TokenKind::RParen && !self.at_end() {
+                    params.push(self.parse_type_expr()?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+                let return_type = if self.eat(TokenKind::Arrow) {
+                    Box::new(self.parse_type_expr()?)
+                } else {
+                    Box::new(TypeExpr {
+                        id: self.node_id(),
+                        span: tok.span,
+                        kind: TypeExprKind::Tuple(Vec::new()),
+                        mode: TypeMode::Static,
+                    })
+                };
+                Ok(TypeExpr {
+                    id,
+                    span: Span::new(tok.span.source_id, tok.span.start, return_type.span.end),
+                    kind: TypeExprKind::Function {
+                        params,
+                        return_type,
+                    },
+                    mode: TypeMode::Static,
+                })
+            }
+            TokenKind::Pipe => {
+                self.advance(); // |
+                let mut params = Vec::new();
+                while self.peek_kind() != TokenKind::Pipe && !self.at_end() {
+                    params.push(self.parse_type_expr()?);
+                    if !self.eat(TokenKind::Comma) {
+                        break;
+                    }
+                }
+                self.expect(TokenKind::Pipe)?;
+                let return_type = if self.eat(TokenKind::Arrow) {
+                    Box::new(self.parse_type_expr()?)
+                } else {
+                    Box::new(TypeExpr {
+                        id: self.node_id(),
+                        span: tok.span,
+                        kind: TypeExprKind::Tuple(Vec::new()),
+                        mode: TypeMode::Static,
+                    })
+                };
+                Ok(TypeExpr {
+                    id,
+                    span: Span::new(tok.span.source_id, tok.span.start, return_type.span.end),
+                    kind: TypeExprKind::Function {
+                        params,
+                        return_type,
+                    },
+                    mode: TypeMode::Static,
+                })
+            }
             TokenKind::SelfType => {
                 self.advance();
                 Ok(TypeExpr {

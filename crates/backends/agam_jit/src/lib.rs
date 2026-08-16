@@ -961,12 +961,17 @@ impl AgamJit {
             Op::Unit => Ok(default_value(builder, JitType::Unit, pointer_type)),
             Op::Copy(value) => lookup_value(values, *value),
             Op::LoadLocal(name) => {
-                let var = *local_vars
-                    .get(name)
-                    .ok_or_else(|| format!("unknown local `{name}` in JIT load"))?;
-                let local_ty = layout.local_types.get(name).copied().unwrap_or(result_ty);
-                let value = builder.use_var(var);
-                self.coerce_value(builder, value, local_ty, result_ty, mem_flags)
+                if let Some(func_id) = self.func_ids.get(name) {
+                    let func_ref = self.module.declare_func_in_func(*func_id, builder.func);
+                    Ok(builder.ins().func_addr(pointer_type, func_ref))
+                } else {
+                    let var = *local_vars
+                        .get(name)
+                        .ok_or_else(|| format!("unknown local `{name}` in JIT load"))?;
+                    let local_ty = layout.local_types.get(name).copied().unwrap_or(result_ty);
+                    let value = builder.use_var(var);
+                    self.coerce_value(builder, value, local_ty, result_ty, mem_flags)
+                }
             }
             Op::StoreLocal { name, value } => {
                 let var = *local_vars
@@ -1032,6 +1037,33 @@ impl AgamJit {
                 if is_print_builtin(callee) {
                     self.emit_print_call(builder, layout, values, args)?;
                     Ok(default_value(builder, result_ty, pointer_type))
+                } else if let Some(var) = local_vars.get(callee) {
+                    let func_ptr = builder.use_var(*var);
+                    let mut lowered_args = Vec::with_capacity(args.len());
+                    let mut sig = self.module.make_signature();
+                    for arg in args {
+                        let source_ty = value_type(layout, *arg);
+                        sig.params.push(cranelift_codegen::ir::AbiParam::new(
+                            source_ty.clif_type(pointer_type),
+                        ));
+                        let value = lookup_value(values, *arg)?;
+                        lowered_args.push(value);
+                    }
+                    if result_ty != JitType::Unit {
+                        sig.returns.push(cranelift_codegen::ir::AbiParam::new(
+                            result_ty.clif_type(pointer_type),
+                        ));
+                    }
+                    let sig_ref = builder.import_signature(sig);
+                    let call_inst = builder
+                        .ins()
+                        .call_indirect(sig_ref, func_ptr, &lowered_args);
+                    if result_ty == JitType::Unit {
+                        Ok(default_value(builder, result_ty, pointer_type))
+                    } else {
+                        let res_val = builder.inst_results(call_inst)[0];
+                        Ok(res_val)
+                    }
                 } else {
                     let user_param_tys =
                         self.layouts.get(callee).map(|layout| layout.params.clone());
