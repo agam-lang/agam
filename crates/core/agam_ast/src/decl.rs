@@ -37,6 +37,8 @@ pub struct Decl {
     pub kind: DeclKind,
     /// Compiler attributes: `#[align(64)]`, `#[dispatch(SIMD)]`, etc.
     pub attributes: Vec<Attribute>,
+    /// Doc comments attached to the declaration.
+    pub doc_comments: Vec<String>,
 }
 
 /// The different kinds of declarations.

@@ -448,6 +448,30 @@ enum Command {
         env: Option<String>,
     },
 
+    /// Generate HTML/JSON documentation for the current package or source files
+    Doc {
+        /// Source file or workspace path (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Output directory for rendered documentation (defaults to target/doc)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Open rendered HTML documentation in the default browser
+        #[arg(long)]
+        open: bool,
+
+        /// Output documentation as structured JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Extract and execute code examples from doc comments as test cases
+    Doctest {
+        /// Source file or workspace path (defaults to current directory)
+        path: Option<PathBuf>,
+    },
+
     /// Type-check without generating code (fast feedback)
     Check {
         /// Source file(s) to check
@@ -1668,6 +1692,184 @@ fn main() {
                 }
                 Err(e) => {
                     eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            }
+        }
+
+        Command::Doc {
+            path,
+            output,
+            open,
+            json,
+        } => {
+            let root = path.unwrap_or_else(|| PathBuf::from("."));
+            let out_dir = output.unwrap_or_else(|| root.join("target").join("doc"));
+
+            let source_files = if root.is_file() {
+                vec![root.clone()]
+            } else if root.join("src").join("main.agam").exists() {
+                vec![root.join("src").join("main.agam")]
+            } else if root.join("src").join("lib.agam").exists() {
+                vec![root.join("src").join("lib.agam")]
+            } else {
+                let mut files = Vec::new();
+                if let Ok(entries) = std::fs::read_dir(root.join("src")) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.extension().is_some_and(|ext| ext == "agam") {
+                            files.push(p);
+                        }
+                    }
+                }
+                if files.is_empty() {
+                    if let Ok(entries) = std::fs::read_dir(&root) {
+                        for entry in entries.flatten() {
+                            let p = entry.path();
+                            if p.extension().is_some_and(|ext| ext == "agam") {
+                                files.push(p);
+                            }
+                        }
+                    }
+                }
+                files
+            };
+
+            let pkg_name = root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("agam_project");
+            let mut combined_source = String::new();
+            for file in &source_files {
+                if let Ok(content) = std::fs::read_to_string(file) {
+                    combined_source.push_str(&content);
+                    combined_source.push('\n');
+                }
+            }
+
+            if combined_source.trim().is_empty() {
+                eprintln!(
+                    "\x1b[1;31merror\x1b[0m: no Agam source files found in {}",
+                    root.display()
+                );
+                process::exit(1);
+            }
+
+            match agam_doc::build_doc_package_from_source(
+                pkg_name,
+                env!("CARGO_PKG_VERSION"),
+                Some("Agam Documentation"),
+                &combined_source,
+            ) {
+                Ok(doc_pkg) => {
+                    if json {
+                        match agam_doc::generate_json(&doc_pkg) {
+                            Ok(json_str) => println!("{json_str}"),
+                            Err(e) => {
+                                eprintln!(
+                                    "\x1b[1;31merror\x1b[0m: failed to serialize doc json: {e}"
+                                );
+                                process::exit(1);
+                            }
+                        }
+                    } else {
+                        match agam_doc::generate_html(&doc_pkg, &out_dir) {
+                            Ok(_) => {
+                                println!(
+                                    "\x1b[1;32m    Finished\x1b[0m documentation in {}",
+                                    out_dir.display()
+                                );
+                                if open {
+                                    let index_path = out_dir.join("index.html");
+                                    let _ = open_in_browser(&index_path);
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("\x1b[1;31merror\x1b[0m: failed to write html docs: {e}");
+                                process::exit(1);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: doc generation failed: {e}");
+                    process::exit(1);
+                }
+            }
+        }
+
+        Command::Doctest { path } => {
+            let root = path.unwrap_or_else(|| PathBuf::from("."));
+            let source_files = if root.is_file() {
+                vec![root.clone()]
+            } else if root.join("src").join("main.agam").exists() {
+                vec![root.join("src").join("main.agam")]
+            } else if root.join("src").join("lib.agam").exists() {
+                vec![root.join("src").join("lib.agam")]
+            } else {
+                vec![]
+            };
+
+            let pkg_name = root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("agam_project");
+            let mut combined_source = String::new();
+            for file in &source_files {
+                if let Ok(content) = std::fs::read_to_string(file) {
+                    combined_source.push_str(&content);
+                    combined_source.push('\n');
+                }
+            }
+
+            match agam_doc::build_doc_package_from_source(
+                pkg_name,
+                env!("CARGO_PKG_VERSION"),
+                None,
+                &combined_source,
+            ) {
+                Ok(doc_pkg) => {
+                    let report = agam_doc::run_package_doctests(&doc_pkg);
+                    println!("running {} doctests...", report.total);
+                    for outcome in &report.outcomes {
+                        match &outcome.status {
+                            agam_doc::doctest::TestStatus::Passed => {
+                                println!(
+                                    "test {} (line {}) ... \x1b[32mok\x1b[0m",
+                                    outcome.item_name, outcome.line
+                                );
+                            }
+                            agam_doc::doctest::TestStatus::Failed(err) => {
+                                println!(
+                                    "test {} (line {}) ... \x1b[31mFAILED\x1b[0m: {err}",
+                                    outcome.item_name, outcome.line
+                                );
+                            }
+                            agam_doc::doctest::TestStatus::Ignored => {
+                                println!(
+                                    "test {} (line {}) ... \x1b[33mignored\x1b[0m",
+                                    outcome.item_name, outcome.line
+                                );
+                            }
+                        }
+                    }
+                    println!(
+                        "\ndoctest result: {}. {} passed; {} failed; {} ignored",
+                        if report.is_success() {
+                            "\x1b[32mok\x1b[0m"
+                        } else {
+                            "\x1b[31mFAILED\x1b[0m"
+                        },
+                        report.passed,
+                        report.failed,
+                        report.ignored
+                    );
+                    if !report.is_success() {
+                        process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: doctest setup failed: {e}");
                     process::exit(1);
                 }
             }
@@ -5919,6 +6121,24 @@ fn daemon_liveness(status: &DaemonStatusRecord, now: u128) -> DaemonLiveness {
     } else {
         DaemonLiveness::Stale
     }
+}
+
+fn open_in_browser(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        process::Command::new("cmd")
+            .args(["/C", "start", "", &path.to_string_lossy()])
+            .spawn()?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        process::Command::new("open").arg(path).spawn()?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        process::Command::new("xdg-open").arg(path).spawn()?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -15946,5 +16166,52 @@ fn hot(n: i64) -> i64 { return n + 1; }
 
             let _ = fs::remove_dir_all(root);
         });
+    }
+
+    #[test]
+    fn test_doc_generation_flow() {
+        let dir = temp_dir("doc_test");
+        let src = r#"//! Math utility crate.
+
+/// Computes the factorial of n.
+///
+/// ```agam
+/// let f = fact(5);
+/// ```
+fn fact(n: i32) -> i32 { return 120 }
+
+/// 2D Point structure.
+struct Point { x: f64, y: f64 }
+"#;
+        let main_file = dir.join("src").join("main.agam");
+        fs::create_dir_all(main_file.parent().unwrap()).unwrap();
+        fs::write(&main_file, src).unwrap();
+
+        let out_dir = dir.join("target").join("doc");
+        let doc_pkg = agam_doc::build_doc_package_from_source(
+            "doc_project",
+            "0.1.0",
+            Some("Math Utility Documentation"),
+            src,
+        )
+        .expect("build doc pkg");
+
+        assert_eq!(doc_pkg.name, "doc_project");
+        assert_eq!(doc_pkg.root_module.items.len(), 2);
+
+        agam_doc::generate_html(&doc_pkg, &out_dir).expect("generate html");
+        assert!(out_dir.join("index.html").exists());
+        assert!(out_dir.join("fn.fact.html").exists());
+        assert!(out_dir.join("struct.Point.html").exists());
+
+        let json_output = agam_doc::generate_json(&doc_pkg).expect("generate json");
+        assert!(json_output.contains("fact"));
+        assert!(json_output.contains("Point"));
+
+        let report = agam_doc::run_package_doctests(&doc_pkg);
+        assert_eq!(report.total, 1);
+        assert_eq!(report.passed, 1);
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

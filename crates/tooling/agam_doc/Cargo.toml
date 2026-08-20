@@ -6,3 +6,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agam_ast = { path = "../../core/agam_ast" }
+agam_lexer = { path = "../../core/agam_lexer" }
+agam_parser = { path = "../../core/agam_parser" }
+agam_errors = { path = "../../core/agam_errors" }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

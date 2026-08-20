@@ -240,14 +240,16 @@ impl<'src> Lexer<'src> {
                 }
             }
 
-            // ── Slash / SlashEq / Line Comment / Block Comment ──
+            // ── Slash / SlashEq / Line Comment / Block Comment / Doc Comment ──
             '/' => {
                 if self.cursor.peek() == Some('/') {
                     self.cursor.advance();
-                    // Check for doc comment ///
                     if self.cursor.peek() == Some('/') {
                         self.cursor.advance();
                         self.scan_line_comment(start, TokenKind::DocComment)
+                    } else if self.cursor.peek() == Some('!') {
+                        self.cursor.advance();
+                        self.scan_line_comment(start, TokenKind::ModuleDocComment)
                     } else {
                         self.scan_line_comment(start, TokenKind::LineComment)
                     }
@@ -262,8 +264,18 @@ impl<'src> Lexer<'src> {
                 }
             }
 
-            // ── Hash comment (base mode) ──
-            '#' => self.scan_line_comment(start, TokenKind::LineComment),
+            // ── Hash comment / Doc comments (base mode) ──
+            '#' => {
+                if self.cursor.peek() == Some('#') {
+                    self.cursor.advance();
+                    self.scan_line_comment(start, TokenKind::DocComment)
+                } else if self.cursor.peek() == Some('!') {
+                    self.cursor.advance();
+                    self.scan_line_comment(start, TokenKind::ModuleDocComment)
+                } else {
+                    self.scan_line_comment(start, TokenKind::LineComment)
+                }
+            }
 
             // ── Percent / PercentEq ──
             '%' => {
@@ -802,6 +814,19 @@ mod tests {
     fn test_doc_comment() {
         let tokens = lex("/// Doc comment\n42");
         assert_eq!(tokens[0].kind, TokenKind::DocComment);
+    }
+
+    #[test]
+    fn test_module_doc_comment() {
+        let tokens = lex("//! Module doc\n42");
+        assert_eq!(tokens[0].kind, TokenKind::ModuleDocComment);
+    }
+
+    #[test]
+    fn test_base_mode_doc_comments() {
+        let tokens = lex("## Item doc\n#! Module doc\n42");
+        assert_eq!(tokens[0].kind, TokenKind::DocComment);
+        assert_eq!(tokens[2].kind, TokenKind::ModuleDocComment);
     }
 
     #[test]

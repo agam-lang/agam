@@ -29,6 +29,8 @@ pub struct NodeId(pub u32);
 pub struct Module {
     pub id: NodeId,
     pub span: Span,
+    /// Module-level doc comments (from `//!` or `#!`).
+    pub doc_comments: Vec<String>,
     /// Top-level declarations in the file.
     pub declarations: Vec<decl::Decl>,
 }

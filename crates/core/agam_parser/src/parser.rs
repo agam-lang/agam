@@ -85,10 +85,39 @@ impl Parser {
         while self.peek_kind() == TokenKind::Newline
             || self.peek_kind() == TokenKind::LineComment
             || self.peek_kind() == TokenKind::BlockComment
-            || self.peek_kind() == TokenKind::DocComment
         {
             self.advance();
         }
+    }
+
+    fn parse_doc_comments(&mut self) -> Vec<String> {
+        let mut docs = Vec::new();
+        while self.peek_kind() == TokenKind::Newline
+            || self.peek_kind() == TokenKind::LineComment
+            || self.peek_kind() == TokenKind::BlockComment
+            || self.peek_kind() == TokenKind::DocComment
+            || self.peek_kind() == TokenKind::ModuleDocComment
+        {
+            if self.peek_kind() == TokenKind::DocComment
+                || self.peek_kind() == TokenKind::ModuleDocComment
+            {
+                let lexeme = self.peek().lexeme.clone();
+                let text = if let Some(s) = lexeme.strip_prefix("///") {
+                    s.trim_start()
+                } else if let Some(s) = lexeme.strip_prefix("//!") {
+                    s.trim_start()
+                } else if let Some(s) = lexeme.strip_prefix("##") {
+                    s.trim_start()
+                } else if let Some(s) = lexeme.strip_prefix("#!") {
+                    s.trim_start()
+                } else {
+                    &lexeme
+                };
+                docs.push(text.to_string());
+            }
+            self.advance();
+        }
+        docs
     }
 
     fn at_end(&self) -> bool {
@@ -106,6 +135,27 @@ impl Parser {
 
     pub fn parse_module(&mut self, source_id: SourceId) -> Result<Module, Vec<ParseError>> {
         let mut decls = Vec::new();
+        let mut module_docs = Vec::new();
+
+        while self.peek_kind() == TokenKind::Newline
+            || self.peek_kind() == TokenKind::LineComment
+            || self.peek_kind() == TokenKind::BlockComment
+            || self.peek_kind() == TokenKind::ModuleDocComment
+        {
+            if self.peek_kind() == TokenKind::ModuleDocComment {
+                let lexeme = self.peek().lexeme.clone();
+                let text = if let Some(s) = lexeme.strip_prefix("//!") {
+                    s.trim_start()
+                } else if let Some(s) = lexeme.strip_prefix("#!") {
+                    s.trim_start()
+                } else {
+                    &lexeme
+                };
+                module_docs.push(text.to_string());
+            }
+            self.advance();
+        }
+
         self.skip_newlines();
         while !self.at_end() {
             match self.parse_declaration() {
@@ -121,6 +171,7 @@ impl Parser {
             Ok(Module {
                 id: self.node_id(),
                 span: Span::new(source_id, 0, self.peek().span.end),
+                doc_comments: module_docs,
                 declarations: decls,
             })
         } else {
@@ -131,7 +182,7 @@ impl Parser {
     // ── Declarations ──
 
     fn parse_declaration(&mut self) -> Result<Decl, ParseError> {
-        self.skip_newlines();
+        let doc_comments = self.parse_doc_comments();
         let span_start = self.peek().span.start;
         let vis = self.parse_visibility();
         let annotations = self.parse_annotations()?;
@@ -181,6 +232,7 @@ impl Parser {
                     }),
                     span: Span::new(self.peek().span.source_id, span_start, self.peek().span.end),
                     attributes: vec![],
+                    doc_comments,
                 });
             }
         };
@@ -190,6 +242,7 @@ impl Parser {
             span: Span::new(self.peek().span.source_id, span_start, self.peek().span.end),
             kind,
             attributes: vec![],
+            doc_comments,
         })
     }
 
@@ -2698,5 +2751,36 @@ mod tests {
         } else {
             panic!("expected inclusive Range expression");
         }
+    }
+
+    #[test]
+    fn test_parse_module_and_item_doc_comments() {
+        let src = r#"//! Math module documentation.
+//! Provides algebraic utilities.
+
+/// Computes the square of a number.
+///
+/// ```agam
+/// let result = square(5);
+/// assert(result == 25);
+/// ```
+fn square(x: i32) -> i32 { return x * x }
+
+/// Represents a 2D point.
+struct Point { x: f64, y: f64 }
+"#;
+        let module = parse_src(src);
+        assert_eq!(module.doc_comments.len(), 2);
+        assert_eq!(module.doc_comments[0], "Math module documentation.");
+        assert_eq!(module.doc_comments[1], "Provides algebraic utilities.");
+
+        assert_eq!(module.declarations.len(), 2);
+        let fn_decl = &module.declarations[0];
+        assert!(fn_decl.doc_comments.len() >= 4);
+        assert_eq!(fn_decl.doc_comments[0], "Computes the square of a number.");
+
+        let struct_decl = &module.declarations[1];
+        assert_eq!(struct_decl.doc_comments.len(), 1);
+        assert_eq!(struct_decl.doc_comments[0], "Represents a 2D point.");
     }
 }

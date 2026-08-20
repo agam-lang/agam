@@ -224,8 +224,10 @@ pub enum TokenKind {
     LineComment,
     /// A block comment (`/* ... */`)
     BlockComment,
-    /// A doc comment (`///`)
+    /// An item doc comment (`///` or `##`)
     DocComment,
+    /// A module doc comment (`//!` or `#!`)
+    ModuleDocComment,
     /// End of file
     Eof,
     /// An unrecognized character (error token)

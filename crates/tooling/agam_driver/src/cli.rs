@@ -230,6 +230,30 @@ pub(crate) enum Command {
         env: Option<String>,
     },
 
+    /// Generate HTML/JSON documentation for the current package or source files
+    Doc {
+        /// Source file or workspace path (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Output directory for rendered documentation (defaults to target/doc)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Open rendered HTML documentation in the default browser
+        #[arg(long)]
+        open: bool,
+
+        /// Output documentation as structured JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Extract and execute code examples from doc comments as test cases
+    Doctest {
+        /// Source file or workspace path (defaults to current directory)
+        path: Option<PathBuf>,
+    },
+
     /// Type-check without generating code (fast feedback)
     Check {
         /// Source file(s) to check

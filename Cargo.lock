@@ -45,6 +45,14 @@ version = "0.1.0"
 [[package]]
 name = "agam_doc"
 version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
+ "agam_lexer",
+ "agam_parser",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "agam_driver"
@@ -52,6 +60,7 @@ version = "0.1.0"
 dependencies = [
  "agam_ast",
  "agam_codegen",
+ "agam_doc",
  "agam_errors",
  "agam_fmt",
  "agam_hir",
