@@ -113,6 +113,9 @@ dependencies = [
 [[package]]
 name = "agam_game"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "agam_hir"
