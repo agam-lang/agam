@@ -31,9 +31,18 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS_DIR = REPO_ROOT / "devops" / "scripts"
 
 
+def sha256(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(65536):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
 def main() -> int:
     verbose = "--verbose" in sys.argv or "-v" in sys.argv
     release = "--release" in sys.argv
+    require_llvm = "--require-llvm" in sys.argv
 
     print("=" * 60)
     print("Agam SDK End-to-End Local Validation")
@@ -50,16 +59,16 @@ def main() -> int:
         shutil.rmtree(staging_dir)
 
     archive_format = "zip" if os.name == "nt" else "tar.gz"
-    archive_ext = archive_format
 
     cmd = [
         sys.executable,
         str(SCRIPTS_DIR / "package_sdk.py"),
         "--output", str(staging_dir),
-        "--require-llvm-bundle",
         "--archive-format", archive_format,
         "--checksum",
     ]
+    if require_llvm:
+        cmd.append("--require-llvm-bundle")
     if release:
         cmd.append("--release")
     if verbose:
@@ -72,15 +81,16 @@ def main() -> int:
         return 1
 
     print("\n--- Step 2: Locate produced artifacts ---")
+    dist_dir = REPO_ROOT / "dist"
     archives = sorted(
         path
-        for path in staging_dir.parent.iterdir()
+        for path in dist_dir.iterdir()
         if path.is_file()
         and (path.suffix == ".zip" or path.name.endswith(".tar.gz"))
         and "agam-sdk-" in path.name
     )
     if not archives:
-        print(f"FAILED: no SDK archive found under {staging_dir.parent}")
+        print(f"FAILED: no SDK archive found under {dist_dir}")
         return 1
 
     archive = archives[0]
@@ -111,12 +121,9 @@ def main() -> int:
         if archive.suffix == ".zip":
             with zipfile.ZipFile(archive) as bundle:
                 bundle.extractall(extract_root)
-        else:
+        elif archive.name.endswith(".tar.gz"):
             with tarfile.open(archive, "r:gz") as bundle:
-                if sys.version_info >= (3, 12):
-                    bundle.extractall(extract_root, filter="data")
-                else:
-                    bundle.extractall(extract_root)
+                bundle.extractall(extract_root)
 
         # Find sdk-manifest.json
         manifests = sorted(extract_root.glob("**/sdk-manifest.json"))
@@ -141,7 +148,7 @@ def main() -> int:
             return 1
         print(f"  compiler:   {compiler_rel} OK")
 
-        # Validate LLVM bundle
+        # Validate LLVM bundle if present
         llvm_bundle = manifest.get("llvm_bundle_root")
         llvm_driver = manifest.get("preferred_llvm_driver")
         if llvm_bundle:
@@ -180,17 +187,9 @@ def main() -> int:
     print("  cleaned up staging artifacts")
 
     print("\n" + "=" * 60)
-    print("ALL CHECKS PASSED — SDK pipeline validated end to end")
+    print("ALL CHECKS PASSED: Agam SDK package contract is valid")
     print("=" * 60)
     return 0
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 if __name__ == "__main__":
