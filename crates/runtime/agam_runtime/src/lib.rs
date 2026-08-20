@@ -21,7 +21,8 @@ pub mod sandbox;
 pub mod simd;
 
 pub use coroutine::{
-    AsyncBarrier, AsyncMutex, AsyncSemaphore, Coroutine, CoroutineState, Generator, JoinHandle,
-    Poll, Runtime, RuntimeBuilder, TaskGroup, TaskId, channel, join, oneshot, select, sleep,
-    timeout, unbounded_channel, yield_now,
+    AsyncBarrier, AsyncCondvar, AsyncMutex, AsyncPipe, AsyncRead, AsyncRwLock, AsyncSemaphore,
+    AsyncWrite, Coroutine, CoroutineState, Generator, JoinHandle, Poll, Runtime, RuntimeBuilder,
+    RuntimeMetrics, TaskGroup, TaskId, channel, join, oneshot, select, sleep, timeout,
+    unbounded_channel, yield_now,
 };

@@ -5,6 +5,7 @@
 //! - Lock-free work-stealing for cross-core load balancing.
 //! - Global injector queue for tasks spawned from external threads.
 //! - Blocking worker pool (`spawn_blocking`) for offloading synchronous tasks.
+//! - Execution metrics and diagnostic introspection (`rt.metrics()`).
 //! - Cooperative `yield_now` points.
 
 use std::collections::VecDeque;
@@ -15,6 +16,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::task::{Context as StdContext, Poll as StdPoll};
 use std::thread::{self, JoinHandle as ThreadJoinHandle};
 
+use super::metrics::{AtomicRuntimeMetrics, RuntimeMetrics};
 use super::task::{JoinHandle, SchedulableTask, TaskCell, TaskId};
 
 /// Configuration options for the async coroutine runtime.
@@ -60,11 +62,12 @@ pub struct Runtime {
 }
 
 struct SchedulerInner {
-    injector: Mutex<VecDeque<Arc<dyn SchedulableTask>>>,
+    injector: Arc<Mutex<VecDeque<Arc<dyn SchedulableTask>>>>,
     local_queues: Vec<Mutex<VecDeque<Arc<dyn SchedulableTask>>>>,
-    condvar: Condvar,
+    condvar: Arc<Condvar>,
     shutdown: AtomicBool,
     active_tasks: AtomicUsize,
+    metrics: AtomicRuntimeMetrics,
     num_workers: usize,
 }
 
@@ -77,11 +80,12 @@ impl Runtime {
         }
 
         let inner = Arc::new(SchedulerInner {
-            injector: Mutex::new(VecDeque::new()),
+            injector: Arc::new(Mutex::new(VecDeque::new())),
             local_queues,
-            condvar: Condvar::new(),
+            condvar: Arc::new(Condvar::new()),
             shutdown: AtomicBool::new(false),
             active_tasks: AtomicUsize::new(0),
+            metrics: AtomicRuntimeMetrics::new(),
             num_workers,
         });
 
@@ -111,6 +115,10 @@ impl Runtime {
         let id = TaskId::new();
         let (task, handle) = TaskCell::new(id, future);
         self.inner.active_tasks.fetch_add(1, Ordering::Relaxed);
+        self.inner
+            .metrics
+            .tasks_spawned
+            .fetch_add(1, Ordering::Relaxed);
         {
             let mut injector = self.inner.injector.lock().unwrap();
             injector.push_back(task);
@@ -151,15 +159,19 @@ impl Runtime {
             match pinned.as_mut().poll(&mut cx) {
                 StdPoll::Ready(output) => return output,
                 StdPoll::Pending => {
-                    // Try processing one task from the scheduler while waiting
                     if let Some(task) = self.inner.pop_task(0) {
-                        task.run();
+                        task.run(&self.inner.injector, &self.inner.condvar);
                     } else {
-                        thread::yield_now();
+                        thread::sleep(std::time::Duration::from_micros(50));
                     }
                 }
             }
         }
+    }
+
+    /// Retrieve runtime execution metrics and statistics snapshot.
+    pub fn metrics(&self) -> RuntimeMetrics {
+        self.inner.metrics.snapshot()
     }
 
     /// Number of active worker threads in the scheduler.
@@ -197,9 +209,15 @@ impl SchedulerInner {
         let num_workers = self.num_workers;
         for offset in 1..num_workers {
             let victim_id = (worker_id + offset) % num_workers;
+            self.metrics
+                .steals_attempted
+                .fetch_add(1, Ordering::Relaxed);
             if let Ok(mut victim_q) = self.local_queues[victim_id].try_lock() {
                 let task = victim_q.pop_back();
                 if task.is_some() {
+                    self.metrics
+                        .steals_successful
+                        .fetch_add(1, Ordering::Relaxed);
                     return task;
                 }
             }
@@ -212,7 +230,7 @@ impl SchedulerInner {
 fn worker_loop(worker_id: usize, sched: Arc<SchedulerInner>) {
     while !sched.shutdown.load(Ordering::Acquire) {
         if let Some(task) = sched.pop_task(worker_id) {
-            task.run();
+            task.run(&sched.injector, &sched.condvar);
         } else {
             let guard = sched.injector.lock().unwrap();
             if guard.is_empty() && !sched.shutdown.load(Ordering::Acquire) {

@@ -2,6 +2,7 @@
 //!
 //! Test framework, property testing, and fuzzing.
 
+pub mod async_concurrency;
 pub mod c_output;
 pub mod error_reporting;
 pub mod gpu_output;

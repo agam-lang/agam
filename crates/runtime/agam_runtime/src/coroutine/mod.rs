@@ -4,13 +4,17 @@
 //! - M:N Work-stealing coroutine scheduler (`Runtime`, `spawn`, `block_on`, `spawn_blocking`)
 //! - Stackless Coroutine & Resumption Engine (`Coroutine`, `CoroutineState`, `Generator`)
 //! - Structured Concurrency Nurseries (`TaskGroup`)
-//! - Async Synchronization (`AsyncMutex`, `AsyncSemaphore`, `AsyncBarrier`)
+//! - Async Synchronization (`AsyncMutex`, `AsyncRwLock`, `AsyncCondvar`, `AsyncSemaphore`, `AsyncBarrier`)
 //! - Lock-free async channels (`channel`, `unbounded_channel`, `oneshot`)
+//! - Non-blocking asynchronous I/O streams (`AsyncPipe`, `AsyncRead`, `AsyncWrite`)
 //! - Async Timers & Deadlines (`sleep`, `timeout`, `interval`)
+//! - Execution Metrics & Diagnostics (`RuntimeMetrics`)
 //! - Async Combinators (`select`, `join`, `yield_now`)
 
 pub mod channel;
 pub mod combinators;
+pub mod io;
+pub mod metrics;
 pub mod nursery;
 pub mod scheduler;
 pub mod state_machine;
@@ -23,10 +27,15 @@ pub use channel::{
     unbounded_channel,
 };
 pub use combinators::{Either, join, select};
+pub use io::{AsyncPipe, AsyncRead, AsyncWrite};
+pub use metrics::RuntimeMetrics;
 pub use nursery::TaskGroup;
 pub use scheduler::{Runtime, RuntimeBuilder, YieldNow, yield_now};
 pub use state_machine::{Coroutine, CoroutineState, Generator, StateTag};
-pub use sync::{AsyncBarrier, AsyncMutex, AsyncMutexGuard, AsyncSemaphore, SemaphorePermit};
+pub use sync::{
+    AsyncBarrier, AsyncCondvar, AsyncMutex, AsyncMutexGuard, AsyncRwLock, AsyncRwLockReadGuard,
+    AsyncRwLockWriteGuard, AsyncSemaphore, SemaphorePermit,
+};
 pub use task::{JoinHandle, Poll, SchedulableTask, TaskError, TaskId};
 pub use timer::{Elapsed, Interval, Sleep, interval, sleep, timeout};
 
@@ -79,7 +88,7 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // 2. M:N Scheduler & Task Spawning Tests
+    // 2. M:N Scheduler, Metrics & Task Spawning Tests
     // ══════════════════════════════════════════════════════════════════════
 
     #[test]
@@ -96,6 +105,12 @@ mod tests {
 
         let res = rt.block_on(async { handle.await.unwrap() });
         assert_eq!(res, 5050);
+
+        let metrics = rt.metrics();
+        assert!(
+            metrics.tasks_spawned >= 1,
+            "metrics must record task spawns"
+        );
     }
 
     #[test]
@@ -112,7 +127,7 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // 3. Async Synchronization & Channel Tests
+    // 3. Async Synchronization (Mutex, RwLock, Condvar) & Channel Tests
     // ══════════════════════════════════════════════════════════════════════
 
     #[test]
@@ -135,6 +150,58 @@ mod tests {
             }
             let val = *counter.lock().await;
             assert_eq!(val, 10);
+        });
+    }
+
+    #[test]
+    fn test_async_rwlock_readers_and_writers() {
+        let rt = RuntimeBuilder::new().worker_threads(4).build();
+        let rw = Arc::new(AsyncRwLock::new(vec![1, 2, 3]));
+
+        let r1 = rw.clone();
+        let r2 = rw.clone();
+        let w = rw.clone();
+
+        rt.block_on(async {
+            let len1 = {
+                let guard = r1.read().await;
+                guard.len()
+            };
+            assert_eq!(len1, 3);
+
+            {
+                let mut wguard = w.write().await;
+                wguard.push(4);
+            }
+
+            let len2 = {
+                let guard = r2.read().await;
+                guard.len()
+            };
+            assert_eq!(len2, 4);
+        });
+    }
+
+    #[test]
+    fn test_async_condvar_signaling() {
+        let rt = RuntimeBuilder::new().worker_threads(2).build();
+        let pair = Arc::new((AsyncMutex::new(false), AsyncCondvar::new()));
+
+        let pair2 = pair.clone();
+        rt.spawn(async move {
+            let (lock, cvar) = &*pair2;
+            let mut started = lock.lock().await;
+            *started = true;
+            cvar.notify_one();
+        });
+
+        rt.block_on(async {
+            let (lock, cvar) = &*pair;
+            let mut started = lock.lock().await;
+            while !*started {
+                started = cvar.wait(started).await;
+            }
+            assert!(*started);
         });
     }
 
@@ -164,7 +231,38 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // 4. Structured Concurrency Nursery Tests
+    // 4. Non-Blocking Asynchronous I/O Pipe Tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_async_pipe_streaming_io() {
+        let rt = RuntimeBuilder::new().worker_threads(2).build();
+        let pipe = Arc::new(AsyncPipe::new(128));
+
+        let p_writer = pipe.clone();
+        rt.spawn(async move {
+            p_writer.write_all(b"hello agam async io!").await.unwrap();
+            p_writer.close();
+        });
+
+        let output = rt.block_on(async {
+            let mut buf = [0u8; 64];
+            let mut bytes_read = Vec::new();
+            loop {
+                let n = pipe.read(&mut buf).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                bytes_read.extend_from_slice(&buf[..n]);
+            }
+            String::from_utf8(bytes_read).unwrap()
+        });
+
+        assert_eq!(output, "hello agam async io!");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 5. Structured Concurrency Nursery Tests
     // ══════════════════════════════════════════════════════════════════════
 
     #[test]
@@ -188,7 +286,7 @@ mod tests {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // 5. Async Combinator & Timeout Tests
+    // 6. Async Combinator & Timeout Tests
     // ══════════════════════════════════════════════════════════════════════
 
     #[test]

@@ -1,10 +1,11 @@
 //! Task and Future abstractions for the Agam stackless coroutine runtime.
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future as StdFuture;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::task::{
     Context as StdContext, Poll as StdPoll, RawWaker, RawWakerVTable, Waker as StdWaker,
 };
@@ -86,7 +87,7 @@ pub struct JoinHandle<T> {
 
 #[allow(dead_code)]
 pub(crate) enum TaskState<T> {
-    Running,
+    Running(Option<StdWaker>),
     Finished(T),
     Cancelled,
     Panicked(String),
@@ -94,7 +95,7 @@ pub(crate) enum TaskState<T> {
 
 impl<T> JoinHandle<T> {
     pub(crate) fn new(id: TaskId, cancelled: Arc<AtomicBool>) -> (Self, Arc<Mutex<TaskState<T>>>) {
-        let state = Arc::new(Mutex::new(TaskState::Running));
+        let state = Arc::new(Mutex::new(TaskState::Running(None)));
         let handle = Self {
             id,
             state: state.clone(),
@@ -107,7 +108,10 @@ impl<T> JoinHandle<T> {
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
         let mut state = self.state.lock().unwrap();
-        if let TaskState::Running = *state {
+        if let TaskState::Running(ref waker) = *state {
+            if let Some(w) = waker {
+                w.wake_by_ref();
+            }
             *state = TaskState::Cancelled;
         }
     }
@@ -120,17 +124,20 @@ impl<T> JoinHandle<T> {
     /// Returns true if the task has completed execution.
     pub fn is_finished(&self) -> bool {
         let state = self.state.lock().unwrap();
-        !matches!(*state, TaskState::Running)
+        !matches!(*state, TaskState::Running(_))
     }
 }
 
 impl<T: Send + 'static> StdFuture for JoinHandle<T> {
     type Output = Result<T, TaskError>;
 
-    fn poll(self: Pin<&mut Self>, _cx: &mut StdContext<'_>) -> StdPoll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut StdContext<'_>) -> StdPoll<Self::Output> {
         let mut state = self.state.lock().unwrap();
-        match &*state {
-            TaskState::Running => StdPoll::Pending,
+        match &mut *state {
+            TaskState::Running(waiter) => {
+                *waiter = Some(cx.waker().clone());
+                StdPoll::Pending
+            }
             TaskState::Finished(_) => {
                 if let TaskState::Finished(val) =
                     std::mem::replace(&mut *state, TaskState::Cancelled)
@@ -169,7 +176,11 @@ impl std::error::Error for TaskError {}
 /// An executable task unit managed by the runtime scheduler.
 pub trait SchedulableTask: Send + Sync {
     fn id(&self) -> TaskId;
-    fn run(&self);
+    fn run(
+        self: Arc<Self>,
+        injector: &Arc<Mutex<VecDeque<Arc<dyn SchedulableTask>>>>,
+        condvar: &Arc<Condvar>,
+    );
     fn is_cancelled(&self) -> bool;
 }
 
@@ -211,21 +222,31 @@ where
         self.cancelled.load(Ordering::Acquire)
     }
 
-    fn run(&self) {
+    fn run(
+        self: Arc<Self>,
+        injector: &Arc<Mutex<VecDeque<Arc<dyn SchedulableTask>>>>,
+        condvar: &Arc<Condvar>,
+    ) {
         if self.is_cancelled() {
             let mut state = self.state.lock().unwrap();
+            if let TaskState::Running(Some(ref waker)) = *state {
+                waker.wake_by_ref();
+            }
             *state = TaskState::Cancelled;
             return;
         }
 
         let mut future_guard = self.future.lock().unwrap();
         if let Some(mut fut) = future_guard.take() {
-            let waker = dummy_waker();
+            let waker = create_task_waker(self.clone(), injector, condvar);
             let mut cx = StdContext::from_waker(&waker);
 
             match fut.as_mut().poll(&mut cx) {
                 StdPoll::Ready(output) => {
                     let mut state = self.state.lock().unwrap();
+                    if let TaskState::Running(Some(ref waiter_waker)) = *state {
+                        waiter_waker.wake_by_ref();
+                    }
                     *state = TaskState::Finished(output);
                 }
                 StdPoll::Pending => {
@@ -234,6 +255,61 @@ where
             }
         }
     }
+}
+
+struct TaskWakerState {
+    task: Arc<dyn SchedulableTask>,
+    injector: Arc<Mutex<VecDeque<Arc<dyn SchedulableTask>>>>,
+    condvar: Arc<Condvar>,
+}
+
+fn create_task_waker(
+    task: Arc<dyn SchedulableTask>,
+    injector: &Arc<Mutex<VecDeque<Arc<dyn SchedulableTask>>>>,
+    condvar: &Arc<Condvar>,
+) -> StdWaker {
+    let state = Box::into_raw(Box::new(TaskWakerState {
+        task,
+        injector: injector.clone(),
+        condvar: condvar.clone(),
+    }));
+
+    unsafe fn clone_waker(ptr: *const ()) -> RawWaker {
+        let state = unsafe { &*(ptr as *const TaskWakerState) };
+        let new_state = Box::into_raw(Box::new(TaskWakerState {
+            task: state.task.clone(),
+            injector: state.injector.clone(),
+            condvar: state.condvar.clone(),
+        }));
+        RawWaker::new(new_state as *const (), &VTABLE)
+    }
+
+    unsafe fn wake_waker(ptr: *const ()) {
+        let state = unsafe { Box::from_raw(ptr as *mut TaskWakerState) };
+        if !state.task.is_cancelled() {
+            let mut q = state.injector.lock().unwrap();
+            q.push_back(state.task.clone());
+            state.condvar.notify_one();
+        }
+    }
+
+    unsafe fn wake_by_ref_waker(ptr: *const ()) {
+        let state = unsafe { &*(ptr as *const TaskWakerState) };
+        if !state.task.is_cancelled() {
+            let mut q = state.injector.lock().unwrap();
+            q.push_back(state.task.clone());
+            state.condvar.notify_one();
+        }
+    }
+
+    unsafe fn drop_waker(ptr: *const ()) {
+        unsafe { drop(Box::from_raw(ptr as *mut TaskWakerState)) };
+    }
+
+    static VTABLE: RawWakerVTable =
+        RawWakerVTable::new(clone_waker, wake_waker, wake_by_ref_waker, drop_waker);
+
+    unsafe { StdWaker::from_raw(RawWaker::new(state as *const (), &VTABLE)) }
 }
 
 pub(crate) fn dummy_waker() -> StdWaker {

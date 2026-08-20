@@ -21,10 +21,16 @@ impl StdFuture for Sleep {
     type Output = ();
 
     fn poll(self: Pin<&mut Self>, cx: &mut StdContext<'_>) -> StdPoll<Self::Output> {
-        if Instant::now() >= self.deadline {
+        let now = Instant::now();
+        if now >= self.deadline {
             StdPoll::Ready(())
         } else {
-            cx.waker().wake_by_ref();
+            let remaining = self.deadline - now;
+            let waker = cx.waker().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(remaining);
+                waker.wake();
+            });
             StdPoll::Pending
         }
     }
@@ -57,10 +63,16 @@ pub async fn timeout<F: StdFuture>(duration: Duration, future: F) -> Result<F::O
             match this.pin.as_mut().poll(cx) {
                 StdPoll::Ready(output) => StdPoll::Ready(Ok(output)),
                 StdPoll::Pending => {
-                    if Instant::now() >= this.deadline {
+                    let now = Instant::now();
+                    if now >= this.deadline {
                         StdPoll::Ready(Err(Elapsed))
                     } else {
-                        cx.waker().wake_by_ref();
+                        let remaining = this.deadline - now;
+                        let waker = cx.waker().clone();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(remaining);
+                            waker.wake();
+                        });
                         StdPoll::Pending
                     }
                 }

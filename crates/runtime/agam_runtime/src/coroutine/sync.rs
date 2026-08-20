@@ -1,13 +1,14 @@
 //! Async-aware Synchronization Primitives.
 //!
-//! Includes AsyncMutex, AsyncSemaphore, AsyncBarrier.
+//! Includes AsyncMutex, AsyncRwLock, AsyncCondvar, AsyncSemaphore, AsyncBarrier.
 
 use std::cell::UnsafeCell;
 use std::collections::VecDeque;
 use std::future::Future as StdFuture;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context as StdContext, Poll as StdPoll, Waker};
 
 // ══════════════════════════════════════════════════════════════════════
@@ -95,16 +96,231 @@ impl<'a, T: ?Sized> DerefMut for AsyncMutexGuard<'a, T> {
 impl<'a, T: ?Sized> Drop for AsyncMutexGuard<'a, T> {
     fn drop(&mut self) {
         let mut state = self.mutex.state.lock().unwrap();
+        state.locked = false;
         if let Some(waker) = state.waiters.pop_front() {
             waker.wake();
-        } else {
-            state.locked = false;
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// 2. Async Semaphore
+// 2. Async Read-Write Lock (AsyncRwLock)
+// ══════════════════════════════════════════════════════════════════════
+
+/// An asynchronous reader-writer lock enabling multiple concurrent readers or an exclusive writer.
+pub struct AsyncRwLock<T: ?Sized> {
+    state: Mutex<RwLockState>,
+    data: UnsafeCell<T>,
+}
+
+unsafe impl<T: ?Sized + Send> Send for AsyncRwLock<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for AsyncRwLock<T> {}
+
+struct RwLockState {
+    readers: usize,
+    writer: bool,
+    read_waiters: VecDeque<Waker>,
+    write_waiters: VecDeque<Waker>,
+}
+
+impl<T> AsyncRwLock<T> {
+    pub fn new(data: T) -> Self {
+        Self {
+            state: Mutex::new(RwLockState {
+                readers: 0,
+                writer: false,
+                read_waiters: VecDeque::new(),
+                write_waiters: VecDeque::new(),
+            }),
+            data: UnsafeCell::new(data),
+        }
+    }
+
+    /// Asynchronously acquires shared read access.
+    pub async fn read(&self) -> AsyncRwLockReadGuard<'_, T> {
+        struct ReadFuture<'a, T: ?Sized> {
+            lock: &'a AsyncRwLock<T>,
+        }
+
+        impl<'a, T: ?Sized> StdFuture for ReadFuture<'a, T> {
+            type Output = AsyncRwLockReadGuard<'a, T>;
+
+            fn poll(self: Pin<&mut Self>, cx: &mut StdContext<'_>) -> StdPoll<Self::Output> {
+                let mut state = self.lock.state.lock().unwrap();
+                if !state.writer {
+                    state.readers += 1;
+                    StdPoll::Ready(AsyncRwLockReadGuard { lock: self.lock })
+                } else {
+                    state.read_waiters.push_back(cx.waker().clone());
+                    StdPoll::Pending
+                }
+            }
+        }
+
+        ReadFuture { lock: self }.await
+    }
+
+    /// Asynchronously acquires exclusive write access.
+    pub async fn write(&self) -> AsyncRwLockWriteGuard<'_, T> {
+        struct WriteFuture<'a, T: ?Sized> {
+            lock: &'a AsyncRwLock<T>,
+        }
+
+        impl<'a, T: ?Sized> StdFuture for WriteFuture<'a, T> {
+            type Output = AsyncRwLockWriteGuard<'a, T>;
+
+            fn poll(self: Pin<&mut Self>, cx: &mut StdContext<'_>) -> StdPoll<Self::Output> {
+                let mut state = self.lock.state.lock().unwrap();
+                if !state.writer && state.readers == 0 {
+                    state.writer = true;
+                    StdPoll::Ready(AsyncRwLockWriteGuard { lock: self.lock })
+                } else {
+                    state.write_waiters.push_back(cx.waker().clone());
+                    StdPoll::Pending
+                }
+            }
+        }
+
+        WriteFuture { lock: self }.await
+    }
+}
+
+pub struct AsyncRwLockReadGuard<'a, T: ?Sized> {
+    lock: &'a AsyncRwLock<T>,
+}
+
+impl<'a, T: ?Sized> Deref for AsyncRwLockReadGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.lock.data.get() }
+    }
+}
+
+impl<'a, T: ?Sized> Drop for AsyncRwLockReadGuard<'a, T> {
+    fn drop(&mut self) {
+        let mut state = self.lock.state.lock().unwrap();
+        state.readers = state.readers.saturating_sub(1);
+        if state.readers == 0 {
+            let next_waker = state.write_waiters.pop_front();
+            if let Some(waker) = next_waker {
+                waker.wake();
+            }
+        }
+    }
+}
+
+pub struct AsyncRwLockWriteGuard<'a, T: ?Sized> {
+    lock: &'a AsyncRwLock<T>,
+}
+
+impl<'a, T: ?Sized> Deref for AsyncRwLockWriteGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.lock.data.get() }
+    }
+}
+
+impl<'a, T: ?Sized> DerefMut for AsyncRwLockWriteGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.lock.data.get() }
+    }
+}
+
+impl<'a, T: ?Sized> Drop for AsyncRwLockWriteGuard<'a, T> {
+    fn drop(&mut self) {
+        let mut state = self.lock.state.lock().unwrap();
+        state.writer = false;
+        if let Some(waker) = state.write_waiters.pop_front() {
+            waker.wake();
+        } else {
+            for waker in state.read_waiters.drain(..) {
+                waker.wake();
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 3. Async Condition Variable (AsyncCondvar)
+// ══════════════════════════════════════════════════════════════════════
+
+/// An asynchronous condition variable enabling tasks to wait for specific predicates.
+pub struct AsyncCondvar {
+    waiters: Mutex<VecDeque<(Arc<AtomicBool>, Waker)>>,
+}
+
+impl AsyncCondvar {
+    pub fn new() -> Self {
+        Self {
+            waiters: Mutex::new(VecDeque::new()),
+        }
+    }
+
+    pub fn notify_one(&self) {
+        let mut waiters = self.waiters.lock().unwrap();
+        if let Some((notified, waker)) = waiters.pop_front() {
+            notified.store(true, Ordering::Release);
+            waker.wake();
+        }
+    }
+
+    pub fn notify_all(&self) {
+        let mut waiters = self.waiters.lock().unwrap();
+        for (notified, waker) in waiters.drain(..) {
+            notified.store(true, Ordering::Release);
+            waker.wake();
+        }
+    }
+
+    pub async fn wait<'a, T>(&self, guard: AsyncMutexGuard<'a, T>) -> AsyncMutexGuard<'a, T> {
+        let mutex = guard.mutex;
+        drop(guard);
+
+        let notified = Arc::new(AtomicBool::new(false));
+        struct WaitFut<'a> {
+            condvar: &'a AsyncCondvar,
+            notified: Arc<AtomicBool>,
+            registered: bool,
+        }
+
+        impl<'a> StdFuture for WaitFut<'a> {
+            type Output = ();
+
+            fn poll(self: Pin<&mut Self>, cx: &mut StdContext<'_>) -> StdPoll<Self::Output> {
+                let this = unsafe { self.get_unchecked_mut() };
+                if this.notified.load(Ordering::Acquire) {
+                    return StdPoll::Ready(());
+                }
+
+                if !this.registered {
+                    this.registered = true;
+                    let mut waiters = this.condvar.waiters.lock().unwrap();
+                    waiters.push_back((this.notified.clone(), cx.waker().clone()));
+                }
+
+                StdPoll::Pending
+            }
+        }
+
+        WaitFut {
+            condvar: self,
+            notified,
+            registered: false,
+        }
+        .await;
+
+        mutex.lock().await
+    }
+}
+
+impl Default for AsyncCondvar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 4. Async Semaphore
 // ══════════════════════════════════════════════════════════════════════
 
 /// An asynchronous counting semaphore.
@@ -185,7 +401,7 @@ impl<'a> Drop for SemaphorePermit<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// 3. Async Barrier
+// 5. Async Barrier
 // ══════════════════════════════════════════════════════════════════════
 
 /// An asynchronous synchronization barrier enabling multiple tasks to wait for each other.
