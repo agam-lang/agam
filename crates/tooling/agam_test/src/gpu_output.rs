@@ -273,4 +273,35 @@ fn metal_kernel(out: &mut [f32]):
         assert_eq!(custom.shared_memory_addrspace(), 3);
         assert_eq!(custom.linker_flags(), vec!["-lamdhip64", "-lhsa-runtime64"]);
     }
+
+    #[test]
+    fn test_direct_spirv_binary_emission_from_mir() {
+        let src = r#"
+@gpu(threads=256)
+fn spirv_compute(a: &[f32], b: &mut [f32]):
+    agam.gpu.barrier()
+    let tid = agam.gpu.thread_id_x()
+    b[tid] = a[tid]
+"#;
+        let source_id = SourceId(0);
+        let tokens = tokenize(src, source_id);
+        let ast = parse(tokens, source_id).expect("parse ast");
+        let mut hir_lowering = HirLowering::new();
+        let hir = hir_lowering.lower_module(&ast);
+        let mut mir_lowering = MirLowering::new();
+        let mir = mir_lowering.lower_module(&hir);
+
+        let spv_words = agam_codegen::spirv::emit_spirv_module(&mir).expect("emit spirv words");
+        assert!(spv_words.len() >= 5);
+        assert_eq!(spv_words[0], agam_codegen::spirv::SPIRV_MAGIC);
+        assert_eq!(spv_words[1], agam_codegen::spirv::SPIRV_VERSION_1_5);
+
+        let spv_bytes =
+            agam_codegen::spirv::emit_spirv_binary(&mir).expect("emit spirv binary bytes");
+        assert_eq!(spv_bytes.len() % 4, 0);
+        assert_eq!(
+            &spv_bytes[0..4],
+            &agam_codegen::spirv::SPIRV_MAGIC.to_le_bytes()
+        );
+    }
 }
