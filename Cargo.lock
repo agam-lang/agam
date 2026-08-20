@@ -172,8 +172,14 @@ version = "0.1.0"
 name = "agam_lsp"
 version = "0.1.0"
 dependencies = [
+ "agam_ast",
+ "agam_doc",
+ "agam_errors",
  "agam_fmt",
+ "agam_lexer",
+ "agam_parser",
  "agam_pkg",
+ "agam_sema",
  "serde_json",
 ]
 

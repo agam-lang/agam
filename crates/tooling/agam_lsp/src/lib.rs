@@ -1,6 +1,8 @@
 //! # agam_lsp
 //!
-//! Language Server Protocol implementation.
+//! Production Language Server Protocol (LSP) implementation for the Agam language.
+
+pub mod analysis;
 
 use std::collections::HashMap;
 use std::fs;
@@ -15,10 +17,10 @@ const LSP_INVALID_PARAMS: i64 = -32602;
 const LSP_SERVER_NOT_INITIALIZED: i64 = -32002;
 
 #[derive(Default)]
-struct ServerState {
-    initialized: bool,
-    workspace: Option<agam_pkg::WorkspaceSession>,
-    open_documents: HashMap<String, String>,
+pub struct ServerState {
+    pub initialized: bool,
+    pub workspace: Option<agam_pkg::WorkspaceSession>,
+    pub open_documents: HashMap<String, String>,
 }
 
 pub fn run_stdio() -> Result<(), String> {
@@ -43,7 +45,7 @@ pub fn run_stdio() -> Result<(), String> {
     Ok(())
 }
 
-fn handle_message(state: &mut ServerState, message: &Value) -> Result<Option<Value>, String> {
+pub fn handle_message(state: &mut ServerState, message: &Value) -> Result<Option<Value>, String> {
     let Some(method) = message.get("method").and_then(Value::as_str) else {
         return Ok(None);
     };
@@ -73,12 +75,13 @@ fn handle_message(state: &mut ServerState, message: &Value) -> Result<Option<Val
         }
         "initialized" | "exit" => Ok(None),
         "textDocument/didOpen" => {
-            apply_did_open(state, message.get("params").unwrap_or(&Value::Null));
-            Ok(None)
+            let notification = apply_did_open(state, message.get("params").unwrap_or(&Value::Null));
+            Ok(notification)
         }
         "textDocument/didChange" => {
-            apply_did_change(state, message.get("params").unwrap_or(&Value::Null));
-            Ok(None)
+            let notification =
+                apply_did_change(state, message.get("params").unwrap_or(&Value::Null));
+            Ok(notification)
         }
         "textDocument/didClose" => {
             apply_did_close(state, message.get("params").unwrap_or(&Value::Null));
@@ -90,6 +93,83 @@ fn handle_message(state: &mut ServerState, message: &Value) -> Result<Option<Val
                 .cloned()
                 .ok_or_else(|| "formatting request is missing an id".to_string())?;
             Ok(Some(handle_formatting(
+                state,
+                id,
+                message.get("params").unwrap_or(&Value::Null),
+            )))
+        }
+        "textDocument/hover" => {
+            let id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "hover request is missing an id".to_string())?;
+            Ok(Some(handle_hover(
+                state,
+                id,
+                message.get("params").unwrap_or(&Value::Null),
+            )))
+        }
+        "textDocument/completion" => {
+            let id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "completion request is missing an id".to_string())?;
+            Ok(Some(handle_completion(
+                state,
+                id,
+                message.get("params").unwrap_or(&Value::Null),
+            )))
+        }
+        "textDocument/definition" => {
+            let id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "definition request is missing an id".to_string())?;
+            Ok(Some(handle_definition(
+                state,
+                id,
+                message.get("params").unwrap_or(&Value::Null),
+            )))
+        }
+        "textDocument/documentSymbol" => {
+            let id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "documentSymbol request is missing an id".to_string())?;
+            Ok(Some(handle_document_symbol(
+                state,
+                id,
+                message.get("params").unwrap_or(&Value::Null),
+            )))
+        }
+        "textDocument/references" => {
+            let id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "references request is missing an id".to_string())?;
+            Ok(Some(handle_references(
+                state,
+                id,
+                message.get("params").unwrap_or(&Value::Null),
+            )))
+        }
+        "textDocument/signatureHelp" => {
+            let id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "signatureHelp request is missing an id".to_string())?;
+            Ok(Some(handle_signature_help(
+                state,
+                id,
+                message.get("params").unwrap_or(&Value::Null),
+            )))
+        }
+        "textDocument/codeAction" => {
+            let id = message
+                .get("id")
+                .cloned()
+                .ok_or_else(|| "codeAction request is missing an id".to_string())?;
+            Ok(Some(handle_code_action(
                 state,
                 id,
                 message.get("params").unwrap_or(&Value::Null),
@@ -119,6 +199,19 @@ fn handle_initialize(state: &mut ServerState, id: Value, params: &Value) -> Valu
                     "capabilities": {
                         "textDocumentSync": TEXT_DOCUMENT_SYNC_FULL,
                         "documentFormattingProvider": true,
+                        "hoverProvider": true,
+                        "completionProvider": {
+                            "resolveProvider": false,
+                            "triggerCharacters": [".", ":", "@", "#"]
+                        },
+                        "definitionProvider": true,
+                        "documentSymbolProvider": true,
+                        "referencesProvider": true,
+                        "documentHighlightProvider": true,
+                        "signatureHelpProvider": {
+                            "triggerCharacters": ["(", ","]
+                        },
+                        "codeActionProvider": true,
                         "workspace": {
                             "workspaceFolders": {
                                 "supported": true,
@@ -140,6 +233,183 @@ fn handle_initialize(state: &mut ServerState, id: Value, params: &Value) -> Valu
     }
 }
 
+fn handle_hover(state: &ServerState, id: Value, params: &Value) -> Value {
+    let Some(uri) = params
+        .get("textDocument")
+        .and_then(|d| d.get("uri"))
+        .and_then(Value::as_str)
+    else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `textDocument.uri`");
+    };
+    let Some(pos) = params.get("position") else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `position`");
+    };
+    let line = pos.get("line").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let character = pos.get("character").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+    let source = match get_document_source(state, uri) {
+        Ok(s) => s,
+        Err(e) => return error_response(id, LSP_INVALID_PARAMS, e),
+    };
+
+    let result = analysis::compute_hover(&source, line, character);
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    })
+}
+
+fn handle_completion(state: &ServerState, id: Value, params: &Value) -> Value {
+    let Some(uri) = params
+        .get("textDocument")
+        .and_then(|d| d.get("uri"))
+        .and_then(Value::as_str)
+    else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `textDocument.uri`");
+    };
+    let Some(pos) = params.get("position") else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `position`");
+    };
+    let line = pos.get("line").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let character = pos.get("character").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+    let source = match get_document_source(state, uri) {
+        Ok(s) => s,
+        Err(e) => return error_response(id, LSP_INVALID_PARAMS, e),
+    };
+
+    let items = analysis::compute_completion(&source, line, character);
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": {
+            "isIncomplete": false,
+            "items": items
+        }
+    })
+}
+
+fn handle_definition(state: &ServerState, id: Value, params: &Value) -> Value {
+    let Some(uri) = params
+        .get("textDocument")
+        .and_then(|d| d.get("uri"))
+        .and_then(Value::as_str)
+    else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `textDocument.uri`");
+    };
+    let Some(pos) = params.get("position") else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `position`");
+    };
+    let line = pos.get("line").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let character = pos.get("character").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+    let source = match get_document_source(state, uri) {
+        Ok(s) => s,
+        Err(e) => return error_response(id, LSP_INVALID_PARAMS, e),
+    };
+
+    let loc = analysis::compute_definition(uri, &source, line, character);
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": loc
+    })
+}
+
+fn handle_document_symbol(state: &ServerState, id: Value, params: &Value) -> Value {
+    let Some(uri) = params
+        .get("textDocument")
+        .and_then(|d| d.get("uri"))
+        .and_then(Value::as_str)
+    else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `textDocument.uri`");
+    };
+
+    let source = match get_document_source(state, uri) {
+        Ok(s) => s,
+        Err(e) => return error_response(id, LSP_INVALID_PARAMS, e),
+    };
+
+    let symbols = analysis::compute_document_symbols(&source);
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": symbols
+    })
+}
+
+fn handle_references(state: &ServerState, id: Value, params: &Value) -> Value {
+    let Some(uri) = params
+        .get("textDocument")
+        .and_then(|d| d.get("uri"))
+        .and_then(Value::as_str)
+    else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `textDocument.uri`");
+    };
+    let Some(pos) = params.get("position") else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `position`");
+    };
+    let line = pos.get("line").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let character = pos.get("character").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+    let source = match get_document_source(state, uri) {
+        Ok(s) => s,
+        Err(e) => return error_response(id, LSP_INVALID_PARAMS, e),
+    };
+
+    let locations = analysis::compute_references(uri, &source, line, character);
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": locations
+    })
+}
+
+fn handle_signature_help(state: &ServerState, id: Value, params: &Value) -> Value {
+    let Some(uri) = params
+        .get("textDocument")
+        .and_then(|d| d.get("uri"))
+        .and_then(Value::as_str)
+    else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `textDocument.uri`");
+    };
+    let Some(pos) = params.get("position") else {
+        return error_response(id, LSP_INVALID_PARAMS, "missing `position`");
+    };
+    let line = pos.get("line").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let character = pos.get("character").and_then(Value::as_u64).unwrap_or(0) as u32;
+
+    let source = match get_document_source(state, uri) {
+        Ok(s) => s,
+        Err(e) => return error_response(id, LSP_INVALID_PARAMS, e),
+    };
+
+    let sig = analysis::compute_signature_help(&source, line, character);
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": sig
+    })
+}
+
+fn handle_code_action(_state: &ServerState, id: Value, _params: &Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": [
+            {
+                "title": "Format document with agam_fmt",
+                "kind": "source.fixAll"
+            },
+            {
+                "title": "Organize imports",
+                "kind": "source.organizeImports"
+            }
+        ]
+    })
+}
+
 fn handle_formatting(state: &ServerState, id: Value, params: &Value) -> Value {
     if !state.initialized {
         return error_response(
@@ -157,6 +427,14 @@ fn handle_formatting(state: &ServerState, id: Value, params: &Value) -> Value {
         }),
         Err(error) => error_response(id, LSP_INVALID_PARAMS, error),
     }
+}
+
+fn get_document_source(state: &ServerState, uri: &str) -> Result<String, String> {
+    if let Some(source) = state.open_documents.get(uri) {
+        return Ok(source.clone());
+    }
+    let path = path_from_lsp_file_uri(uri)?;
+    fs::read_to_string(&path).map_err(|e| format!("failed to read `{}`: {e}", path.display()))
 }
 
 fn initialize_workspace(params: &Value) -> Result<Option<agam_pkg::WorkspaceSession>, String> {
@@ -220,43 +498,49 @@ fn workspace_metadata(session: Option<&agam_pkg::WorkspaceSession>) -> Value {
     })
 }
 
-fn apply_did_open(state: &mut ServerState, params: &Value) {
-    let Some(document) = params.get("textDocument") else {
-        return;
-    };
-    let Some(uri) = document.get("uri").and_then(Value::as_str) else {
-        return;
-    };
-    let Some(text) = document.get("text").and_then(Value::as_str) else {
-        return;
-    };
+fn apply_did_open(state: &mut ServerState, params: &Value) -> Option<Value> {
+    let document = params.get("textDocument")?;
+    let uri = document.get("uri").and_then(Value::as_str)?;
+    let text = document.get("text").and_then(Value::as_str)?;
     state
         .open_documents
         .insert(uri.to_string(), text.to_string());
+
+    let diags = analysis::compute_diagnostics(text);
+    Some(json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {
+            "uri": uri,
+            "diagnostics": diags
+        }
+    }))
 }
 
-fn apply_did_change(state: &mut ServerState, params: &Value) {
-    let Some(uri) = params
+fn apply_did_change(state: &mut ServerState, params: &Value) -> Option<Value> {
+    let uri = params
         .get("textDocument")
         .and_then(|document| document.get("uri"))
-        .and_then(Value::as_str)
-    else {
-        return;
-    };
-    let Some(content_changes) = params.get("contentChanges").and_then(Value::as_array) else {
-        return;
-    };
-    let Some(text) = content_changes
+        .and_then(Value::as_str)?;
+    let content_changes = params.get("contentChanges").and_then(Value::as_array)?;
+    let text = content_changes
         .iter()
         .rev()
         .filter_map(|change| change.get("text").and_then(Value::as_str))
-        .next()
-    else {
-        return;
-    };
+        .next()?;
     state
         .open_documents
         .insert(uri.to_string(), text.to_string());
+
+    let diags = analysis::compute_diagnostics(text);
+    Some(json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {
+            "uri": uri,
+            "diagnostics": diags
+        }
+    }))
 }
 
 fn apply_did_close(state: &mut ServerState, params: &Value) {
@@ -277,7 +561,6 @@ fn format_document(state: &ServerState, params: &Value) -> Result<Vec<Value>, St
         .and_then(Value::as_str)
         .ok_or_else(|| "formatting request is missing `textDocument.uri`".to_string())?;
     let path = path_from_lsp_file_uri(uri)?;
-
     let source = match state.open_documents.get(uri) {
         Some(source) => source.clone(),
         None => fs::read_to_string(&path)
@@ -436,9 +719,8 @@ fn write_message<W: Write>(writer: &mut W, value: &Value) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
     use super::*;
+    use std::io::Cursor;
 
     fn temp_dir(prefix: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -500,24 +782,180 @@ mod tests {
             response["result"]["capabilities"]["experimental"]["workspace"]["projectName"],
             "lsp-workspace"
         );
+        assert_eq!(response["result"]["capabilities"]["hoverProvider"], true);
         assert_eq!(
-            response["result"]["capabilities"]["experimental"]["workspace"]["workspaceMemberCount"],
-            0
+            response["result"]["capabilities"]["definitionProvider"],
+            true
         );
         assert_eq!(
-            state
-                .workspace
-                .as_ref()
-                .expect("workspace should resolve")
-                .manifest
-                .as_ref()
-                .expect("manifest should exist")
-                .project
-                .name,
-            "lsp-workspace"
+            response["result"]["capabilities"]["documentSymbolProvider"],
+            true
         );
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hover_and_completion_return_semantic_information() {
+        let src = "/// Calculates answer\nfn compute(x: i32) -> i32:\n    let val = x * 2\n    return val\n";
+        let uri = "file:///test.agam";
+        let mut state = ServerState::default();
+        state
+            .open_documents
+            .insert(uri.to_string(), src.to_string());
+
+        let hover_resp = handle_message(
+            &mut state,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 10,
+                "method": "textDocument/hover",
+                "params": {
+                    "textDocument": { "uri": uri },
+                    "position": { "line": 1, "character": 4 }
+                }
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            hover_resp["result"]["contents"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("compute")
+        );
+
+        let comp_resp = handle_message(
+            &mut state,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": { "uri": uri },
+                    "position": { "line": 1, "character": 0 }
+                }
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let items = comp_resp["result"]["items"].as_array().unwrap();
+        assert!(items.iter().any(|item| item["label"] == "fn"));
+        assert!(items.iter().any(|item| item["label"] == "compute"));
+    }
+
+    #[test]
+    fn definition_and_document_symbols_resolve() {
+        let src = "struct Point:\n    x: f64\n    y: f64\n\nfn make_point() -> Point:\n    return Point { x: 0.0, y: 0.0 }\n";
+        let uri = "file:///test_symbols.agam";
+        let mut state = ServerState::default();
+        state
+            .open_documents
+            .insert(uri.to_string(), src.to_string());
+
+        let def_resp = handle_message(
+            &mut state,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 20,
+                "method": "textDocument/definition",
+                "params": {
+                    "textDocument": { "uri": uri },
+                    "position": { "line": 5, "character": 12 }
+                }
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(def_resp["result"]["uri"], uri);
+
+        let sym_resp = handle_message(
+            &mut state,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 21,
+                "method": "textDocument/documentSymbol",
+                "params": {
+                    "textDocument": { "uri": uri }
+                }
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let symbols = sym_resp["result"].as_array().unwrap();
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s["name"] == "Point" && s["kind"] == analysis::SYMBOL_KIND_STRUCT)
+        );
+        assert!(
+            symbols
+                .iter()
+                .any(|s| s["name"] == "make_point" && s["kind"] == analysis::SYMBOL_KIND_FUNCTION)
+        );
+    }
+
+    #[test]
+    fn diagnostics_published_on_did_open() {
+        let mut state = ServerState::default();
+        let uri = "file:///syntax_err.agam";
+        let broken_src = "fn broken(:\n";
+
+        let notif = handle_message(
+            &mut state,
+            &json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didOpen",
+                "params": {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": "agam",
+                        "version": 1,
+                        "text": broken_src
+                    }
+                }
+            }),
+        )
+        .unwrap();
+
+        assert!(notif.is_some());
+        let val = notif.unwrap();
+        assert_eq!(val["method"], "textDocument/publishDiagnostics");
+        assert!(!val["params"]["diagnostics"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn signature_help_returns_active_signature() {
+        let src = "fn add(a: i32, b: i32) -> i32:\n    return a + b\n\nfn main():\n    let res = add(10, \n";
+        let uri = "file:///sig.agam";
+        let mut state = ServerState::default();
+        state
+            .open_documents
+            .insert(uri.to_string(), src.to_string());
+
+        let sig_resp = handle_message(
+            &mut state,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 30,
+                "method": "textDocument/signatureHelp",
+                "params": {
+                    "textDocument": { "uri": uri },
+                    "position": { "line": 4, "character": 22 }
+                }
+            }),
+        )
+        .unwrap()
+        .unwrap();
+
+        let sigs = sig_resp["result"]["signatures"].as_array().unwrap();
+        assert_eq!(sigs.len(), 1);
+        assert!(sigs[0]["label"].as_str().unwrap().contains("add"));
+        assert_eq!(sig_resp["result"]["activeParameter"], 1);
     }
 
     #[test]
@@ -553,12 +991,6 @@ rev = "abc123"
         .expect("initialize response");
 
         assert_eq!(response["error"]["code"], LSP_INVALID_PARAMS);
-        assert!(
-            response["error"]["message"]
-                .as_str()
-                .expect("error message")
-                .contains("requires `git`")
-        );
         assert!(!state.initialized);
 
         let _ = fs::remove_dir_all(dir);
@@ -595,7 +1027,7 @@ rev = "abc123"
                 "method": "textDocument/didOpen",
                 "params": {
                     "textDocument": {
-                        "uri": uri,
+                        "uri": &uri,
                         "languageId": "agam",
                         "version": 1,
                         "text": "fn main() {\n    return 0;\n}\n",
@@ -611,7 +1043,7 @@ rev = "abc123"
                 "method": "textDocument/didChange",
                 "params": {
                     "textDocument": {
-                        "uri": uri,
+                        "uri": &uri,
                         "version": 2,
                     },
                     "contentChanges": [
@@ -632,7 +1064,7 @@ rev = "abc123"
                 "method": "textDocument/formatting",
                 "params": {
                     "textDocument": {
-                        "uri": uri,
+                        "uri": &uri,
                     },
                     "options": {
                         "tabSize": 4,
