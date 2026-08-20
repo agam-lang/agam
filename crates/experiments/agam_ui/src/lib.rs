@@ -8,14 +8,20 @@
 //! - Declarative Virtual UI tree (`Row`, `Column`, `Grid`, `Card`, `Button`, `Text`, `Slider`).
 //! - CSS-inspired composable styling engine.
 
+pub mod diff;
 pub mod reactive;
+pub mod render;
 pub mod style;
 pub mod theme;
+pub mod view;
 pub mod widget;
 
+pub use diff::{PatchOp, diff_trees};
 pub use reactive::{Computed, Signal, batch, create_effect};
+pub use render::render_to_html;
 pub use style::{Alignment, Color, FlexDirection, Insets, Shadow, Style};
 pub use theme::{Theme, ThemeKind};
+pub use view::{StateStore, View};
 pub use widget::{Widget, WidgetKind};
 
 #[cfg(test)]
