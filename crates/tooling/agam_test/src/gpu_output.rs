@@ -169,4 +169,108 @@ fn mat_add_kernel(a: &[f32], b: &[f32], out: &mut [f32]):
             "must have resolved CUDA runtime path"
         );
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // 5. Multi-Target GPU Adapters — AMDGPU, SPIR-V, Metal, NVPTX
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_gpu_target_adapter_amdgpu() {
+        let src = r#"
+@gpu(threads=256)
+fn amd_kernel(a: &[f32], b: &mut [f32]):
+    let tid = agam.gpu.thread_id_x()
+    b[tid] = a[tid] * 2.0
+"#;
+        let source_id = SourceId(0);
+        let tokens = tokenize(src, source_id);
+        let ast = parse(tokens, source_id).expect("AST parse");
+        let mut hir_lowering = HirLowering::new();
+        let hir = hir_lowering.lower_module(&ast);
+        let mut mir_lowering = MirLowering::new();
+        let mir = mir_lowering.lower_module(&hir);
+
+        let amdgpu_ir = agam_codegen::gpu_emitter::emit_gpu_module_for_target(
+            &mir,
+            agam_codegen::GpuTargetKind::Amdgpu,
+        )
+        .expect("emit amdgpu module");
+
+        assert!(amdgpu_ir.contains("target triple = \"amdgcn-amd-amdhsa\""));
+        assert!(amdgpu_ir.contains("define amdgpu_kernel void"));
+        assert!(amdgpu_ir.contains("@llvm.amdgcn.workitem.id.x"));
+    }
+
+    #[test]
+    fn test_gpu_target_adapter_spirv() {
+        let src = r#"
+@gpu(threads=128)
+fn spirv_kernel(out: &mut [f32]):
+    out[0] = 1.0
+"#;
+        let source_id = SourceId(0);
+        let tokens = tokenize(src, source_id);
+        let ast = parse(tokens, source_id).expect("AST parse");
+        let mut hir_lowering = HirLowering::new();
+        let hir = hir_lowering.lower_module(&ast);
+        let mut mir_lowering = MirLowering::new();
+        let mir = mir_lowering.lower_module(&hir);
+
+        let spirv_ir = agam_codegen::gpu_emitter::emit_gpu_module_for_target(
+            &mir,
+            agam_codegen::GpuTargetKind::Spirv,
+        )
+        .expect("emit spirv module");
+
+        assert!(spirv_ir.contains("target triple = \"spirv64-unknown-unknown\""));
+        assert!(spirv_ir.contains("define spir_kernel void"));
+        assert!(spirv_ir.contains("@__spirv_BuiltInLocalInvocationId"));
+    }
+
+    #[test]
+    fn test_gpu_target_adapter_metal() {
+        let src = r#"
+@gpu(threads=64)
+fn metal_kernel(out: &mut [f32]):
+    out[0] = 3.14
+"#;
+        let source_id = SourceId(0);
+        let tokens = tokenize(src, source_id);
+        let ast = parse(tokens, source_id).expect("AST parse");
+        let mut hir_lowering = HirLowering::new();
+        let hir = hir_lowering.lower_module(&ast);
+        let mut mir_lowering = MirLowering::new();
+        let mir = mir_lowering.lower_module(&hir);
+
+        let metal_ir = agam_codegen::gpu_emitter::emit_gpu_module_for_target(
+            &mir,
+            agam_codegen::GpuTargetKind::Metal,
+        )
+        .expect("emit metal module");
+
+        assert!(metal_ir.contains("target triple = \"air64-apple-macosx\""));
+        assert!(metal_ir.contains("define metal_kernel void"));
+        assert!(metal_ir.contains("@air.thread_position_in_threadgroup.x"));
+    }
+
+    #[test]
+    fn test_gpu_target_adapter_resolution() {
+        use agam_codegen::{GpuTargetKind, adapter_for_target, adapter_from_triple};
+
+        let nvptx = adapter_from_triple("nvptx64-nvidia-cuda").unwrap();
+        assert_eq!(nvptx.target_kind(), GpuTargetKind::Nvptx);
+
+        let amdgpu = adapter_from_triple("amdgcn-amd-amdhsa").unwrap();
+        assert_eq!(amdgpu.target_kind(), GpuTargetKind::Amdgpu);
+
+        let spirv = adapter_from_triple("spirv64-unknown-unknown").unwrap();
+        assert_eq!(spirv.target_kind(), GpuTargetKind::Spirv);
+
+        let metal = adapter_from_triple("air64-apple-macosx").unwrap();
+        assert_eq!(metal.target_kind(), GpuTargetKind::Metal);
+
+        let custom = adapter_for_target(GpuTargetKind::Amdgpu);
+        assert_eq!(custom.shared_memory_addrspace(), 3);
+        assert_eq!(custom.linker_flags(), vec!["-lamdhip64", "-lhsa-runtime64"]);
+    }
 }
