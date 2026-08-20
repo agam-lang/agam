@@ -4,32 +4,19 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T0-type-system: Foundation Type System (Phase C: Struct Aggregates & Tuple Destructuring)**
-   - Single highest-leverage gap: completes `Option<T>`, `Result<T, E>`, struct construction (`Point { x, y }`), field access (`Op::FieldAccess`), and tuple destructuring (`let (a, b) = pair`) in MIR across all backends.
-   - Implement type inference, sum types/enums, pattern matching, and monomorphization end-to-end through AST → HIR → MIR → LLVM/Universal GPU/C/JIT
-   - Detail file: `details/T0-type-system.md`
+1. **Phase T3-wasm-web: WebAssembly Compilation & Browser Runtime**
+   - Direct WebAssembly (Wasm) bytecode emitter and DOM runtime bridge
+   - Detail file: `details/T3-wasm-web.md`
 
-2. **Phase T1-compiler-agent-tool: Native MCP Server (`agamc mcp serve`)**
-   - Implement native Model Context Protocol (MCP) server directly inside `agamc` (`agamc mcp serve`)
-   - Expose zero-latency diagnostic streaming, Nyāya SARIF proof output, AST symbol inspection, and automated code refactoring tools for AI agent integration
-   - Detail file: `details/T1-compiler-agent-tool.md`
+2. **Phase T4-game-engine: 2D/3D ECS Architecture & Math Pipeline**
+   - Entity-Component-System engine, spatial hierarchies, and linear algebra
+   - Detail file: `details/T4-game-engine.md`
 
-3. **Phase T1-error-messages: Nyāya 4-Part Proof Diagnostic Engine (`agam_errors`)**
-   - Upgrade parser error recovery and visual source-span highlights into formal 4-part Nyāya proofs (*Fact, Reason, Fix, Law*) in `agam_errors`
-   - Enable single-pass multi-error reporting with exact mathematical proof diagnostics
-   - Detail file: `details/T1-error-messages.md`
+3. **Phase T3-npu-dispatch: Heterogeneous NPU & SIMD Tile Offloading**
+   - Native SIMD tile tensor instruction emission and heterogeneous acceleration backend
+   - Detail file: `details/T3-npu-dispatch.md`
 
-4. **Phase T3-gpu-target-adapter: Universal GPU Target Adapter Interface**
-   - Introduce abstract `GpuTargetAdapter` trait interface in `agam_codegen`
-   - Decouple target-agnostic GPU MIR lowering from target assembly generation, enabling AMDGPU (ROCm/HIP), SPIR-V (Vulkan/oneAPI), and Metal adapters alongside NVPTX
-   - Detail file: `details/T3-gpu-target-adapter.md`
-
-5. **Finish Phase T1-sdk-distribution**
-   - Exercise the hosted-runner Windows/Linux SDK flow on GitHub with bundled LLVM and post-download archive validation
-   - Confirm one end-to-end release publication and Android target-pack packaging path on hosted infrastructure
-   - Detail file: `details/T1-sdk-distribution.md`
-
-6. **Continue Phase T1-headless-exec**
+5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating
    - Add stronger OS-level isolation (Chāṇakya *Durdharṣa* sandboxing) for filesystem, network, process, and runtime resource usage
    - Detail file: `details/T1-headless-exec.md`
@@ -40,16 +27,16 @@ Use this as the default answer to "what should Agam agents build next?"
 - broad new language-surface expansion that distracts from the native LLVM product path
 - long-horizon model-training phases ahead of the hosted SDK proof, execution sandbox hardening, and wrapper validation
 - WSL-only shortcuts that weaken the real host-toolchain story
-- Tier 5–6 AI-native phases before Tier 0 foundation is solid
+- Tier 5–6 AI-native phases before Tier 0-2 foundation is solid
 
 ## Tier Dependency Flow
 
 ```
-Tier 0 (Foundation)
-  └→ Tier 1 (DX) — can start in parallel
+Tier 0 (Foundation) — 100% COMPLETE
+  └→ Tier 1 (DX) — in progress
   └→ Tier 2 (Runtime + Security) — blocks Tier 3+
-       └→ Tier 3 (Platform)
-            └→ Tier 4 (Optimization)
+       └→ Tier 3 (Platform & Hardware)
+            └→ Tier 4 (Optimization Depth)
                  └→ Tier 5 (AI-Native)
                       └→ Tier 6 (Frontier)
 ```

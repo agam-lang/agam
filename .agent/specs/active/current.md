@@ -24,20 +24,33 @@ Development operates across two synchronized parallel tracks:
 |-------|--------|-------|--------|
 | **T1-daemon-prewarm** | completed | Incremental daemon, background prewarm, parallel compilation | `details/T1-daemon-prewarm.md` |
 | **T1-premium-cli** | completed | Premium experience layer (tooling unification) | `details/T1-premium-cli.md` |
-| **T1-sdk-distribution** | partial | Native LLVM SDK distribution and toolchain bundles | `details/T1-sdk-distribution.md` |
+| **T1-sdk-distribution** | completed | Native LLVM SDK distribution and toolchain bundles | `details/T1-sdk-distribution.md` |
 | **T1-repl-execution** | completed | Interactive REPL and structured headless execution | `details/T1-repl-execution.md` |
 | **T1-workspace-manifests** | completed | Workspace contract and dependency manifests | `details/T1-workspace-manifests.md` |
 | **T1-resolver-lockfile** | completed | Deterministic resolver and lockfile | `details/T1-resolver-lockfile.md` |
 | **T1-registry-protocol** | completed | Registry index protocol and immutable publish flow | `details/T1-registry-protocol.md` |
 | **T1-sdk-environments** | completed | Named environments and SDK linkage | `details/T1-sdk-environments.md` |
 | **T1-official-distributions** | completed | Curated first-party distributions and official package governance | `details/T1-official-distributions.md` |
-| **T0-stdlib-io** | partial | Standard library and native I/O expansion | `details/T0-stdlib-io.md` |
+| **T0-stdlib-io** | complete | Standard library and native I/O expansion | `details/T0-stdlib-io.md` |
 | **T1-headless-exec** | partial | Agent-facing execution tool | `details/T1-headless-exec.md` |
 | **T1-python-wrappers** | partial | Wrapper foundation for agent ecosystems | `details/T1-python-wrappers.md` |
 | **T0-effects-handlers** | completed | Language surface: effect/handler/perform syntax | `details/T0-effects-handlers.md` |
 | **T2-os-sandbox** | completed | Runtime hardening: OS-level sandbox enforcement | `details/T2-os-sandbox.md` |
+| **T2-observability** | completed | OpenTelemetry distributed tracing and metrics | `details/T2-observability.md` |
+| **T2-cybersecurity** | completed | Memory sanitization, secret zeroization, and crypto primitives | `details/T2-cybersecurity.md` |
 | **T3-target-profiles** | completed | Omni-Targeting Directives (`@target.iot`, `@target.enterprise`, `@target.hpc`) | `details/T3-target-profiles.md` |
-| **T3-gpu-npu-pipeline** | partial | GPU and NPU Integration (`@gpu` kernel pipeline) | `details/T3-gpu-npu-pipeline.md` |
+| **T3-gpu-npu-pipeline** | completed | GPU and NPU Integration (`@gpu` kernel pipeline) | `details/T3-gpu-npu-pipeline.md` |
+| **T3-spirv-backend** | completed | Vendor-neutral GPU via SPIR-V binary code generation | `details/T3-spirv-backend.md` |
+| **T3-reactive-state** | completed | Fine-grained reactive state primitives (`Signal`, `Computed`, `batch`) | `details/T3-reactive-state.md` |
+| **T3-declarative-ui** | completed | Declarative UI Virtual tree, VNode diffing, and HTML renderer | `details/T3-declarative-ui.md` |
+| **T5-tensor-core-matrix** | completed | Tensor Core acceleration via `SPV_KHR_cooperative_matrix` | `details/T5-tensor-core-matrix.md` |
+| **T1-error-messages** | completed | Nyāya 4-Part Proof Diagnostic Engine & Hankel Root Solvers | `details/T1-error-messages.md` |
+
+### T0-type-system Progress
+- ✅ Phase A: Option<T> and Result<T, E> arena constructors in TypeStore
+- ✅ Phase B: AST EnumDecl -> HirEnumLayout, HirExprKind::EnumVariant -> MIR Op::EnumConstruct, HirExprKind::Match -> MIR Switch + Op::EnumTag + Op::EnumPayload, layout table propagation across C/LLVM/JIT backends
+- ✅ Phase C: Struct literal construction (Op::StructConstruct) & field access (Op::GetField) across LLVM (xtractvalue), C (.fields[idx].payload), and JIT (packed i64 decoding); tuple and struct destructuring patterns in MIR (HirPattern::Tuple, HirPattern::Struct)
+- ⬜ Generic type parameter inference & const generics
 
 ### T1-daemon-prewarm Progress
 - ✅ Workspace snapshot + invalidation diff contract
@@ -186,9 +199,9 @@ These phases are open but not tracked in the numbered workstreams above. They ar
 | Phase | Status | Focus | Detail |
 |-------|--------|-------|--------|
 | **T0-type-system** | open | Generics, sum types, pattern matching, type inference | `details/T0-type-system.md` |
-| **T0-object-model** | open | Struct/trait/impl, method dispatch, visibility | `details/T0-object-model.md` |
-| **T0-module-system** | open | File-to-module mapping, qualified imports, re-exports | `details/T0-module-system.md` |
-| **T0-effects-depth** | open | Named args, closures, destructuring, ranges, operator overload | `details/T0-effects-depth.md` |
+| **T0-object-model** | complete | Struct/trait/impl, method dispatch, visibility | `details/T0-object-model.md` |
+| **T0-module-system** | complete | File-to-module mapping, qualified imports, re-exports | `details/T0-module-system.md` |
+| **T0-effects-depth** | complete | Named args, closures, destructuring, ranges, operator overload | `details/T0-effects-depth.md` |
 | **T1-error-messages** | open | Elite diagnostics: multi-span, suggestions, error recovery | `details/T1-error-messages.md` |
 | **T1-lsp-production** | open | LSP: go-to-definition, completion, hover, refactoring | `details/T1-lsp-production.md` |
 | **T1-build-system** | partial | `agamc add/remove/update/bench` completeness | `details/T1-build-system.md` |

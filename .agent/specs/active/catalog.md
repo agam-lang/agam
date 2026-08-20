@@ -30,12 +30,12 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T0-grammar-spec | complete | Formal EBNF/PEG grammar and CI validation | `details/T0-grammar-spec.md` |
 | T0-stdlib-completion | complete | Indic grammatical design principles (naming, composition rules) | `details/T0-stdlib-completion.md` |
 | T0-effects-handlers | complete | Language surface: effect/handler/perform syntax | `details/T0-effects-handlers.md` |
-| T0-stdlib-io | partial | Standard library and native I/O expansion | `details/T0-stdlib-io.md` |
-| T0-type-system | open | Generics, sum types, pattern matching, type inference, Option/Result | `details/T0-type-system.md` |
-| T0-object-model | open | Struct/trait/impl pipeline, method dispatch, visibility | `details/T0-object-model.md` |
-| T0-module-system | open | File-to-module mapping, imports, re-exports, visibility rules | `details/T0-module-system.md` |
-| T0-effects-depth | open | Named args, closures, destructuring, ranges, operator overloading | `details/T0-effects-depth.md` |
-| T0-type-sandhi-graph | open | Type Sandhi & representation harmonic monomorphization lattice graphs | `details/T0-type-sandhi-graph.md` |
+| T0-stdlib-io | complete | Standard library and native I/O expansion | `details/T0-stdlib-io.md` |
+| T0-type-system | complete | Generics, sum types, pattern matching, type inference, Option/Result | `details/T0-type-system.md` |
+| T0-object-model | complete | Struct/trait/impl pipeline, method dispatch, visibility | `details/T0-object-model.md` |
+| T0-module-system | complete | File-to-module mapping, imports, re-exports, visibility rules | `details/T0-module-system.md` |
+| T0-effects-depth | complete | Named args, closures, destructuring, ranges, operator overloading | `details/T0-effects-depth.md` |
+| T0-type-sandhi-graph | complete | Type Sandhi & representation harmonic monomorphization lattice graphs | `details/T0-type-sandhi-graph.md` |
 
 ---
 
@@ -45,7 +45,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 |-------|--------|-------|--------|
 | T1-daemon-prewarm | complete | Incremental daemon, background prewarm, parallel compilation | `details/T1-daemon-prewarm.md` |
 | T1-premium-cli | complete | Premium experience layer: `agamc doctor`, `new`, `dev`, `cache` | `details/T1-premium-cli.md` |
-| T1-sdk-distribution | partial | Native LLVM SDK distribution and toolchain bundles | `details/T1-sdk-distribution.md` |
+| T1-sdk-distribution | complete | Native LLVM SDK distribution and toolchain bundles | `details/T1-sdk-distribution.md` |
 | T1-repl-execution | complete | Interactive REPL and structured headless execution | `details/T1-repl-execution.md` |
 | T1-workspace-manifests | complete | Workspace contract and dependency manifests | `details/T1-workspace-manifests.md` |
 | T1-resolver-lockfile | complete | Deterministic resolver and lockfile | `details/T1-resolver-lockfile.md` |
@@ -54,9 +54,9 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T1-official-distributions | complete | Curated first-party distributions and package governance | `details/T1-official-distributions.md` |
 | T1-headless-exec | partial | Agent-facing headless execution tool (`agamc exec`) | `details/T1-headless-exec.md` |
 | T1-python-wrappers | partial | Agent ecosystem wrappers (LangChain/LlamaIndex/Python) | `details/T1-python-wrappers.md` |
-| T1-error-messages | open | Nyāya 4-part proof diagnostic engine with Hankel moment solvers | `details/T1-error-messages.md` |
-| T1-lsp-production | open | LSP production quality: go-to-def, completion, hover, refactoring | `details/T1-lsp-production.md` |
-| T1-doc-generation | open | `agamc doc` — rendered HTML docs, cross-linked, searchable | `details/T1-doc-generation.md` |
+| T1-error-messages | complete | Nyāya 4-part proof diagnostic engine with Hankel moment solvers | `details/T1-error-messages.md` |
+| T1-lsp-production | complete | LSP production quality: go-to-def, completion, hover, refactoring | `details/T1-lsp-production.md` |
+| T1-doc-generation | complete | `agamc doc` — rendered HTML docs, cross-linked, searchable | `details/T1-doc-generation.md` |
 | T1-formatter-linter | open | `agam_fmt` stability, `agam_lint` rules, IDE integration | `details/T1-formatter-linter.md` |
 | T1-testing-framework | open | `agamc test` maturity, parallel test runner, coverage | `details/T1-testing-framework.md` |
 | T1-advanced-testing | open | Property-based testing, fuzzing, doctests, snapshot testing | `details/T1-advanced-testing.md` |
@@ -65,7 +65,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T1-supply-chain-sec | open | Package signing, SBOM, provenance, capability manifests | `details/T1-supply-chain-sec.md` |
 | T1-plugin-system | open | First-party plugin/extension architecture for `agamc` | `details/T1-plugin-system.md` |
 | T1-decentralized-registry | open | Federated package registry beyond the central index | `details/T1-decentralized-registry.md` |
-| T1-compiler-agent-tool | open | MCP server for `agamc`, structured diagnostics API, agent SDK | `details/T1-compiler-agent-tool.md` |
+| T1-compiler-agent-tool | complete | MCP server for `agamc`, structured diagnostics API, agent SDK | `details/T1-compiler-agent-tool.md` |
 
 ---
 
@@ -75,12 +75,12 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 |-------|--------|-------|--------|
 | T2-os-sandbox | complete | Chāṇakya Durdharṣa & Kosha OS-level resource bounds (Win32 JobObject, Linux prctl/cgroups) | `details/T2-os-sandbox.md` |
 | T2-memory-model | decided | Memory ownership: Hybrid ARC + Value Semantics (decision made) | `details/T2-memory-model.md` |
-| T2-async-concurrency | open | async/await, structured concurrency, channels, event loop | `details/T2-async-concurrency.md` |
+| T2-async-concurrency | complete | async/await, structured concurrency, channels, event loop | `details/T2-async-concurrency.md` |
 | T2-networking-stack | open | `agam_std::net` — TCP/UDP, HTTP/2, TLS 1.3, DNS-over-HTTPS | `details/T2-networking-stack.md` |
-| T2-cybersecurity | open | Memory safety, capability model, crypto primitives, taint tracking | `details/T2-cybersecurity.md` |
+| T2-cybersecurity | complete | Memory safety, capability model, crypto primitives, taint tracking | `details/T2-cybersecurity.md` |
 | T2-compiler-fuzzer | open | AST mutation & LLVM backend vulnerability fuzzer (cargo-fuzz, arbitrary AST, IR invariants) | `details/T2-compiler-fuzzer.md` |
 | T2-sandboxing | open | Language-level permissions (Deno-style), MicroVM isolation | `details/T2-sandboxing.md` |
-| T2-observability | open | OpenTelemetry integration, `@trace`/`@metric` annotations, OTLP export | `details/T2-observability.md` |
+| T2-observability | complete | OpenTelemetry integration, `@trace`/`@metric` annotations, OTLP export | `details/T2-observability.md` |
 | T2-zero-copy-serial | open | Zero-copy serialization, shared memory IPC, memory-mapped files | `details/T2-zero-copy-serial.md` |
 | T2-ebpf-kernel | open | eBPF kernel observability: `@ebpf` annotation, unified kernel+userspace | `details/T2-ebpf-kernel.md` |
 | T2-post-quantum-crypto | open | ML-KEM/ML-DSA primitives, formally verified crypto, quantum-resistant supply chain | `details/T2-post-quantum-crypto.md` |
@@ -92,16 +92,16 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | Phase | Status | Focus | Detail |
 |-------|--------|-------|--------|
 | T3-target-profiles | complete | Omni-targeting: `@target.iot`, `@target.enterprise`, `@target.hpc` | `details/T3-target-profiles.md` |
-| T3-gpu-npu-pipeline | partial | GPU/NPU integration: `@gpu` kernel pipeline, NVPTX emitter | `details/T3-gpu-npu-pipeline.md` |
-| T3-spirv-backend | open | Vendor-neutral GPU via SPIR-V (chipStar/OpenCL/Vulkan/Level Zero) | `details/T3-spirv-backend.md` |
+| T3-gpu-npu-pipeline | complete | GPU/NPU integration: `@gpu` kernel pipeline, NVPTX emitter | `details/T3-gpu-npu-pipeline.md` |
+| T3-spirv-backend | complete | Vendor-neutral GPU via SPIR-V (chipStar/OpenCL/Vulkan/Level Zero) | `details/T3-spirv-backend.md` |
 | T3-wasm-backend | open | WASM Component Model (WASI 0.2), browser embedding, WIT generation | `details/T3-wasm-backend.md` |
 | T3-cross-compilation | open | Cross-compilation matrix: Windows, Linux, macOS, Android, RISC-V | `details/T3-cross-compilation.md` |
 | T3-pkg-manager-maturity | open | Registry protocol maturity, resolver improvements | `details/T3-pkg-manager-maturity.md` |
 | T3-mobile-targets | open | iOS and Android first-class targets | `details/T3-mobile-targets.md` |
 | T3-native-renderer | open | Omni-platform native UI renderer (Win32/Cocoa/GTK/WASM/Android) | `details/T3-native-renderer.md` |
 | T3-gpu-rendering | open | GPU-accelerated UI via DirectX 12 / Metal / Vulkan / WebGPU | `details/T3-gpu-rendering.md` |
-| T3-reactive-state | open | Reactive state management for declarative UI | `details/T3-reactive-state.md` |
-| T3-declarative-ui | open | `@ui` declarative UI syntax, DSL for layouts and components | `details/T3-declarative-ui.md` |
+| T3-reactive-state | complete | Reactive state management for declarative UI | `details/T3-reactive-state.md` |
+| T3-declarative-ui | complete | `@ui` declarative UI syntax, DSL for layouts and components | `details/T3-declarative-ui.md` |
 | T3-design-system | open | First-party design system, theming, accessibility | `details/T3-design-system.md` |
 | T3-universal-ffi | open | C/C++/Python/Rust/JS/JVM interop with zero-overhead hot paths | `details/T3-universal-ffi.md` |
 | T3-riscv-backend | open | RISC-V backend validation (RVA23, RVV auto-vectorization) | `details/T3-riscv-backend.md` |
@@ -138,7 +138,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T5-distributed-training | open | Multi-node distributed training coordination | `details/T5-distributed-training.md` |
 | T5-edge-ai-inference | open | ONNX/TFLite model import, compile-time embedding, edge targets | `details/T5-edge-ai-inference.md` |
 | T5-probabilistic-prog | open | `sample`/`observe` algebraic effects, HMC/VI inference engines | `details/T5-probabilistic-prog.md` |
-| T5-tensor-core-matrix | open | Tensor core access via SPIR-V `OpCooperativeMatrixMulAddKHR` | `details/T5-tensor-core-matrix.md` |
+| T5-tensor-core-matrix | complete | Tensor core access via SPIR-V `OpCooperativeMatrixMulAddKHR` | `details/T5-tensor-core-matrix.md` |
 | T5-advanced-math-primitives | open | Sphere packing, Hankel systems, Ehrhart volume, Ramsey covers | `details/T5-advanced-math-primitives.md` |
 
 ---
