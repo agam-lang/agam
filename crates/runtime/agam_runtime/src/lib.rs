@@ -15,10 +15,15 @@ pub mod arc;
 pub mod cache;
 pub mod contract;
 pub mod coroutine;
+pub mod crypto;
 pub mod effects;
 pub mod hwinfo;
 pub mod sandbox;
+pub mod security;
 pub mod simd;
+
+pub use crypto::{Sha256, chacha20_xor, hmac_sha256, sha256_digest};
+pub use security::{Secret, SecureRandom, constant_time_eq, zeroize};
 
 pub use coroutine::{
     AsyncBarrier, AsyncCondvar, AsyncMutex, AsyncPipe, AsyncRead, AsyncRwLock, AsyncSemaphore,
