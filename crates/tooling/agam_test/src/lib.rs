@@ -4,9 +4,12 @@
 
 pub mod c_output;
 pub mod error_reporting;
+pub mod gpu_output;
+pub mod llvm_output;
 pub mod opt_semantics;
 pub mod perf_speed;
 pub mod pipeline_integration;
+pub mod toolchain_output;
 pub mod unit_passes;
 
 use std::fs;
