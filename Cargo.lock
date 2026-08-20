@@ -276,6 +276,7 @@ name = "agam_test"
 version = "0.1.0"
 dependencies = [
  "agam_ast",
+ "agam_codegen",
  "agam_errors",
  "agam_hir",
  "agam_jit",
@@ -283,6 +284,8 @@ dependencies = [
  "agam_mir",
  "agam_parser",
  "agam_pkg",
+ "agam_runtime",
+ "agam_sema",
 ]
 
 [[package]]

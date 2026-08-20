@@ -2,6 +2,13 @@
 //!
 //! Test framework, property testing, and fuzzing.
 
+pub mod c_output;
+pub mod error_reporting;
+pub mod opt_semantics;
+pub mod perf_speed;
+pub mod pipeline_integration;
+pub mod unit_passes;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
