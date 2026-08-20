@@ -1111,6 +1111,18 @@ fn emit_gpu_intrinsic(
             id, args[0].0
         )
         .unwrap(),
+        GpuIntrinsicKind::CooperativeMatrixLoad => {
+            write!(out, "  ; cooperative_matrix_load %v{}\n", id).unwrap()
+        }
+        GpuIntrinsicKind::CooperativeMatrixStore => {
+            write!(out, "  ; cooperative_matrix_store\n").unwrap()
+        }
+        GpuIntrinsicKind::CooperativeMatrixMulAdd => {
+            write!(out, "  ; cooperative_matrix_mma %v{}\n", id).unwrap()
+        }
+        GpuIntrinsicKind::CooperativeMatrixLength => {
+            write!(out, "  ; cooperative_matrix_length %v{}\n", id).unwrap()
+        }
     }
 }
 

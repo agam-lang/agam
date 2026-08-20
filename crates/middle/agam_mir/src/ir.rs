@@ -213,6 +213,10 @@ pub enum GpuIntrinsicKind {
     NvvmCos,
     NvvmSqrt,
     NvvmExp,
+    CooperativeMatrixLoad,
+    CooperativeMatrixStore,
+    CooperativeMatrixMulAdd,
+    CooperativeMatrixLength,
 }
 
 /// MIR binary operations.

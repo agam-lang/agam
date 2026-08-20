@@ -151,6 +151,10 @@ declare double @llvm.exp.f64(double) nounwind readnone
             GpuIntrinsicKind::NvvmCos => "@llvm.cos.f32",
             GpuIntrinsicKind::NvvmSqrt => "@llvm.sqrt.f32",
             GpuIntrinsicKind::NvvmExp => "@llvm.exp.f32",
+            GpuIntrinsicKind::CooperativeMatrixLoad => "@llvm.nvvm.wmma.load",
+            GpuIntrinsicKind::CooperativeMatrixStore => "@llvm.nvvm.wmma.store",
+            GpuIntrinsicKind::CooperativeMatrixMulAdd => "@llvm.nvvm.wmma.mma",
+            GpuIntrinsicKind::CooperativeMatrixLength => "@llvm.nvvm.wmma.length",
         }
     }
 
@@ -271,6 +275,10 @@ declare double @llvm.exp.f64(double) nounwind readnone
             GpuIntrinsicKind::NvvmCos => "@llvm.cos.f32",
             GpuIntrinsicKind::NvvmSqrt => "@llvm.sqrt.f32",
             GpuIntrinsicKind::NvvmExp => "@llvm.exp.f32",
+            GpuIntrinsicKind::CooperativeMatrixLoad => "@llvm.amdgcn.mfma.load",
+            GpuIntrinsicKind::CooperativeMatrixStore => "@llvm.amdgcn.mfma.store",
+            GpuIntrinsicKind::CooperativeMatrixMulAdd => "@llvm.amdgcn.mfma.f32.16x16x16f16",
+            GpuIntrinsicKind::CooperativeMatrixLength => "@llvm.amdgcn.mfma.length",
         }
     }
 
@@ -380,6 +388,10 @@ declare double @llvm.exp.f64(double) nounwind readnone
             GpuIntrinsicKind::NvvmCos => "@llvm.cos.f32",
             GpuIntrinsicKind::NvvmSqrt => "@llvm.sqrt.f32",
             GpuIntrinsicKind::NvvmExp => "@llvm.exp.f32",
+            GpuIntrinsicKind::CooperativeMatrixLoad => "@spirv.CooperativeMatrixLoadKHR",
+            GpuIntrinsicKind::CooperativeMatrixStore => "@spirv.CooperativeMatrixStoreKHR",
+            GpuIntrinsicKind::CooperativeMatrixMulAdd => "@spirv.CooperativeMatrixMulAddKHR",
+            GpuIntrinsicKind::CooperativeMatrixLength => "@spirv.CooperativeMatrixLengthKHR",
         }
     }
 
@@ -495,6 +507,12 @@ declare double @llvm.exp.f64(double) nounwind readnone
             GpuIntrinsicKind::NvvmCos => "@llvm.cos.f32",
             GpuIntrinsicKind::NvvmSqrt => "@llvm.sqrt.f32",
             GpuIntrinsicKind::NvvmExp => "@llvm.exp.f32",
+            GpuIntrinsicKind::CooperativeMatrixLoad => "@air.simdgroup_matrix.load",
+            GpuIntrinsicKind::CooperativeMatrixStore => "@air.simdgroup_matrix.store",
+            GpuIntrinsicKind::CooperativeMatrixMulAdd => {
+                "@air.simdgroup_matrix.multiply_accumulate"
+            }
+            GpuIntrinsicKind::CooperativeMatrixLength => "@air.simdgroup_matrix.length",
         }
     }
 

@@ -2,6 +2,8 @@
 //!
 //! Emits vendor-neutral SPIR-V 1.5 compute binaries for Vulkan, OpenCL, and Level Zero
 //! from `@gpu`-annotated Agam MIR modules.
+//!
+//! Supports `SPV_KHR_cooperative_matrix` for hardware Tensor/Matrix Core acceleration.
 
 use std::collections::HashMap;
 
@@ -19,6 +21,8 @@ pub enum Opcode {
     OpNop = 0,
     OpSource = 3,
     OpName = 5,
+    OpExtension = 10,
+    OpExtInstImport = 11,
     OpCapability = 17,
     OpMemoryModel = 14,
     OpEntryPoint = 15,
@@ -53,6 +57,12 @@ pub enum Opcode {
     OpBranch = 249,
     OpReturn = 253,
     OpReturnValue = 254,
+    // SPV_KHR_cooperative_matrix opcodes
+    OpTypeCooperativeMatrixKHR = 4456,
+    OpCooperativeMatrixLoadKHR = 4457,
+    OpCooperativeMatrixStoreKHR = 4458,
+    OpCooperativeMatrixMulAddKHR = 4459,
+    OpCooperativeMatrixLengthKHR = 4460,
 }
 
 #[repr(u32)]
@@ -66,6 +76,7 @@ pub enum Capability {
     Float64 = 7,
     Int64 = 8,
     GroupNonUniform = 61,
+    CooperativeMatrixKHR = 6022,
 }
 
 #[repr(u32)]
@@ -147,6 +158,7 @@ impl Instruction {
 pub struct SpirvModuleBuilder {
     pub next_id: u32,
     pub capabilities: Vec<Instruction>,
+    pub extensions: Vec<Instruction>,
     pub memory_model: Vec<Instruction>,
     pub entry_points: Vec<Instruction>,
     pub execution_modes: Vec<Instruction>,
@@ -167,6 +179,7 @@ impl SpirvModuleBuilder {
         Self {
             next_id: 1,
             capabilities: Vec::new(),
+            extensions: Vec::new(),
             memory_model: Vec::new(),
             entry_points: Vec::new(),
             execution_modes: Vec::new(),
@@ -207,6 +220,12 @@ impl SpirvModuleBuilder {
             .push(Instruction::new(Opcode::OpCapability, vec![cap as u32]));
     }
 
+    pub fn add_extension(&mut self, name: &str) {
+        let operands = Self::encode_string(name);
+        self.extensions
+            .push(Instruction::new(Opcode::OpExtension, operands));
+    }
+
     pub fn set_memory_model(&mut self, addressing: AddressingModel, model: MemoryModel) {
         self.memory_model.push(Instruction::new(
             Opcode::OpMemoryModel,
@@ -240,6 +259,9 @@ impl SpirvModuleBuilder {
 
         // 2. Sections
         for instr in &self.capabilities {
+            instr.encode(&mut out);
+        }
+        for instr in &self.extensions {
             instr.encode(&mut out);
         }
         for instr in &self.memory_model {
@@ -299,6 +321,9 @@ pub fn emit_spirv_module(module: &MirModule) -> Option<Vec<u32>> {
     builder.add_capability(Capability::Float64);
     builder.add_capability(Capability::Int64);
     builder.add_capability(Capability::GroupNonUniform);
+    builder.add_capability(Capability::CooperativeMatrixKHR);
+
+    builder.add_extension("SPV_KHR_cooperative_matrix");
 
     builder.set_memory_model(AddressingModel::Logical, MemoryModel::GLSL450);
 
@@ -429,6 +454,63 @@ pub fn emit_spirv_module(module: &MirModule) -> Option<Vec<u32>> {
                             vec![const_scope, const_scope, const_sem],
                         ));
                     }
+                    Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::CooperativeMatrixMulAdd,
+                        args,
+                    } => {
+                        let a_id = args
+                            .first()
+                            .and_then(|a| value_map.get(a))
+                            .copied()
+                            .unwrap_or(0);
+                        let b_id = args
+                            .get(1)
+                            .and_then(|b| value_map.get(b))
+                            .copied()
+                            .unwrap_or(0);
+                        let c_id = args
+                            .get(2)
+                            .and_then(|c| value_map.get(c))
+                            .copied()
+                            .unwrap_or(0);
+                        builder.functions.push(Instruction::new(
+                            Opcode::OpCooperativeMatrixMulAddKHR,
+                            vec![type_f32, res_id, a_id, b_id, c_id, 0],
+                        ));
+                    }
+                    Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::CooperativeMatrixLoad,
+                        args,
+                    } => {
+                        let ptr_id = args
+                            .first()
+                            .and_then(|p| value_map.get(p))
+                            .copied()
+                            .unwrap_or(0);
+                        builder.functions.push(Instruction::new(
+                            Opcode::OpCooperativeMatrixLoadKHR,
+                            vec![type_f32, res_id, ptr_id, 0],
+                        ));
+                    }
+                    Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::CooperativeMatrixStore,
+                        args,
+                    } => {
+                        let ptr_id = args
+                            .first()
+                            .and_then(|p| value_map.get(p))
+                            .copied()
+                            .unwrap_or(0);
+                        let val_id = args
+                            .get(1)
+                            .and_then(|v| value_map.get(v))
+                            .copied()
+                            .unwrap_or(0);
+                        builder.functions.push(Instruction::new(
+                            Opcode::OpCooperativeMatrixStoreKHR,
+                            vec![ptr_id, val_id, 0],
+                        ));
+                    }
                     _ => {}
                 }
             }
@@ -524,5 +606,82 @@ mod tests {
         assert_eq!(bytes.len() % 4, 0, "SPIR-V bytes must be a multiple of 4");
         // Verify little-endian magic bytes
         assert_eq!(&bytes[0..4], &SPIRV_MAGIC.to_le_bytes());
+    }
+
+    #[test]
+    fn test_cooperative_matrix_spirv_emission() {
+        let block = BasicBlock {
+            id: BlockId(0),
+            instructions: vec![
+                MirInstruction {
+                    result: ValueId(2),
+                    ty: TypeId(0),
+                    op: Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::CooperativeMatrixLoad,
+                        args: vec![ValueId(0)],
+                    },
+                },
+                MirInstruction {
+                    result: ValueId(3),
+                    ty: TypeId(0),
+                    op: Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::CooperativeMatrixMulAdd,
+                        args: vec![ValueId(2), ValueId(2), ValueId(2)],
+                    },
+                },
+                MirInstruction {
+                    result: ValueId(4),
+                    ty: TypeId(0),
+                    op: Op::GpuIntrinsic {
+                        kind: GpuIntrinsicKind::CooperativeMatrixStore,
+                        args: vec![ValueId(1), ValueId(3)],
+                    },
+                },
+            ],
+            terminator: Terminator::Return(ValueId(0)),
+        };
+
+        let func = MirFunction {
+            name: "tensor_core_gemm".into(),
+            generics: vec![],
+            params: vec![
+                MirParam {
+                    name: "a".into(),
+                    ty: TypeId(0),
+                    value: ValueId(0),
+                    memory_type: None,
+                    gpu_abi: GpuKernelParamAbi::PtrF32,
+                },
+                MirParam {
+                    name: "c".into(),
+                    ty: TypeId(0),
+                    value: ValueId(1),
+                    memory_type: None,
+                    gpu_abi: GpuKernelParamAbi::PtrF32,
+                },
+            ],
+            return_ty: TypeId(0),
+            blocks: vec![block],
+            entry: BlockId(0),
+            target: TargetProfile::Default,
+            gpu_config: Some(GpuKernelConfig::default()),
+        };
+
+        let module = MirModule {
+            functions: vec![func],
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
+        };
+
+        let words = emit_spirv_module(&module).expect("emit cooperative matrix spirv");
+        assert!(words.len() >= 10);
+        // Verify OpCooperativeMatrixMulAddKHR (opcode 4459) is present in the word stream
+        let has_coop_mma = words
+            .iter()
+            .any(|&w| (w & 0xFFFF) == Opcode::OpCooperativeMatrixMulAddKHR as u32);
+        assert!(
+            has_coop_mma,
+            "SPIR-V words must contain OpCooperativeMatrixMulAddKHR"
+        );
     }
 }
