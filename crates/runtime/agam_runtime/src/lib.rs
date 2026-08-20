@@ -14,7 +14,14 @@
 pub mod arc;
 pub mod cache;
 pub mod contract;
+pub mod coroutine;
 pub mod effects;
 pub mod hwinfo;
 pub mod sandbox;
 pub mod simd;
+
+pub use coroutine::{
+    AsyncBarrier, AsyncMutex, AsyncSemaphore, Coroutine, CoroutineState, Generator, JoinHandle,
+    Poll, Runtime, RuntimeBuilder, TaskGroup, TaskId, channel, join, oneshot, select, sleep,
+    timeout, unbounded_channel, yield_now,
+};
