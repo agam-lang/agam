@@ -1,6 +1,12 @@
 //! # agam_profile
 //!
-//! Lightweight profiling models for adaptive runtime decisions.
+//! Lightweight profiling models, OpenTelemetry distributed tracing, and metrics for adaptive runtime decisions.
+
+pub mod metrics;
+pub mod telemetry;
+
+pub use metrics::{MetricKind, MetricValue, MetricsRegistry};
+pub use telemetry::{Span, SpanEvent, SpanId, SpanKind, SpanStatus, TraceId, Tracer};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -1551,5 +1557,41 @@ mod tests {
         assert_eq!(function.profile.specialization_guard_hits, 0);
         assert_eq!(function.profile.specialization_guard_fallbacks, 0);
         assert!(function.profile.specialization_profiles.is_empty());
+    }
+
+    #[test]
+    fn test_telemetry_span_lifecycle_and_otlp_export() {
+        let mut tracer = Tracer::new();
+        let mut parent_span = tracer.start_span("compilation_root", None);
+        parent_span.set_attribute("target", "x86_64-pc-windows-msvc");
+
+        let mut child_span = tracer.start_span("mir_opt", Some(parent_span.span_id));
+        child_span.record_event("pass_complete", BTreeMap::new());
+        tracer.record_span(child_span);
+
+        tracer.record_span(parent_span);
+
+        assert_eq!(tracer.completed_spans.len(), 2);
+        let otlp_json = tracer.export_otlp_json();
+        assert!(otlp_json.contains("resourceSpans"));
+        assert!(otlp_json.contains("compilation_root"));
+        assert!(otlp_json.contains("mir_opt"));
+    }
+
+    #[test]
+    fn test_metrics_registry_and_prometheus_export() {
+        let registry = MetricsRegistry::new();
+        registry.increment_counter("agamc_build_total", 1.0, &[("status", "success")]);
+        registry.set_gauge("agamc_memory_bytes", 1024.0 * 1024.0, &[]);
+        registry.observe_histogram("agamc_phase_latency_ms", 12.5, &[("phase", "sema")]);
+
+        let prom = registry.export_prometheus();
+        assert!(prom.contains("agamc_build_total{status=\"success\"} 1"));
+        assert!(prom.contains("agamc_memory_bytes 1048576"));
+        assert!(prom.contains("agamc_phase_latency_ms_count{phase=\"sema\"} 1"));
+
+        let otlp_metrics = registry.export_otlp_metrics_json();
+        assert!(otlp_metrics.contains("resourceMetrics"));
+        assert!(otlp_metrics.contains("agamc_build_total"));
     }
 }
