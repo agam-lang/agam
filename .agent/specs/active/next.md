@@ -4,17 +4,17 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T3-wasm-web: WebAssembly Compilation & Browser Runtime**
-   - Direct WebAssembly (Wasm) bytecode emitter and DOM runtime bridge
-   - Detail file: `details/T3-wasm-web.md`
-
-2. **Phase T4-game-engine: 2D/3D ECS Architecture & Math Pipeline**
+1. **Phase T4-game-engine: 2D/3D ECS Architecture & Math Pipeline**
    - Entity-Component-System engine, spatial hierarchies, and linear algebra
    - Detail file: `details/T4-game-engine.md`
 
-3. **Phase T3-npu-dispatch: Heterogeneous NPU & SIMD Tile Offloading**
+2. **Phase T3-npu-dispatch: Heterogeneous NPU & SIMD Tile Offloading**
    - Native SIMD tile tensor instruction emission and heterogeneous acceleration backend
    - Detail file: `details/T3-npu-dispatch.md`
+
+3. **Phase T3-universal-ffi: Zero-Overhead Multi-Language C/Rust/Python Interop**
+   - Direct FFI bindings, ABI layout conversion, and hot-path C-call bridge
+   - Detail file: `details/T3-universal-ffi.md`
 
 5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating

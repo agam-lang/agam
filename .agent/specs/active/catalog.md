@@ -94,7 +94,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T3-target-profiles | complete | Omni-targeting: `@target.iot`, `@target.enterprise`, `@target.hpc` | `details/T3-target-profiles.md` |
 | T3-gpu-npu-pipeline | complete | GPU/NPU integration: `@gpu` kernel pipeline, NVPTX emitter | `details/T3-gpu-npu-pipeline.md` |
 | T3-spirv-backend | complete | Vendor-neutral GPU via SPIR-V (chipStar/OpenCL/Vulkan/Level Zero) | `details/T3-spirv-backend.md` |
-| T3-wasm-backend | open | WASM Component Model (WASI 0.2), browser embedding, WIT generation | `details/T3-wasm-backend.md` |
+| T3-wasm-backend | complete | WASM Component Model (WASI 0.2), browser embedding, WIT generation | `details/T3-wasm-backend.md` |
 | T3-cross-compilation | open | Cross-compilation matrix: Windows, Linux, macOS, Android, RISC-V | `details/T3-cross-compilation.md` |
 | T3-pkg-manager-maturity | open | Registry protocol maturity, resolver improvements | `details/T3-pkg-manager-maturity.md` |
 | T3-mobile-targets | open | iOS and Android first-class targets | `details/T3-mobile-targets.md` |

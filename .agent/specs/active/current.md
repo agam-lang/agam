@@ -41,6 +41,7 @@ Development operates across two synchronized parallel tracks:
 | **T3-target-profiles** | completed | Omni-Targeting Directives (`@target.iot`, `@target.enterprise`, `@target.hpc`) | `details/T3-target-profiles.md` |
 | **T3-gpu-npu-pipeline** | completed | GPU and NPU Integration (`@gpu` kernel pipeline) | `details/T3-gpu-npu-pipeline.md` |
 | **T3-spirv-backend** | completed | Vendor-neutral GPU via SPIR-V binary code generation | `details/T3-spirv-backend.md` |
+| **T3-wasm-backend** | completed | WebAssembly binary & WASI 0.2 WIT component generator | `details/T3-wasm-backend.md` |
 | **T3-reactive-state** | completed | Fine-grained reactive state primitives (`Signal`, `Computed`, `batch`) | `details/T3-reactive-state.md` |
 | **T3-declarative-ui** | completed | Declarative UI Virtual tree, VNode diffing, and HTML renderer | `details/T3-declarative-ui.md` |
 | **T5-tensor-core-matrix** | completed | Tensor Core acceleration via `SPV_KHR_cooperative_matrix` | `details/T5-tensor-core-matrix.md` |
