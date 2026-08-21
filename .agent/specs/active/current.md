@@ -45,6 +45,7 @@ Development operates across two synchronized parallel tracks:
 | **T3-reactive-state** | completed | Fine-grained reactive state primitives (`Signal`, `Computed`, `batch`) | `details/T3-reactive-state.md` |
 | **T3-declarative-ui** | completed | Declarative UI Virtual tree, VNode diffing, and HTML renderer | `details/T3-declarative-ui.md` |
 | **T3-universal-ffi** | completed | Universal FFI (C ABI layout, Bindgen, Python Buffer Protocol) | `details/T3-universal-ffi.md` |
+| **T3-npu-dispatch** | completed | Heterogeneous NPU & SIMD Tile Tensor Offloading | `details/T3-npu-dispatch.md` |
 | **T4-game-engine** | completed | 2D/3D ECS Architecture & Linear Algebra Math Pipeline | `details/T4-game-engine.md` |
 | **T5-tensor-core-matrix** | completed | Tensor Core acceleration via `SPV_KHR_cooperative_matrix` | `details/T5-tensor-core-matrix.md` |
 | **T1-error-messages** | completed | Nyāya 4-Part Proof Diagnostic Engine & Hankel Root Solvers | `details/T1-error-messages.md` |

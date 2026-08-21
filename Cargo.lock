@@ -36,6 +36,7 @@ dependencies = [
  "agam_parser",
  "agam_profile",
  "agam_sema",
+ "serde",
 ]
 
 [[package]]

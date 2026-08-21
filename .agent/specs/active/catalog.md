@@ -104,6 +104,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T3-declarative-ui | complete | `@ui` declarative UI syntax, DSL for layouts and components | `details/T3-declarative-ui.md` |
 | T3-design-system | open | First-party design system, theming, accessibility | `details/T3-design-system.md` |
 | T3-universal-ffi | complete | C/C++/Python/Rust/JS/JVM interop with zero-overhead hot paths | `details/T3-universal-ffi.md` |
+| T3-npu-dispatch | complete | Heterogeneous NPU & SIMD tile tensor instruction offloading | `details/T3-npu-dispatch.md` |
 | T3-riscv-backend | open | RISC-V backend validation (RVA23, RVV auto-vectorization) | `details/T3-riscv-backend.md` |
 | T3-generative-ui | open | Agent-driven UI composition via MCP + A2UI protocol | `details/T3-generative-ui.md` |
 

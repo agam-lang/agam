@@ -13,12 +13,17 @@ pub mod c_emitter;
 pub mod gpu_adapter;
 pub mod gpu_emitter;
 pub mod llvm_emitter;
+pub mod npu;
 pub mod spirv;
 pub mod wasm;
 
 pub use gpu_adapter::{
     AmdgpuAdapter, GpuTargetAdapter, GpuTargetKind, MetalAdapter, NvptxAdapter, SpirvAdapter,
     adapter_for_target, adapter_from_triple,
+};
+pub use npu::{
+    NpuActivation, NpuKernelDescriptor, NpuPrecision, NpuTargetKind, NpuTileShape,
+    emit_npu_tile_kernel,
 };
 pub use spirv::{
     SPIRV_MAGIC, SPIRV_VERSION_1_5, SpirvModuleBuilder, emit_spirv_binary, emit_spirv_module,
