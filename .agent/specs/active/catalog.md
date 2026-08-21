@@ -121,7 +121,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T4-gpu-optimization-depth | open | GPU occupancy tuning, shared memory optimization, NPU dispatch | `details/T4-gpu-optimization-depth.md` |
 | T4-link-time-opts | open | Distributed ThinLTO, whole-program dead code elimination | `details/T4-link-time-opts.md` |
 | T4-hardware-introspection | open | Cache-aware data layout, SIMD multi-versioning, `@accelerate` | `details/T4-hardware-introspection.md` |
-| T4-multi-level-ir | open | Dialect-extensible MIR (core + gpu + tensor dialects), MLIR-inspired | `details/T4-multi-level-ir.md` |
+| T4-multi-level-ir | complete | Dialect-extensible MIR (core + gpu + tensor dialects), MLIR-inspired | `details/T4-multi-level-ir.md` |
 | T4-metaprogramming | open | Declarative and procedural macros, DSL construction, `@comptime` reflection | `details/T4-metaprogramming.md` |
 | T4-gpu-auto-tuning | open | GPU auto-tuning (genetic pass selection) and `Tile<T,N>` abstractions | `details/T4-gpu-auto-tuning.md` |
 | T4-tile-async-memory | open | Tile-centric programming model and asynchronous memory (TMA-style) | `details/T4-tile-async-memory.md` |

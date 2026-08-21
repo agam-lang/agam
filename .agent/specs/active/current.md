@@ -50,6 +50,7 @@ Development operates across two synchronized parallel tracks:
 | **T4-llvm-optimization** | completed | LLVM 22.1+ Optimization, ThinLTO, PGO & SIMD Vectorization | `details/T4-llvm-optimization.md` |
 | **T4-comptime-execution** | completed | MIR Compile-Time Function Evaluation & @comptime Blocks | `details/T4-comptime-execution.md` |
 | **T4-parallel-build** | completed | Directed Acyclic Compilation Graph Scheduler & Parallel Builds | `details/T4-parallel-build.md` |
+| **T4-multi-level-ir** | completed | Extensible MIR Dialects (Tensor, GPU, Async) & Progressive Lowering | `details/T4-multi-level-ir.md` |
 | **T5-tensor-core-matrix** | completed | Tensor Core acceleration via `SPV_KHR_cooperative_matrix` | `details/T5-tensor-core-matrix.md` |
 | **T1-error-messages** | completed | Nyāya 4-Part Proof Diagnostic Engine & Hankel Root Solvers | `details/T1-error-messages.md` |
 

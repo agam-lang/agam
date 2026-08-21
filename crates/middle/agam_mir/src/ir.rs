@@ -67,7 +67,7 @@ pub struct Instruction {
 }
 
 /// MIR operations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Op {
     /// Integer constant.
     ConstInt(i64),
