@@ -4,17 +4,17 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T4-parallel-build: Parallel Inter-Crate Compilation Scaling**
-   - Directed acyclic compilation graph scheduler and parallel codegen pipeline
-   - Detail file: `details/T4-parallel-build.md`
-
-2. **Phase T4-multi-level-ir: Dialect-Extensible Multi-Level MIR**
+1. **Phase T4-multi-level-ir: Dialect-Extensible Multi-Level MIR**
    - Extensible MIR dialect architecture (Core, GPU, Tensor dialects)
    - Detail file: `details/T4-multi-level-ir.md`
 
-3. **Phase T4-metaprogramming: Declarative & Procedural Macro Architecture**
+2. **Phase T4-metaprogramming: Declarative & Procedural Macro Architecture**
    - Syntax extension pipeline and procedural macro token stream transforms
    - Detail file: `details/T4-metaprogramming.md`
+
+3. **Phase T4-incremental-compile: Fine-Grained Incremental Recompilation Engine**
+   - Query-based incremental computation cache and source AST dirty tracking
+   - Detail file: `details/T4-incremental-compile.md`
 
 5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating

@@ -14,6 +14,12 @@ use agam_runtime::contract::{
 };
 use serde::{Deserialize, Serialize};
 
+pub mod build_graph;
+pub use build_graph::{
+    BuildGraph, BuildGraphError, BuildNode, BuildScheduleReport, BuildStage, BuildTargetKind,
+    ParallelBuildScheduler,
+};
+
 /// First portable package format version.
 pub const PACKAGE_FORMAT_VERSION: u32 = 1;
 /// First SDK distribution manifest format version.
