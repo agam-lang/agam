@@ -9,7 +9,10 @@
 //! - **CFG** (control flow graph) for optimization passes.
 
 pub mod analysis;
+pub mod eval;
 pub mod ir;
 pub mod lower;
 pub mod monomorphize;
 pub mod opt;
+
+pub use eval::{ComptimeError, ComptimeInterpreter, ConstValue};
