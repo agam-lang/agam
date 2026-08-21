@@ -13,6 +13,7 @@ pub mod c_emitter;
 pub mod gpu_adapter;
 pub mod gpu_emitter;
 pub mod gpu_occupancy;
+pub mod link_opt;
 pub mod llvm_emitter;
 pub mod llvm_opt;
 pub mod npu;
@@ -26,6 +27,9 @@ pub use gpu_adapter::{
 pub use gpu_occupancy::{
     AutoTunedLaunchConfig, GpuDeviceCapability, OccupancyLimitFactor, OccupancyReport,
     SharedMemLayoutOptimizer, auto_tune_kernel_launch, calculate_occupancy,
+};
+pub use link_opt::{
+    FatBinaryBundle, FatBinaryEntry, FunctionSummary, ModuleSummaryIndex, TargetArtifactKind,
 };
 pub use llvm_opt::{LlvmOptConfig, LlvmVersion, LtoMode, PgoMode, SimdConfig};
 pub use npu::{

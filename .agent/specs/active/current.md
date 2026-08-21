@@ -54,6 +54,7 @@ Development operates across two synchronized parallel tracks:
 | **T4-metaprogramming** | completed | Declarative Pattern Macros, @derive Generators & Neural Network DSL | `details/T4-metaprogramming.md` |
 | **T4-incremental-compile** | completed | Hardware Sparse Matrices (CSR/COO), FFT Signal Processing & Collections | `details/T4-incremental-compile.md` |
 | **T4-gpu-optimization-depth** | completed | GPU Occupancy Auto-Tuning, Register Modeling & Bank Conflict Resolution | `details/T4-gpu-optimization-depth.md` |
+| **T4-link-time-opts** | completed | Link-Time Whole-Program Optimization, Cross-Module DCE & Fat-Binary Bundling | `details/T4-link-time-opts.md` |
 | **T5-tensor-core-matrix** | completed | Tensor Core acceleration via `SPV_KHR_cooperative_matrix` | `details/T5-tensor-core-matrix.md` |
 | **T1-error-messages** | completed | Nyāya 4-Part Proof Diagnostic Engine & Hankel Root Solvers | `details/T1-error-messages.md` |
 
