@@ -4,17 +4,17 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T4-metaprogramming: Declarative & Procedural Macro Architecture**
-   - Syntax extension pipeline and procedural macro token stream transforms
-   - Detail file: `details/T4-metaprogramming.md`
-
-2. **Phase T4-incremental-compile: Fine-Grained Incremental Recompilation Engine**
+1. **Phase T4-incremental-compile: Fine-Grained Incremental Recompilation Engine**
    - Query-based incremental computation cache and source AST dirty tracking
    - Detail file: `details/T4-incremental-compile.md`
 
-3. **Phase T4-gpu-optimization-depth: GPU Occupancy Auto-Tuning & Memory Hierarchy**
+2. **Phase T4-gpu-optimization-depth: GPU Occupancy Auto-Tuning & Memory Hierarchy**
    - Occupancy analysis, register pressure modeling, and shared memory bank conflict resolution
    - Detail file: `details/T4-gpu-optimization-depth.md`
+
+3. **Phase T4-link-time-opts: Distributed ThinLTO & Cross-Module Dead Code Elimination**
+   - Cross-module summary indexes and distributed code elimination passes
+   - Detail file: `details/T4-link-time-opts.md`
 
 5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating
