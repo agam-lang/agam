@@ -29,4 +29,5 @@ pub mod units;
 pub use collections::{CompactGraph, FastRingBuffer};
 pub use complex::Complex;
 pub use fft::{blackman_window, fft, hamming_window, hanning_window, ifft};
+pub use gpu::{GpuBuffer, GpuError, Tile, tile_matmul};
 pub use sparse::{CooMatrix, CsrMatrix};

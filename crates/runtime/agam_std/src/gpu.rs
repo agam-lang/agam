@@ -88,6 +88,82 @@ pub fn gpu_memcpy_to_host(src: &GpuBuffer, dst: &mut [u8]) -> Result<i32, GpuErr
     Ok(0)
 }
 
+/// 2D Tile abstraction representing a collaborative shared-memory/register tile.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Tile<T, const ROWS: usize, const COLS: usize> {
+    pub data: [[T; COLS]; ROWS],
+}
+
+impl<T: Copy + Default, const ROWS: usize, const COLS: usize> Tile<T, ROWS, COLS> {
+    /// Construct a new zero-initialized tile.
+    pub fn zeros() -> Self {
+        Self {
+            data: [[T::default(); COLS]; ROWS],
+        }
+    }
+
+    /// Load tile rows from flat 2D strided memory.
+    pub fn load_strided(&mut self, src: &[T], stride: usize) {
+        for r in 0..ROWS {
+            let row_offset = r * stride;
+            for c in 0..COLS {
+                if row_offset + c < src.len() {
+                    self.data[r][c] = src[row_offset + c];
+                }
+            }
+        }
+    }
+
+    /// Store tile rows back to flat 2D strided memory.
+    pub fn store_strided(&self, dst: &mut [T], stride: usize) {
+        for r in 0..ROWS {
+            let row_offset = r * stride;
+            for c in 0..COLS {
+                if row_offset + c < dst.len() {
+                    dst[row_offset + c] = self.data[r][c];
+                }
+            }
+        }
+    }
+}
+
+impl<const ROWS: usize, const COLS: usize> Tile<f32, ROWS, COLS> {
+    /// Add another tile in-place.
+    pub fn add(&mut self, other: &Self) {
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                self.data[r][c] += other.data[r][c];
+            }
+        }
+    }
+
+    /// In-place rectified linear unit (ReLU).
+    pub fn relu(&mut self) {
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                self.data[r][c] = self.data[r][c].max(0.0);
+            }
+        }
+    }
+}
+
+/// Perform matrix multiply on two tiles ($C = A \cdot B$).
+pub fn tile_matmul<const M: usize, const K: usize, const N: usize>(
+    a: &Tile<f32, M, K>,
+    b: &Tile<f32, K, N>,
+) -> Tile<f32, M, N> {
+    let mut c = Tile::<f32, M, N>::zeros();
+    for i in 0..M {
+        for k in 0..K {
+            let a_ik = a.data[i][k];
+            for j in 0..N {
+                c.data[i][j] += a_ik * b.data[k][j];
+            }
+        }
+    }
+    c
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +190,21 @@ mod tests {
         assert_eq!(err.operation, "gpu_memcpy_to_device");
         assert_eq!(err.expected_bytes, 4);
         assert_eq!(err.actual_bytes, 3);
+    }
+
+    #[test]
+    fn test_tile_load_store_and_matmul() {
+        let mut a = Tile::<f32, 2, 2>::zeros();
+        a.data = [[1.0, 2.0], [3.0, 4.0]];
+
+        let mut b = Tile::<f32, 2, 2>::zeros();
+        b.data = [[5.0, 6.0], [7.0, 8.0]];
+
+        let c = tile_matmul(&a, &b);
+        // c[0][0] = 1*5 + 2*7 = 19
+        // c[0][1] = 1*6 + 2*8 = 22
+        // c[1][0] = 3*5 + 4*7 = 43
+        // c[1][1] = 3*6 + 4*8 = 50
+        assert_eq!(c.data, [[19.0, 22.0], [43.0, 50.0]]);
     }
 }

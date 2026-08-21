@@ -13,6 +13,7 @@ pub mod c_emitter;
 pub mod gpu_adapter;
 pub mod gpu_emitter;
 pub mod gpu_occupancy;
+pub mod gpu_tuner;
 pub mod layout_opt;
 pub mod link_opt;
 pub mod llvm_emitter;
@@ -29,6 +30,7 @@ pub use gpu_occupancy::{
     AutoTunedLaunchConfig, GpuDeviceCapability, OccupancyLimitFactor, OccupancyReport,
     SharedMemLayoutOptimizer, auto_tune_kernel_launch, calculate_occupancy,
 };
+pub use gpu_tuner::{GpuGeneticAutoTuner, GpuTuningGene, TuningCandidate};
 pub use layout_opt::{
     AosToSoaTransform, SimdFeatureSet, SimdMultiVersionDispatcher, SimdTargetTier, StructField,
     StructLayoutOptimizer, StructLayoutReport,
