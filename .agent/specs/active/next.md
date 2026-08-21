@@ -4,17 +4,17 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T4-gpu-optimization-depth: GPU Occupancy Auto-Tuning & Memory Hierarchy**
-   - Occupancy analysis, register pressure modeling, and shared memory bank conflict resolution
-   - Detail file: `details/T4-gpu-optimization-depth.md`
-
-2. **Phase T4-link-time-opts: Distributed ThinLTO & Cross-Module Dead Code Elimination**
+1. **Phase T4-link-time-opts: Distributed ThinLTO & Cross-Module Dead Code Elimination**
    - Cross-module summary indexes and distributed code elimination passes
    - Detail file: `details/T4-link-time-opts.md`
 
-3. **Phase T4-hardware-introspection: Hardware Cache Introspection & SIMD Multi-Versioning**
+2. **Phase T4-hardware-introspection: Hardware Cache Introspection & SIMD Multi-Versioning**
    - Cache-line aware data layout algorithms and runtime SIMD target dispatch
    - Detail file: `details/T4-hardware-introspection.md`
+
+3. **Phase T4-gpu-auto-tuning: GPU Auto-Tuning & Tile<T,N> Abstractions**
+   - Genetic pass selection, kernel variant benchmarking, and Tile abstraction pipelines
+   - Detail file: `details/T4-gpu-auto-tuning.md`
 
 5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating

@@ -118,7 +118,7 @@ Compact whole-program roadmap for Agam. Every phase uses the unified `T{tier}-{s
 | T4-comptime-execution | complete | Compile-time expression evaluation, `@comptime` blocks | `details/T4-comptime-execution.md` |
 | T4-incremental-compile | complete | Fine-grained incremental recompilation beyond daemon warm state | `details/T4-incremental-compile.md` |
 | T4-parallel-build | complete | Parallel crate-level and inter-crate build scaling | `details/T4-parallel-build.md` |
-| T4-gpu-optimization-depth | open | GPU occupancy tuning, shared memory optimization, NPU dispatch | `details/T4-gpu-optimization-depth.md` |
+| T4-gpu-optimization-depth | complete | GPU occupancy tuning, shared memory optimization, NPU dispatch | `details/T4-gpu-optimization-depth.md` |
 | T4-link-time-opts | open | Distributed ThinLTO, whole-program dead code elimination | `details/T4-link-time-opts.md` |
 | T4-hardware-introspection | open | Cache-aware data layout, SIMD multi-versioning, `@accelerate` | `details/T4-hardware-introspection.md` |
 | T4-multi-level-ir | complete | Dialect-extensible MIR (core + gpu + tensor dialects), MLIR-inspired | `details/T4-multi-level-ir.md` |
