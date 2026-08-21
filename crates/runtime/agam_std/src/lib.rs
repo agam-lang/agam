@@ -5,10 +5,12 @@
 //! All data structures use contiguous memory layouts, `#[repr(C)]` alignment,
 //! and cache-friendly access patterns for maximum hardware performance.
 
+pub mod collections;
 pub mod complex;
 pub mod dataframe;
 pub mod effects;
 pub mod env;
+pub mod fft;
 pub mod gpu;
 pub mod io;
 pub mod linalg;
@@ -19,6 +21,12 @@ pub mod net;
 pub mod numerical;
 pub mod precision;
 pub mod process;
+pub mod sparse;
 pub mod stats;
 pub mod tensor;
 pub mod units;
+
+pub use collections::{CompactGraph, FastRingBuffer};
+pub use complex::Complex;
+pub use fft::{blackman_window, fft, hamming_window, hanning_window, ifft};
+pub use sparse::{CooMatrix, CsrMatrix};

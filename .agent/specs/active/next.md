@@ -4,17 +4,17 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T4-incremental-compile: Fine-Grained Incremental Recompilation Engine**
-   - Query-based incremental computation cache and source AST dirty tracking
-   - Detail file: `details/T4-incremental-compile.md`
-
-2. **Phase T4-gpu-optimization-depth: GPU Occupancy Auto-Tuning & Memory Hierarchy**
+1. **Phase T4-gpu-optimization-depth: GPU Occupancy Auto-Tuning & Memory Hierarchy**
    - Occupancy analysis, register pressure modeling, and shared memory bank conflict resolution
    - Detail file: `details/T4-gpu-optimization-depth.md`
 
-3. **Phase T4-link-time-opts: Distributed ThinLTO & Cross-Module Dead Code Elimination**
+2. **Phase T4-link-time-opts: Distributed ThinLTO & Cross-Module Dead Code Elimination**
    - Cross-module summary indexes and distributed code elimination passes
    - Detail file: `details/T4-link-time-opts.md`
+
+3. **Phase T4-hardware-introspection: Hardware Cache Introspection & SIMD Multi-Versioning**
+   - Cache-line aware data layout algorithms and runtime SIMD target dispatch
+   - Detail file: `details/T4-hardware-introspection.md`
 
 5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating
