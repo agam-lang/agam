@@ -4,17 +4,17 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T4-llvm-optimization: LLVM 22.1 Profile-Guided Optimization & ThinLTO**
-   - Whole-program ThinLTO pipeline, PGO integration, and SIMD auto-vectorization passes
-   - Detail file: `details/T4-llvm-optimization.md`
-
-2. **Phase T4-comptime-execution: Compile-Time Evaluation & @comptime Blocks**
+1. **Phase T4-comptime-execution: Compile-Time Evaluation & @comptime Blocks**
    - Direct MIR constant evaluation engine and compile-time expression execution
    - Detail file: `details/T4-comptime-execution.md`
 
-3. **Phase T4-parallel-build: Parallel Inter-Crate Compilation Scaling**
+2. **Phase T4-parallel-build: Parallel Inter-Crate Compilation Scaling**
    - Directed acyclic compilation graph scheduler and parallel codegen pipeline
    - Detail file: `details/T4-parallel-build.md`
+
+3. **Phase T4-multi-level-ir: Dialect-Extensible Multi-Level MIR**
+   - Extensible MIR dialect architecture (Core, GPU, Tensor dialects)
+   - Detail file: `details/T4-multi-level-ir.md`
 
 5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating

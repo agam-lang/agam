@@ -13,6 +13,7 @@ pub mod c_emitter;
 pub mod gpu_adapter;
 pub mod gpu_emitter;
 pub mod llvm_emitter;
+pub mod llvm_opt;
 pub mod npu;
 pub mod spirv;
 pub mod wasm;
@@ -21,6 +22,7 @@ pub use gpu_adapter::{
     AmdgpuAdapter, GpuTargetAdapter, GpuTargetKind, MetalAdapter, NvptxAdapter, SpirvAdapter,
     adapter_for_target, adapter_from_triple,
 };
+pub use llvm_opt::{LlvmOptConfig, LlvmVersion, LtoMode, PgoMode, SimdConfig};
 pub use npu::{
     NpuActivation, NpuKernelDescriptor, NpuPrecision, NpuTargetKind, NpuTileShape,
     emit_npu_tile_kernel,
