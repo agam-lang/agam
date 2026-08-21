@@ -8,13 +8,13 @@ Use this as the default answer to "what should Agam agents build next?"
    - Native SIMD tile tensor instruction emission and heterogeneous acceleration backend
    - Detail file: `details/T3-npu-dispatch.md`
 
-2. **Phase T3-universal-ffi: Zero-Overhead Multi-Language C/Rust/Python Interop**
-   - Direct FFI bindings, ABI layout conversion, and hot-path C-call bridge
-   - Detail file: `details/T3-universal-ffi.md`
-
-3. **Phase T4-llvm-optimization: LLVM 22.1 Profile-Guided Optimization & ThinLTO**
+2. **Phase T4-llvm-optimization: LLVM 22.1 Profile-Guided Optimization & ThinLTO**
    - Whole-program ThinLTO pipeline, PGO integration, and SIMD auto-vectorization passes
    - Detail file: `details/T4-llvm-optimization.md`
+
+3. **Phase T4-comptime-execution: Compile-Time Evaluation & @comptime Blocks**
+   - Direct MIR constant evaluation engine and compile-time expression execution
+   - Detail file: `details/T4-comptime-execution.md`
 
 5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating

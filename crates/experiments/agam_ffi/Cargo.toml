@@ -7,4 +7,5 @@ license.workspace = true
 
 [dependencies]
 agam_notebook = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }

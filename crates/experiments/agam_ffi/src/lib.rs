@@ -1,6 +1,14 @@
 //! # agam_ffi
 //!
-//! Foreign function interface bridges (Python, C++, Java).
+//! Universal Foreign function interface bridges (C, Python, Rust, C++, Java).
+
+pub mod bindgen;
+pub mod c_abi;
+pub mod python;
+
+pub use bindgen::{generate_agam_extern_block, parse_c_function_prototype};
+pub use c_abi::{CField, CFuncSig, CPrimitive, CStructLayout, CallingConvention};
+pub use python::PyBufferDescriptor;
 
 use agam_notebook::{
     HeadlessExecutionBackend, HeadlessExecutionPolicy, HeadlessExecutionRequest,
