@@ -76,6 +76,65 @@ impl SandboxPolicy {
             ..Self::default()
         }
     }
+
+    /// Check whether accessing a path violates the filesystem sandbox root constraint.
+    pub fn validate_filesystem_path(
+        &self,
+        target_path: &std::path::Path,
+    ) -> Result<(), SandboxError> {
+        if let Some(ref root) = self.filesystem_root {
+            let normalize = |p: &std::path::Path| -> PathBuf {
+                let s = p.to_string_lossy();
+                let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
+                #[cfg(target_os = "windows")]
+                {
+                    PathBuf::from(stripped.to_lowercase().replace('/', "\\"))
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    PathBuf::from(stripped)
+                }
+            };
+            let norm_root = normalize(root);
+            let norm_target = normalize(target_path);
+            if !norm_target.starts_with(&norm_root) {
+                return Err(SandboxError {
+                    message: format!(
+                        "Filesystem access violation: path `{}` is outside sandbox root `{}`",
+                        target_path.display(),
+                        root.display()
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Check whether outbound network connections are permitted.
+    pub fn validate_network_access(&self, host: &str, port: u16) -> Result<(), SandboxError> {
+        if self.deny_network {
+            return Err(SandboxError {
+                message: format!(
+                    "Network access denied by sandbox policy: connection to {}:{} blocked",
+                    host, port
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Check whether child process spawning is permitted.
+    pub fn validate_process_spawn(&self, program: &str) -> Result<(), SandboxError> {
+        if self.deny_process_spawn {
+            return Err(SandboxError {
+                message: format!(
+                    "Process execution denied by sandbox policy: spawning `{}` blocked",
+                    program
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Capability level that the current platform can enforce.
@@ -188,6 +247,21 @@ impl SandboxGuard {
     /// Check whether the timeout watchdog has signalled expiry.
     pub fn is_timed_out(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+
+    /// Validate filesystem access against the guard's policy.
+    pub fn validate_path(&self, path: &std::path::Path) -> Result<(), SandboxError> {
+        self.policy.validate_filesystem_path(path)
+    }
+
+    /// Validate network connection request against the guard's policy.
+    pub fn validate_network(&self, host: &str, port: u16) -> Result<(), SandboxError> {
+        self.policy.validate_network_access(host, port)
+    }
+
+    /// Validate child process spawn request against the guard's policy.
+    pub fn validate_spawn(&self, program: &str) -> Result<(), SandboxError> {
+        self.policy.validate_process_spawn(program)
     }
 }
 
@@ -498,5 +572,26 @@ mod tests {
             message: "test failure".into(),
         };
         assert_eq!(error.to_string(), "sandbox error: test failure");
+    }
+
+    #[test]
+    fn test_sandbox_filesystem_network_and_spawn_validation() {
+        let root = std::env::temp_dir();
+        let policy = SandboxPolicy {
+            filesystem_root: Some(root.clone()),
+            deny_network: true,
+            deny_process_spawn: true,
+            ..SandboxPolicy::default()
+        };
+
+        // Allowed path within root
+        let inside_path = root.join("valid_test.txt");
+        assert!(policy.validate_filesystem_path(&inside_path).is_ok());
+
+        // Blocked network
+        assert!(policy.validate_network_access("example.com", 443).is_err());
+
+        // Blocked process spawn
+        assert!(policy.validate_process_spawn("sh").is_err());
     }
 }

@@ -1,10 +1,13 @@
 //! MIR optimization pipeline.
 
+pub mod baur_strassen;
 pub mod constant_fold;
 pub mod dce;
+pub mod egraph;
 pub mod escape;
 pub mod inline;
 pub mod loop_unroll;
+pub mod polyhedral;
 
 use crate::ir::MirModule;
 
@@ -16,6 +19,7 @@ pub fn optimize_module(module: &mut MirModule) -> bool {
         let mut changed = false;
         changed |= inline::run(module);
         changed |= constant_fold::run(module);
+        changed |= egraph::run(module);
         changed |= loop_unroll::run(module);
         changed |= constant_fold::run(module);
         changed |= dce::run(module);

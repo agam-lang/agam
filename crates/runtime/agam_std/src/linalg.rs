@@ -217,6 +217,88 @@ impl Matrix {
         }
         (eigenvalue, v)
     }
+
+    /// Compute the matrix permanent via Glynn's formula in O(n 2^(n-1)) operations.
+    pub fn permanent(&self) -> f64 {
+        assert_eq!(self.rows, self.cols, "permanent requires square matrix");
+        glynn_permanent(&self.data, self.rows)
+    }
+}
+
+/// Compute the matrix permanent of an n x n row-major matrix using Ryser's inclusion-exclusion formula:
+///
+/// $$\operatorname{perm}(A) = (-1)^n \sum_{S \subseteq \{0,\dots,n-1\}} (-1)^{|S|} \prod_{i=0}^{n-1} \sum_{j \in S} A_{i,j}$$
+pub fn ryser_permanent(data: &[f64], n: usize) -> f64 {
+    if n == 0 {
+        return 1.0;
+    }
+    if n == 1 {
+        return data[0];
+    }
+
+    let num_subsets = 1usize << n;
+    let mut perm_sum = 0.0;
+
+    for mask in 0..num_subsets {
+        let size = mask.count_ones();
+        let sign = if size % 2 == 0 { 1.0 } else { -1.0 };
+
+        let mut row_prod = 1.0;
+        for i in 0..n {
+            let mut col_sum = 0.0;
+            for j in 0..n {
+                if (mask & (1 << j)) != 0 {
+                    col_sum += data[i * n + j];
+                }
+            }
+            row_prod *= col_sum;
+        }
+
+        perm_sum += sign * row_prod;
+    }
+
+    let global_sign = if n % 2 == 0 { 1.0 } else { -1.0 };
+    global_sign * perm_sum
+}
+
+/// Compute the matrix permanent of an n x n row-major matrix using Glynn's balanced formula:
+///
+/// $$\operatorname{perm}(A) = \frac{1}{2^{n-1}} \sum_{\delta \in \{-1, 1\}^n, \delta_0 = 1} \left( \prod_{k=0}^{n-1} \delta_k \right) \prod_{i=0}^{n-1} \left( \sum_{j=0}^{n-1} \delta_j A_{i,j} \right)$$
+pub fn glynn_permanent(data: &[f64], n: usize) -> f64 {
+    if n == 0 {
+        return 1.0;
+    }
+    if n == 1 {
+        return data[0];
+    }
+
+    let num_patterns = 1usize << (n - 1);
+    let mut total_sum = 0.0;
+
+    for mask in 0..num_patterns {
+        let mut delta = vec![1.0; n];
+        let mut prod_delta = 1.0;
+
+        for j in 1..n {
+            if (mask & (1 << (j - 1))) != 0 {
+                delta[j] = -1.0;
+                prod_delta = -prod_delta;
+            }
+        }
+
+        let mut row_prod = 1.0;
+        for i in 0..n {
+            let mut col_sum = 0.0;
+            for j in 0..n {
+                col_sum += delta[j] * data[i * n + j];
+            }
+            row_prod *= col_sum;
+        }
+
+        total_sum += prod_delta * row_prod;
+    }
+
+    total_sum / (2.0_f64.powi((n - 1) as i32))
 }
 
 #[cfg(test)]
@@ -243,6 +325,22 @@ mod tests {
     fn test_det_3x3() {
         let m = Matrix::new(3, 3, vec![6.0, 1.0, 1.0, 4.0, -2.0, 5.0, 2.0, 8.0, 7.0]);
         assert!((m.det() - (-306.0)).abs() < 1e-8);
+    }
+
+    #[test]
+    fn test_permanent_2x2_and_3x3() {
+        // |1 2| permanent = 1*4 + 2*3 = 4 + 6 = 10
+        // |3 4|
+        let m2 = Matrix::new(2, 2, vec![1.0, 2.0, 3.0, 4.0]);
+        assert!((m2.permanent() - 10.0).abs() < 1e-10);
+        assert!((ryser_permanent(&m2.data, 2) - 10.0).abs() < 1e-10);
+
+        // |1 1 1|
+        // |1 1 1| permanent = 3! = 6
+        // |1 1 1|
+        let ones = Matrix::new(3, 3, vec![1.0; 9]);
+        assert!((ones.permanent() - 6.0).abs() < 1e-10);
+        assert!((ryser_permanent(&ones.data, 3) - 6.0).abs() < 1e-10);
     }
 
     #[test]

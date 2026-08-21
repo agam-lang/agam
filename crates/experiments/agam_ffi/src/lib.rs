@@ -5,10 +5,15 @@
 pub mod bindgen;
 pub mod c_abi;
 pub mod python;
+pub mod torch_bridge;
 
 pub use bindgen::{generate_agam_extern_block, parse_c_function_prototype};
 pub use c_abi::{CField, CFuncSig, CPrimitive, CStructLayout, CallingConvention};
-pub use python::PyBufferDescriptor;
+pub use python::{
+    DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, DLManagedTensor, DLTensor,
+    PyBufferDescriptor, PyTorchDevice, PyTorchDtype, PyTorchTensorDescriptor,
+};
+pub use torch_bridge::{AgamPyTorchOpBuilder, TorchArg};
 
 use agam_notebook::{
     HeadlessExecutionBackend, HeadlessExecutionPolicy, HeadlessExecutionRequest,

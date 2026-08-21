@@ -5,6 +5,10 @@
     clippy::too_many_arguments
 )]
 
+pub mod osr;
+
+pub use osr::{DeoptBailout, DeoptReason, JitTier, OsrEngine, OsrFrameState, StackSlotValue};
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char};
