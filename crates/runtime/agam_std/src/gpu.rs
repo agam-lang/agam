@@ -164,6 +164,98 @@ pub fn tile_matmul<const M: usize, const K: usize, const N: usize>(
     c
 }
 
+/// Multi-dimensional coordinate dimension descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Extent<const DIMS: usize> {
+    pub shape: [usize; DIMS],
+}
+
+impl<const DIMS: usize> Extent<DIMS> {
+    pub fn new(shape: [usize; DIMS]) -> Self {
+        Self { shape }
+    }
+
+    /// Total linear element capacity.
+    pub fn num_elements(&self) -> usize {
+        self.shape.iter().product()
+    }
+}
+
+/// Zero-copy strided sub-tensor partition view.
+#[derive(Clone, Copy, Debug)]
+pub struct PartitionView<'a, T> {
+    pub data: &'a [T],
+    pub offset: usize,
+    pub rows: usize,
+    pub cols: usize,
+    pub stride: usize,
+}
+
+impl<'a, T: Copy> PartitionView<'a, T> {
+    pub fn new(data: &'a [T], offset: usize, rows: usize, cols: usize, stride: usize) -> Self {
+        Self {
+            data,
+            offset,
+            rows,
+            cols,
+            stride,
+        }
+    }
+
+    /// Read element at local partition coordinate `(r, c)`.
+    pub fn get(&self, r: usize, c: usize) -> Option<T> {
+        if r < self.rows && c < self.cols {
+            let idx = self.offset + r * self.stride + c;
+            self.data.get(idx).copied()
+        } else {
+            None
+        }
+    }
+
+    /// Load into an in-memory `Tile<T, ROWS, COLS>`.
+    pub fn load_into_tile<const R: usize, const C: usize>(&self, tile: &mut Tile<T, R, C>)
+    where
+        T: Default,
+    {
+        for r in 0..R.min(self.rows) {
+            for c in 0..C.min(self.cols) {
+                if let Some(val) = self.get(r, c) {
+                    tile.data[r][c] = val;
+                }
+            }
+        }
+    }
+}
+
+/// Multi-stage asynchronous memory transfer pipeline token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsyncPipelineStage {
+    pub stage_index: usize,
+    pub total_stages: usize,
+    pub is_committed: bool,
+}
+
+impl AsyncPipelineStage {
+    pub fn new(total_stages: usize) -> Self {
+        Self {
+            stage_index: 0,
+            total_stages,
+            is_committed: false,
+        }
+    }
+
+    /// Advance pipeline to next buffer stage.
+    pub fn advance(&mut self) {
+        self.stage_index = (self.stage_index + 1) % self.total_stages;
+        self.is_committed = false;
+    }
+
+    /// Commit current asynchronous load group.
+    pub fn commit(&mut self) {
+        self.is_committed = true;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +298,35 @@ mod tests {
         // c[1][0] = 3*5 + 4*7 = 43
         // c[1][1] = 3*6 + 4*8 = 50
         assert_eq!(c.data, [[19.0, 22.0], [43.0, 50.0]]);
+    }
+
+    #[test]
+    fn test_partition_view_and_async_pipeline() {
+        let extent = Extent::<2>::new([4, 4]);
+        assert_eq!(extent.num_elements(), 16);
+
+        let data = [
+            1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+            16.0,
+        ];
+
+        // 2x2 sub-view at offset (row=1, col=1) -> [6.0, 7.0; 10.0, 11.0]
+        let view = PartitionView::new(&data, 5, 2, 2, 4);
+        assert_eq!(view.get(0, 0), Some(6.0));
+        assert_eq!(view.get(0, 1), Some(7.0));
+        assert_eq!(view.get(1, 0), Some(10.0));
+        assert_eq!(view.get(1, 1), Some(11.0));
+
+        let mut tile = Tile::<f32, 2, 2>::zeros();
+        view.load_into_tile(&mut tile);
+        assert_eq!(tile.data, [[6.0, 7.0], [10.0, 11.0]]);
+
+        let mut pipeline = AsyncPipelineStage::new(3);
+        assert_eq!(pipeline.stage_index, 0);
+        pipeline.commit();
+        assert!(pipeline.is_committed);
+        pipeline.advance();
+        assert_eq!(pipeline.stage_index, 1);
+        assert!(!pipeline.is_committed);
     }
 }

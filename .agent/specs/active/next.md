@@ -4,17 +4,17 @@ Use this as the default answer to "what should Agam agents build next?"
 
 ## Recommended Order
 
-1. **Phase T4-tile-async-memory: Tile-Centric Async Memory & TMA Pipelines**
-   - Tile-centric programming model and asynchronous memory (TMA-style) copy pipelines
-   - Detail file: `details/T4-tile-async-memory.md`
-
-2. **Phase T4-egraph-square-zero: E-Graph Superoptimization & Algebraic Tensor Fusion**
+1. **Phase T4-egraph-square-zero: E-Graph Superoptimization & Algebraic Tensor Fusion**
    - E-Graph algebraic equality saturation and square-zero tensor kernel transforms
    - Detail file: `details/T4-egraph-square-zero.md`
 
-3. **Phase T5-jit-compilation: Tiered JIT Execution Engine & On-Stack Replacement**
+2. **Phase T5-jit-compilation: Tiered JIT Execution Engine & On-Stack Replacement**
    - Tier-2 optimizing JIT, profile-guided deoptimization, and OSR transitions
    - Detail file: `details/T5-jit-compilation.md`
+
+3. **Phase T5-polyhedral-loop: Polyhedral Loop Transformations & Affine Scheduling**
+   - Integer polyhedral models, iteration space skewing, and affine loop tiling
+   - Detail file: `details/T5-polyhedral-loop.md`
 
 5. **Continue Phase T1-headless-exec**
    - Extend the execution-policy contract beyond source/arg limits and native-backend gating

@@ -57,6 +57,7 @@ Development operates across two synchronized parallel tracks:
 | **T4-link-time-opts** | completed | Link-Time Whole-Program Optimization, Cross-Module DCE & Fat-Binary Bundling | `details/T4-link-time-opts.md` |
 | **T4-hardware-introspection** | completed | Hardware Cache Introspection, Layout Packing & SIMD Multi-Versioning | `details/T4-hardware-introspection.md` |
 | **T4-gpu-auto-tuning** | completed | GPU Genetic Auto-Tuning, Evolutionary Pass Selection & Tile<T,N> | `details/T4-gpu-auto-tuning.md` |
+| **T4-tile-async-memory** | completed | Tile-Centric Async Memory Pipelines, PartitionView & TMA | `details/T4-tile-async-memory.md` |
 | **T5-tensor-core-matrix** | completed | Tensor Core acceleration via `SPV_KHR_cooperative_matrix` | `details/T5-tensor-core-matrix.md` |
 | **T1-error-messages** | completed | Nyāya 4-Part Proof Diagnostic Engine & Hankel Root Solvers | `details/T1-error-messages.md` |
 

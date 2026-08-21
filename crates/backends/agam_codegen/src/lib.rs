@@ -20,6 +20,7 @@ pub mod llvm_emitter;
 pub mod llvm_opt;
 pub mod npu;
 pub mod spirv;
+pub mod tma_pipeline;
 pub mod wasm;
 
 pub use gpu_adapter::{
@@ -46,4 +47,5 @@ pub use npu::{
 pub use spirv::{
     SPIRV_MAGIC, SPIRV_VERSION_1_5, SpirvModuleBuilder, emit_spirv_binary, emit_spirv_module,
 };
+pub use tma_pipeline::{AsyncPipelineTracker, TmaCopyDescriptor, TmaCopyDimension};
 pub use wasm::{WASM_MAGIC, WASM_VERSION, WasmModuleBuilder, emit_wasm_binary, emit_wit_interface};
