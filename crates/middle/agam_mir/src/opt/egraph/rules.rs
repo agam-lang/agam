@@ -179,52 +179,52 @@ fn match_constant_folding(
     node: &ENode,
     matches: &mut Vec<Match>,
 ) {
-    if let ENode::BinOp { op, left, right } = node {
-        if let (Some(l), Some(r)) = (get_const_int(egraph, *left), get_const_int(egraph, *right)) {
-            let res = match op {
-                MirBinOp::Add => l.checked_add(r),
-                MirBinOp::Sub => l.checked_sub(r),
-                MirBinOp::Mul => l.checked_mul(r),
-                MirBinOp::Div => {
-                    if r != 0 {
-                        l.checked_div(r)
-                    } else {
-                        None
-                    }
+    if let ENode::BinOp { op, left, right } = node
+        && let (Some(l), Some(r)) = (get_const_int(egraph, *left), get_const_int(egraph, *right))
+    {
+        let res = match op {
+            MirBinOp::Add => l.checked_add(r),
+            MirBinOp::Sub => l.checked_sub(r),
+            MirBinOp::Mul => l.checked_mul(r),
+            MirBinOp::Div => {
+                if r != 0 {
+                    l.checked_div(r)
+                } else {
+                    None
                 }
-                MirBinOp::Mod => {
-                    if r != 0 {
-                        l.checked_rem(r)
-                    } else {
-                        None
-                    }
-                }
-                MirBinOp::BitAnd => Some(l & r),
-                MirBinOp::BitOr => Some(l | r),
-                MirBinOp::BitXor => Some(l ^ r),
-                MirBinOp::Shl => {
-                    if (0..64).contains(&r) {
-                        Some(l << r)
-                    } else {
-                        None
-                    }
-                }
-                MirBinOp::Shr => {
-                    if (0..64).contains(&r) {
-                        Some(l >> r)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-
-            if let Some(val) = res {
-                matches.push(Match {
-                    class: class_id,
-                    action: MatchAction::Node(ENode::ConstInt(val)),
-                });
             }
+            MirBinOp::Mod => {
+                if r != 0 {
+                    l.checked_rem(r)
+                } else {
+                    None
+                }
+            }
+            MirBinOp::BitAnd => Some(l & r),
+            MirBinOp::BitOr => Some(l | r),
+            MirBinOp::BitXor => Some(l ^ r),
+            MirBinOp::Shl => {
+                if (0..64).contains(&r) {
+                    Some(l << r)
+                } else {
+                    None
+                }
+            }
+            MirBinOp::Shr => {
+                if (0..64).contains(&r) {
+                    Some(l >> r)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(val) = res {
+            matches.push(Match {
+                class: class_id,
+                action: MatchAction::Node(ENode::ConstInt(val)),
+            });
         }
     }
 }
@@ -315,18 +315,16 @@ fn match_bitwise_rules(
                         left: x,
                         right: c1_id,
                     } = inner_node
+                        && let Some(c1) = get_const_int(egraph, c1_id)
+                        && c1 + c2 < 64
                     {
-                        if let Some(c1) = get_const_int(egraph, c1_id) {
-                            if c1 + c2 < 64 {
-                                matches.push(Match {
-                                    class: class_id,
-                                    action: MatchAction::ShiftCoalesce {
-                                        x,
-                                        total_shift: c1 + c2,
-                                    },
-                                });
-                            }
-                        }
+                        matches.push(Match {
+                            class: class_id,
+                            action: MatchAction::ShiftCoalesce {
+                                x,
+                                total_shift: c1 + c2,
+                            },
+                        });
                     }
                 }
             }
@@ -343,14 +341,14 @@ fn match_square_zero_nilpotent(
     node: &ENode,
     matches: &mut Vec<Match>,
 ) {
-    if let ENode::NilpotentTerm { var: _, degree } = node {
-        if *degree >= 2 {
-            // zi^2 = 0 in S
-            matches.push(Match {
-                class: class_id,
-                action: MatchAction::Node(ENode::ConstInt(0)),
-            });
-        }
+    if let ENode::NilpotentTerm { var: _, degree } = node
+        && *degree >= 2
+    {
+        // zi^2 = 0 in S
+        matches.push(Match {
+            class: class_id,
+            action: MatchAction::Node(ENode::ConstInt(0)),
+        });
     }
 }
 

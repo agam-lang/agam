@@ -216,7 +216,7 @@ mod tests {
     fn test_osr_frame_state_migration() {
         let engine = OsrEngine::new(100);
         let mut frame = OsrFrameState::new("saxpy", 2);
-        frame.set_local_float(0, 3.14159);
+        frame.set_local_float(0, 1.23456);
         frame.set_local_int(1, 1024);
         frame.set_induction_var("i", 42);
 
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(migrated.function_name, "saxpy");
         assert_eq!(
             migrated.locals.get(&0),
-            Some(&StackSlotValue::Float(3.14159))
+            Some(&StackSlotValue::Float(1.23456))
         );
         assert_eq!(migrated.locals.get(&1), Some(&StackSlotValue::Int(1024)));
         assert_eq!(migrated.induction_vars.get("i"), Some(&42));

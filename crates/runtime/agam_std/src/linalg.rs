@@ -257,7 +257,7 @@ pub fn ryser_permanent(data: &[f64], n: usize) -> f64 {
         perm_sum += sign * row_prod;
     }
 
-    let global_sign = if n % 2 == 0 { 1.0 } else { -1.0 };
+    let global_sign = if n.is_multiple_of(2) { 1.0 } else { -1.0 };
     global_sign * perm_sum
 }
 
@@ -279,9 +279,9 @@ pub fn glynn_permanent(data: &[f64], n: usize) -> f64 {
         let mut delta = vec![1.0; n];
         let mut prod_delta = 1.0;
 
-        for j in 1..n {
+        for (j, d) in delta.iter_mut().enumerate().skip(1) {
             if (mask & (1 << (j - 1))) != 0 {
-                delta[j] = -1.0;
+                *d = -1.0;
                 prod_delta = -prod_delta;
             }
         }

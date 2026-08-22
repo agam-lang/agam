@@ -1,8 +1,12 @@
 [package]
 name = "agam_lint"
-description = "Linter and style checker"
+description = "Linter and static analysis engine for Agam source code"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+agam_ast = { workspace = true }
+agam_errors = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

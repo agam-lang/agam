@@ -60,8 +60,8 @@ pub fn saturated_matrix_cover(h: usize, m: usize) -> MatrixCover {
     for shift in 1..m {
         for c in 0..h {
             let mut vec = vec![0; m];
-            for i in 0..m {
-                vec[i] = (c + (i * shift)) % h;
+            for (i, slot) in vec.iter_mut().enumerate() {
+                *slot = (c + (i * shift)) % h;
             }
             if !covered.contains(&vec) {
                 covered.push(vec);

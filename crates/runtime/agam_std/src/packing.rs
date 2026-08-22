@@ -56,7 +56,7 @@ pub fn fourier_sign_uncertainty_radius(d: usize, positive_origin: bool) -> f64 {
 
     if positive_origin {
         // High-order asymptotic correction: r_0(d) = sqrt(d)/pi * (1 + 0.318 / d^(2/3))
-        base_radius * (1.0 + 0.318 / d_f.powf(2.0 / 3.0))
+        base_radius * (1.0 + std::f64::consts::FRAC_1_PI / d_f.powf(2.0 / 3.0))
     } else {
         base_radius * 0.95
     }
@@ -95,7 +95,8 @@ pub fn gamma_fn(x: f64) -> f64 {
         return gamma_fn(x + 1.0) / x;
     }
 
-    // Lanczos coefficients (g = 7, n = 9)
+    // Lanczos coefficients (g = 7, n = 9) — exact literature values
+    #[allow(clippy::excessive_precision)]
     let p = [
         0.99999999999980993,
         676.5203681218851,

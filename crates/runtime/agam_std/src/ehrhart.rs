@@ -94,6 +94,7 @@ fn factorial(n: usize) -> f64 {
     res
 }
 
+#[allow(clippy::needless_range_loop)]
 fn matrix_det(mat: &mut [Vec<f64>], n: usize) -> f64 {
     let mut det = 1.0;
     for col in 0..n {

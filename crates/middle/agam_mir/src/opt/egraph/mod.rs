@@ -277,11 +277,11 @@ impl EGraph {
         let new_root = self.union_find.union(root_a, root_b);
         let old_root = if new_root == root_a { root_b } else { root_a };
 
-        if let Some(mut old_class) = self.classes.remove(&old_root) {
-            if let Some(new_class) = self.classes.get_mut(&new_root) {
-                new_class.nodes.append(&mut old_class.nodes);
-                new_class.parents.append(&mut old_class.parents);
-            }
+        if let Some(mut old_class) = self.classes.remove(&old_root)
+            && let Some(new_class) = self.classes.get_mut(&new_root)
+        {
+            new_class.nodes.append(&mut old_class.nodes);
+            new_class.parents.append(&mut old_class.parents);
         }
 
         self.worklist.push(new_root);
@@ -476,29 +476,25 @@ pub fn optimize_function(func: &mut MirFunction) -> bool {
             for inst in &block.instructions {
                 let orig_cost = mir_op_cost(&inst.op);
 
-                if let Some(&class_id) = value_to_eclass.get(&inst.result) {
-                    if let Some((best_cost, best_node)) = extractor.find_best(class_id) {
-                        // Only replace if the new representation has strictly lower cost
-                        if best_cost < orig_cost {
-                            if let Some(new_op) = enode_to_mir_op(
-                                inst.result,
-                                &best_node,
-                                &inst.op,
-                                &eclass_to_value,
-                                &egraph,
-                            ) {
-                                if new_op != inst.op {
-                                    changed = true;
-                                    new_instructions.push(Instruction {
-                                        result: inst.result,
-                                        ty: inst.ty,
-                                        op: new_op,
-                                    });
-                                    continue;
-                                }
-                            }
-                        }
-                    }
+                if let Some(&class_id) = value_to_eclass.get(&inst.result)
+                    && let Some((best_cost, best_node)) = extractor.find_best(class_id)
+                    && best_cost < orig_cost
+                    && let Some(new_op) = enode_to_mir_op(
+                        inst.result,
+                        &best_node,
+                        &inst.op,
+                        &eclass_to_value,
+                        &egraph,
+                    )
+                    && new_op != inst.op
+                {
+                    changed = true;
+                    new_instructions.push(Instruction {
+                        result: inst.result,
+                        ty: inst.ty,
+                        op: new_op,
+                    });
+                    continue;
                 }
                 new_instructions.push(inst.clone());
             }

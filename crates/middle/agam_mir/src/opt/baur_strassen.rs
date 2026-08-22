@@ -247,7 +247,7 @@ pub fn lower_reverse_mode_ad(func: &MirFunction) -> Result<MirFunction, BaurStra
             terminator: Terminator::Return(return_val),
         }],
         entry: BlockId(0),
-        target: func.target.clone(),
+        target: func.target,
         gpu_config: func.gpu_config.clone(),
     };
 

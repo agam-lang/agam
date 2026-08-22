@@ -42,6 +42,11 @@ dependencies = [
 [[package]]
 name = "agam_debug"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "agam_doc"
@@ -172,6 +177,12 @@ dependencies = [
 [[package]]
 name = "agam_lint"
 version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "agam_lsp"

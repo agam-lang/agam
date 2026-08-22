@@ -1,3 +1,4 @@
+#![allow(clippy::needless_range_loop)]
 //! Hankel Moment Systems & Algebraic Spectral Root Inversion.
 //!
 //! Implements Prony-Hankel moment inversion algorithms to recover algebraic root sets
@@ -187,9 +188,7 @@ pub fn solve_hankel_system(moments: &[f64]) -> Result<Vec<f64>, HankelError> {
 
     // Monic polynomial: P(x) = x^k + c_{k-1} x^{k-1} + ... + c_1 x + c_0
     let mut poly = vec![0.0; k + 1];
-    for i in 0..k {
-        poly[i] = coeffs[i];
-    }
+    poly[..k].copy_from_slice(&coeffs[..k]);
     poly[k] = 1.0;
 
     // Find roots of the polynomial using Aberth-Ehrlich / Durand-Kerner iteration

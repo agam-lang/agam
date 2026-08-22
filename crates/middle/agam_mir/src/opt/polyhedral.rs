@@ -165,8 +165,8 @@ impl PolyhedralSchedule {
     /// Identity schedule $\Theta = I_n$ (no transformation).
     pub fn identity(dims: usize) -> Self {
         let mut mat = vec![vec![0; dims]; dims];
-        for i in 0..dims {
-            mat[i][i] = 1;
+        for (i, row) in mat.iter_mut().enumerate() {
+            row[i] = 1;
         }
         Self {
             original_dims: dims,
@@ -254,7 +254,7 @@ pub fn tile_loop_nest(
 
     // Determine parallel dimensions based on dependence vector projections
     let mut parallel = vec![false; scheduled_dims];
-    for dim in 0..d {
+    for (dim, par) in parallel.iter_mut().enumerate().take(d) {
         let has_loop_carried = deps.iter().any(|dep| {
             if dim < dep.distances.len() {
                 dep.distances[dim] > 0
@@ -263,13 +263,13 @@ pub fn tile_loop_nest(
             }
         });
         if !has_loop_carried {
-            parallel[dim] = true;
+            *par = true;
         }
     }
 
     let mut transform_matrix = vec![vec![0; d]; scheduled_dims];
-    for i in 0..d {
-        transform_matrix[i][i] = 1;
+    for (i, row) in transform_matrix.iter_mut().enumerate().take(d) {
+        row[i] = 1;
     }
 
     PolyhedralSchedule {
