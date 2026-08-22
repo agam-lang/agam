@@ -910,6 +910,20 @@ enum RegistryCommand {
 
     /// Print the official first-party package governance contract
     Governance,
+
+    /// List configured federated registries and failover mirrors
+    List,
+
+    /// Start a local or corporate private package registry server
+    Serve {
+        /// Port to bind the local registry server
+        #[arg(short, long, default_value_t = 8080)]
+        port: u16,
+
+        /// Root storage directory for packages
+        #[arg(short, long)]
+        root: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1739,6 +1753,29 @@ fn main() {
             },
             RegistryCommand::Governance => {
                 print_registry_governance_report(&registry_governance_report())
+            }
+            RegistryCommand::List => {
+                let config = agam_pkg::FederationConfig::new();
+                println!(
+                    "\x1b[1;36mFederated Package Registries\x1b[0m (default: `{}`):",
+                    config.default_registry
+                );
+                for (name, endpoint) in &config.registries {
+                    println!("  • \x1b[1m{}\x1b[0m: {}", name, endpoint.endpoint_url());
+                }
+                println!("\x1b[1;36mFallback Mirrors\x1b[0m:");
+                for mirror in &config.fallback_mirrors {
+                    println!("  • {mirror}");
+                }
+            }
+            RegistryCommand::Serve { port, root } => {
+                let root_dir = root.unwrap_or_else(|| PathBuf::from(".agam/registry"));
+                let server = agam_pkg::LocalRegistryServer::new(&root_dir, port);
+                println!(
+                    "\x1b[1;32mLocal registry server ready\x1b[0m at `http://127.0.0.1:{}` (root: `{}`)",
+                    server.port,
+                    server.root_dir.display()
+                );
             }
         },
 

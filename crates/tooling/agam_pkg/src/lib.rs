@@ -15,6 +15,7 @@ use agam_runtime::contract::{
 use serde::{Deserialize, Serialize};
 
 pub mod build_graph;
+pub mod federation;
 pub mod plugin;
 pub mod reproducible;
 pub mod supply_chain;
@@ -22,6 +23,10 @@ pub mod supply_chain;
 pub use build_graph::{
     BuildGraph, BuildGraphError, BuildNode, BuildScheduleReport, BuildStage, BuildTargetKind,
     ParallelBuildScheduler,
+};
+pub use federation::{
+    FederatedResolver, FederationConfig, LocalRegistryServer, RegistryEndpoint,
+    ResolvedPackageEndpoint,
 };
 pub use plugin::{
     CompilerPlugin, ForeignBuildPlan, ForeignBuildPlanner, ForeignBuildStep, ForeignLanguageKind,
