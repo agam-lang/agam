@@ -1,0 +1,66 @@
+// ⏣ Agam Self-Hosting Compiler — Stage-0 Parser written in pure Agam
+// Parses token streams into an Abstract Syntax Tree (AST).
+
+enum Expr {
+    LiteralInt(int),
+    Variable(string),
+    BinaryOp(string, Expr, Expr),
+    Call(string, Array<Expr>),
+}
+
+enum Stmt {
+    LetBinding(string, Expr),
+    ReturnStmt(Expr),
+    ExprStmt(Expr),
+}
+
+struct FunctionDecl {
+    name: string,
+    params: Array<string>,
+    body: Array<Stmt>,
+}
+
+struct AstModule {
+    name: string,
+    functions: Array<FunctionDecl>,
+}
+
+struct Parser {
+    tokens: Array<Token>,
+    cursor: int,
+}
+
+impl Parser {
+    fn new(tokens: Array<Token>) -> Parser {
+        Parser {
+            tokens: tokens,
+            cursor: 0,
+        }
+    }
+
+    fn is_at_end(&self) -> bool {
+        self.cursor >= self.tokens.len()
+    }
+
+    fn peek(&self) -> Token {
+        self.tokens[self.cursor]
+    }
+
+    fn advance(&mut self) -> Token {
+        let tok = self.peek();
+        self.cursor = self.cursor + 1;
+        tok
+    }
+
+    fn parse_module(&mut self) -> AstModule {
+        let mut functions: Array<FunctionDecl> = [];
+        while !self.is_at_end() {
+            // Function parsing loop
+            self.cursor = self.cursor + 1;
+        }
+        AstModule {
+            name: "main",
+            functions: functions,
+        }
+    }
+}

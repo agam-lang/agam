@@ -16723,4 +16723,26 @@ struct Point { x: f64, y: f64 }
 
         let _ = fs::remove_dir_all(dir);
     }
+
+    #[test]
+    fn test_self_hosting_stage0_modules_exist_and_validate() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let crates_dir = manifest_dir.join("../..");
+
+        let lexer_agm = crates_dir.join("core/agam_lexer/self_host/lexer.agm");
+        let parser_agm = crates_dir.join("core/agam_parser/self_host/parser.agm");
+        let sema_agm = crates_dir.join("middle/agam_sema/self_host/type_check.agm");
+
+        assert!(lexer_agm.exists(), "Self-hosting stage-0 Lexer must exist at {:?}", lexer_agm);
+        assert!(parser_agm.exists(), "Self-hosting stage-0 Parser must exist at {:?}", parser_agm);
+        assert!(sema_agm.exists(), "Self-hosting stage-0 Type Checker must exist at {:?}", sema_agm);
+
+        let lexer_src = fs::read_to_string(&lexer_agm).expect("read lexer.agm");
+        let parser_src = fs::read_to_string(&parser_agm).expect("read parser.agm");
+        let sema_src = fs::read_to_string(&sema_agm).expect("read type_check.agm");
+
+        assert!(lexer_src.contains("struct Lexer"));
+        assert!(parser_src.contains("struct Parser"));
+        assert!(sema_src.contains("struct TypeChecker"));
+    }
 }

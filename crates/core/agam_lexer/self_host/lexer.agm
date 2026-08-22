@@ -1,0 +1,137 @@
+// ⏣ Agam Self-Hosting Compiler — Stage-0 Lexer written in pure Agam
+// Tokenizes Agam source code into an array of typed tokens.
+
+enum TokenKind {
+    IntLiteral,
+    FloatLiteral,
+    StringLiteral,
+    Identifier,
+    KeywordFn,
+    KeywordLet,
+    KeywordMut,
+    KeywordIf,
+    KeywordElse,
+    KeywordReturn,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Equal,
+    EqualEqual,
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    Colon,
+    Semicolon,
+    Comma,
+    Eof,
+}
+
+struct Span {
+    start: int,
+    end: int,
+    line: int,
+    column: int,
+}
+
+struct Token {
+    kind: TokenKind,
+    lexeme: string,
+    span: Span,
+}
+
+struct Lexer {
+    source: string,
+    cursor: int,
+    line: int,
+    column: int,
+}
+
+impl Lexer {
+    fn new(source: string) -> Lexer {
+        Lexer {
+            source: source,
+            cursor: 0,
+            line: 1,
+            column: 1,
+        }
+    }
+
+    fn is_at_end(&self) -> bool {
+        self.cursor >= self.source.len()
+    }
+
+    fn peek(&self) -> char {
+        if self.is_at_end() {
+            '\0'
+        } else {
+            self.source.char_at(self.cursor)
+        }
+    }
+
+    fn advance(&mut self) -> char {
+        let ch = self.peek();
+        self.cursor = self.cursor + 1;
+        if ch == '\n' {
+            self.line = self.line + 1;
+            self.column = 1;
+        } else {
+            self.column = self.column + 1;
+        }
+        ch
+    }
+
+    fn skip_whitespace(&mut self) {
+        while !self.is_at_end() {
+            let ch = self.peek();
+            if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn next_token(&mut self) -> Token {
+        self.skip_whitespace();
+        let start_pos = self.cursor;
+        let start_line = self.line;
+        let start_col = self.column;
+
+        if self.is_at_end() {
+            return Token {
+                kind: TokenKind::Eof,
+                lexeme: "",
+                span: Span { start: start_pos, end: start_pos, line: start_line, column: start_col },
+            };
+        }
+
+        let ch = self.advance();
+
+        match ch {
+            '+' => Token { kind: TokenKind::Plus, lexeme: "+", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            '-' => Token { kind: TokenKind::Minus, lexeme: "-", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            '*' => Token { kind: TokenKind::Star, lexeme: "*", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            '/' => Token { kind: TokenKind::Slash, lexeme: "/", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            '(' => Token { kind: TokenKind::LeftParen, lexeme: "(", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            ')' => Token { kind: TokenKind::RightParen, lexeme: ")", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            '{' => Token { kind: TokenKind::LeftBrace, lexeme: "{", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            '}' => Token { kind: TokenKind::RightBrace, lexeme: "}", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            ':' => Token { kind: TokenKind::Colon, lexeme: ":", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            ';' => Token { kind: TokenKind::Semicolon, lexeme: ";", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            ',' => Token { kind: TokenKind::Comma, lexeme: ",", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } },
+            '=' => {
+                if self.peek() == '=' {
+                    self.advance();
+                    Token { kind: TokenKind::EqualEqual, lexeme: "==", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } }
+                } else {
+                    Token { kind: TokenKind::Equal, lexeme: "=", span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } }
+                }
+            },
+            _ => {
+                Token { kind: TokenKind::Identifier, lexeme: ch.to_string(), span: Span { start: start_pos, end: self.cursor, line: start_line, column: start_col } }
+            }
+        }
+    }
+}
