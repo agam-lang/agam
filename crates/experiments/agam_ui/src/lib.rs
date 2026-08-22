@@ -8,6 +8,8 @@
 //! - Declarative Virtual UI tree (`Row`, `Column`, `Grid`, `Card`, `Button`, `Text`, `Slider`).
 //! - CSS-inspired composable styling engine.
 
+pub mod a2ui;
+pub mod catalog;
 pub mod diff;
 pub mod reactive;
 pub mod render;
@@ -16,6 +18,8 @@ pub mod theme;
 pub mod view;
 pub mod widget;
 
+pub use a2ui::{A2UiError, A2UiNode, A2UiProtocol};
+pub use catalog::{ComponentCatalog, ComponentDescriptor};
 pub use diff::{PatchOp, diff_trees};
 pub use reactive::{Computed, Signal, batch, create_effect};
 pub use render::render_to_html;
