@@ -1,5 +1,6 @@
 //! MIR optimization pipeline.
 
+pub mod ai_intel;
 pub mod baur_strassen;
 pub mod constant_fold;
 pub mod dce;
@@ -8,6 +9,8 @@ pub mod escape;
 pub mod inline;
 pub mod loop_unroll;
 pub mod polyhedral;
+
+pub use ai_intel::{AiCompilerReport, AiOptimizationAdvisor, OptimizationRecommendation};
 
 use crate::ir::MirModule;
 
