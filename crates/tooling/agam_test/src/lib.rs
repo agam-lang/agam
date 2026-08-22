@@ -5,6 +5,7 @@
 pub mod async_concurrency;
 pub mod bench;
 pub mod c_output;
+pub mod compiler_fuzz;
 pub mod coverage;
 pub mod doctest;
 pub mod error_reporting;
@@ -20,6 +21,9 @@ pub mod toolchain_output;
 pub mod unit_passes;
 
 pub use bench::{BenchConfig, BenchResult, BenchmarkHarness};
+pub use compiler_fuzz::{
+    AstMutationEngine, CompilerFuzzReport, CompilerPipelineFuzzer, PipelineFuzzOutcome,
+};
 pub use coverage::{CoverageReport, FileCoverage, LineStatus};
 pub use doctest::{DocTestCase, DocTestExtractor};
 pub use fuzz::{FuzzRunner, MutationStrategy};
