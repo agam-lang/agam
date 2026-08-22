@@ -474,6 +474,34 @@ pub(crate) enum Command {
         fix: bool,
     },
 
+    /// Security vulnerability and capability audit across dependencies
+    Audit {
+        /// Workspace root or manifest path (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Display capability trees required by dependencies
+        #[arg(long)]
+        capabilities: bool,
+
+        /// Automatically update dependencies with known patches
+        #[arg(long)]
+        fix: bool,
+    },
+
+    /// Generate Software Bill of Materials (SBOM) in CycloneDX or SPDX format
+    Sbom {
+        /// Workspace root or manifest path (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// SBOM format: "cyclonedx" (default) or "spdx"
+        #[arg(long, default_value = "cyclonedx")]
+        format: String,
+
+        /// Output file path (defaults to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
     /// Start an MCP (Model Context Protocol) server for AI agent integration
     Mcp {
         #[command(subcommand)]

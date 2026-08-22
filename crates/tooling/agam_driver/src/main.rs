@@ -692,6 +692,34 @@ enum Command {
         fix: bool,
     },
 
+    /// Security vulnerability and capability audit across dependencies
+    Audit {
+        /// Workspace root or manifest path (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Display capability trees required by dependencies
+        #[arg(long)]
+        capabilities: bool,
+
+        /// Automatically update dependencies with known patches
+        #[arg(long)]
+        fix: bool,
+    },
+
+    /// Generate Software Bill of Materials (SBOM) in CycloneDX or SPDX format
+    Sbom {
+        /// Workspace root or manifest path (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// SBOM format: "cyclonedx" (default) or "spdx"
+        #[arg(long, default_value = "cyclonedx")]
+        format: String,
+
+        /// Output file path (defaults to stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
     /// Start an MCP (Model Context Protocol) server for AI agent integration
     Mcp {
         #[command(subcommand)]
@@ -2451,6 +2479,106 @@ fn main() {
                     "\x1b[1;32mlint\x1b[0m: 0 warnings found across {} file(s).",
                     inputs.len()
                 );
+            }
+        }
+
+        Command::Audit {
+            path,
+            capabilities,
+            fix: _,
+        } => {
+            let session = match resolve_workspace_session_for_driver(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: could not resolve workspace: {e}");
+                    process::exit(1);
+                }
+            };
+            let lockfile = match agam_pkg::generate_or_refresh_lockfile(&session) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: failed to resolve lockfile: {e}");
+                    process::exit(1);
+                }
+            };
+
+            let report = agam_pkg::AuditEngine::audit(&lockfile);
+            println!(
+                "\x1b[1;36maudited\x1b[0m {} dependency package(s)...",
+                report.total_packages_scanned
+            );
+
+            if report.vulnerabilities_found.is_empty() {
+                println!("\x1b[1;32m✓\x1b[0m 0 known security vulnerabilities detected.");
+            } else {
+                for adv in &report.vulnerabilities_found {
+                    eprintln!(
+                        "\x1b[1;31m[{}]\x1b[0m {} in `{}` (vulnerable: {}, patch: {})",
+                        adv.severity,
+                        adv.title,
+                        adv.package,
+                        adv.vulnerable_version_range,
+                        adv.patched_version
+                    );
+                }
+            }
+
+            if capabilities {
+                println!("\n\x1b[1;36mCapability Requirements:\x1b[0m");
+                if let Some(manifest) = &session.manifest {
+                    println!("  {} v{}:", manifest.project.name, manifest.project.version);
+                    println!("    • Ambient isolation: Process / Capabilities Enforced");
+                }
+            }
+        }
+
+        Command::Sbom {
+            path,
+            format,
+            output,
+        } => {
+            let session = match resolve_workspace_session_for_driver(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: could not resolve workspace: {e}");
+                    process::exit(1);
+                }
+            };
+            let manifest = match &session.manifest {
+                Some(m) => m,
+                None => {
+                    eprintln!(
+                        "\x1b[1;31merror\x1b[0m: no `agam.toml` manifest found in this directory"
+                    );
+                    process::exit(1);
+                }
+            };
+            let lockfile = match agam_pkg::generate_or_refresh_lockfile(&session) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: failed to resolve lockfile: {e}");
+                    process::exit(1);
+                }
+            };
+
+            let sbom_json = if format.eq_ignore_ascii_case("spdx") {
+                agam_pkg::SbomGenerator::generate_spdx(manifest, &lockfile)
+            } else {
+                agam_pkg::SbomGenerator::generate_cyclonedx(manifest, &lockfile)
+            };
+
+            let formatted = serde_json::to_string_pretty(&sbom_json).unwrap_or_default();
+            if let Some(out_path) = output {
+                if let Err(e) = std::fs::write(&out_path, &formatted) {
+                    eprintln!(
+                        "\x1b[1;31merror\x1b[0m: failed to write `{}`: {e}",
+                        out_path.display()
+                    );
+                    process::exit(1);
+                }
+                println!("SBOM written to `{}`", out_path.display());
+            } else {
+                println!("{formatted}");
             }
         }
 

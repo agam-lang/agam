@@ -15,9 +15,15 @@ use agam_runtime::contract::{
 use serde::{Deserialize, Serialize};
 
 pub mod build_graph;
+pub mod supply_chain;
+
 pub use build_graph::{
     BuildGraph, BuildGraphError, BuildNode, BuildScheduleReport, BuildStage, BuildTargetKind,
     ParallelBuildScheduler,
+};
+pub use supply_chain::{
+    AuditEngine, AuditReport, PackageSignatureEnvelope, PackageSigner, SbomFormat, SbomGenerator,
+    SecurityAdvisory, TyposquatAlert, TyposquatDetector,
 };
 
 /// First portable package format version.
