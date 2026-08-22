@@ -10,6 +10,7 @@ pub mod combinatorics;
 pub mod complex;
 pub mod dataframe;
 pub mod ebpf;
+pub mod edge_ai;
 pub mod effects;
 pub mod ehrhart;
 pub mod env;
@@ -43,6 +44,7 @@ pub use ebpf::{
     EbpfInstruction, EbpfMap, EbpfMapKind, EbpfProgram, EbpfProgramKind, EbpfVerifier,
     VerifierError,
 };
+pub use edge_ai::{EdgeError, EdgeModel, ModelFormat, QuantizationPrecision, QuantizedTensor};
 pub use ehrhart::{
     barycentric_convex_volume_upper_bound, bergman_initial_slope, bergman_potential_ray,
     simplex_volume,
