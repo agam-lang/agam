@@ -502,6 +502,16 @@ pub(crate) enum Command {
         output: Option<PathBuf>,
     },
 
+    /// Vendor all resolved dependencies locally for offline, hermetic builds
+    Vendor {
+        /// Workspace root or manifest path (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Destination vendor directory (defaults to `.agam/vendor` or `vendor`)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
     /// Start an MCP (Model Context Protocol) server for AI agent integration
     Mcp {
         #[command(subcommand)]

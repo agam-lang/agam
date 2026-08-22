@@ -720,6 +720,16 @@ enum Command {
         output: Option<PathBuf>,
     },
 
+    /// Vendor all resolved dependencies locally for offline, hermetic builds
+    Vendor {
+        /// Workspace root or manifest path (defaults to current directory)
+        path: Option<PathBuf>,
+
+        /// Destination vendor directory (defaults to `.agam/vendor` or `vendor`)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
     /// Start an MCP (Model Context Protocol) server for AI agent integration
     Mcp {
         #[command(subcommand)]
@@ -2579,6 +2589,39 @@ fn main() {
                 println!("SBOM written to `{}`", out_path.display());
             } else {
                 println!("{formatted}");
+            }
+        }
+
+        Command::Vendor { path, output } => {
+            let session = match resolve_workspace_session_for_driver(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: could not resolve workspace: {e}");
+                    process::exit(1);
+                }
+            };
+            let lockfile = match agam_pkg::generate_or_refresh_lockfile(&session) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: failed to resolve lockfile: {e}");
+                    process::exit(1);
+                }
+            };
+
+            let vendor_dir =
+                output.unwrap_or_else(|| session.layout.root.join(".agam").join("vendor"));
+            match agam_pkg::VendorManager::vendor_lockfile(&lockfile, &vendor_dir) {
+                Ok(report) => {
+                    println!(
+                        "\x1b[1;32mvendored\x1b[0m {} package(s) into `{}`",
+                        report.total_packages,
+                        report.vendor_directory.display()
+                    );
+                }
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: failed to vendor dependencies: {e}");
+                    process::exit(1);
+                }
             }
         }
 

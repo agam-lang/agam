@@ -15,11 +15,15 @@ use agam_runtime::contract::{
 use serde::{Deserialize, Serialize};
 
 pub mod build_graph;
+pub mod reproducible;
 pub mod supply_chain;
 
 pub use build_graph::{
     BuildGraph, BuildGraphError, BuildNode, BuildScheduleReport, BuildStage, BuildTargetKind,
     ParallelBuildScheduler,
+};
+pub use reproducible::{
+    MerkleHasher, ProvenanceAttestation, ReproducibleConfig, VendorManager, VendorReport,
 };
 pub use supply_chain::{
     AuditEngine, AuditReport, PackageSignatureEnvelope, PackageSigner, SbomFormat, SbomGenerator,
