@@ -730,10 +730,27 @@ enum Command {
         output: Option<PathBuf>,
     },
 
+    /// Manage compiler plugins, lifecycle extensions, and foreign source interop
+    Plugin {
+        #[command(subcommand)]
+        command: Option<PluginCommand>,
+    },
+
     /// Start an MCP (Model Context Protocol) server for AI agent integration
     Mcp {
         #[command(subcommand)]
         command: Option<McpCommand>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PluginCommand {
+    /// List all registered compiler plugins and lifecycle hooks
+    List,
+    /// Scan and display auto-detected foreign source files (.c, .cpp, .rs, .py, .js)
+    Scan {
+        /// Directory to scan (defaults to current directory)
+        path: Option<PathBuf>,
     },
 }
 
@@ -2624,6 +2641,30 @@ fn main() {
                 }
             }
         }
+
+        Command::Plugin { command } => match command {
+            Some(PluginCommand::List) | None => {
+                println!("\x1b[1;36mRegistered Compiler Plugins & Extensions\x1b[0m");
+                println!("  (No external dynamic plugins currently loaded)");
+            }
+            Some(PluginCommand::Scan { path }) => {
+                let scan_root = path.unwrap_or_else(|| PathBuf::from("."));
+                let discovered = agam_pkg::ForeignSourceScanner::scan_directory(&scan_root);
+                println!(
+                    "\x1b[1;32mDiscovered {} foreign source file(s)\x1b[0m under `{}`:",
+                    discovered.len(),
+                    scan_root.display()
+                );
+                for file in &discovered {
+                    println!(
+                        "  • [{}] {} (header: {})",
+                        file.language.display_name(),
+                        file.relative_path.display(),
+                        file.is_header
+                    );
+                }
+            }
+        },
 
         Command::Mcp { command } => {
             let workspace = match command {

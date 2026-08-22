@@ -15,12 +15,17 @@ use agam_runtime::contract::{
 use serde::{Deserialize, Serialize};
 
 pub mod build_graph;
+pub mod plugin;
 pub mod reproducible;
 pub mod supply_chain;
 
 pub use build_graph::{
     BuildGraph, BuildGraphError, BuildNode, BuildScheduleReport, BuildStage, BuildTargetKind,
     ParallelBuildScheduler,
+};
+pub use plugin::{
+    CompilerPlugin, ForeignBuildPlan, ForeignBuildPlanner, ForeignBuildStep, ForeignLanguageKind,
+    ForeignSourceFile, ForeignSourceScanner, PluginHookKind, PluginHost,
 };
 pub use reproducible::{
     MerkleHasher, ProvenanceAttestation, ReproducibleConfig, VendorManager, VendorReport,

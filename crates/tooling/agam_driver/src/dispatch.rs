@@ -1261,5 +1261,29 @@ pub(crate) fn run_cli() {
                 }
             }
         }
+
+        Command::Plugin { command } => match command {
+            Some(cli::PluginCommand::List) | None => {
+                println!("\x1b[1;36mRegistered Compiler Plugins & Extensions\x1b[0m");
+                println!("  (No external dynamic plugins currently loaded)");
+            }
+            Some(cli::PluginCommand::Scan { path }) => {
+                let scan_root = path.unwrap_or_else(|| PathBuf::from("."));
+                let discovered = agam_pkg::ForeignSourceScanner::scan_directory(&scan_root);
+                println!(
+                    "\x1b[1;32mDiscovered {} foreign source file(s)\x1b[0m under `{}`:",
+                    discovered.len(),
+                    scan_root.display()
+                );
+                for file in &discovered {
+                    println!(
+                        "  • [{}] {} (header: {})",
+                        file.language.display_name(),
+                        file.relative_path.display(),
+                        file.is_header
+                    );
+                }
+            }
+        },
     }
 }

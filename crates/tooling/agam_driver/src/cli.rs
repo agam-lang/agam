@@ -512,10 +512,27 @@ pub(crate) enum Command {
         output: Option<PathBuf>,
     },
 
+    /// Manage compiler plugins, lifecycle extensions, and foreign source interop
+    Plugin {
+        #[command(subcommand)]
+        command: Option<PluginCommand>,
+    },
+
     /// Start an MCP (Model Context Protocol) server for AI agent integration
     Mcp {
         #[command(subcommand)]
         command: Option<McpCommand>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum PluginCommand {
+    /// List all registered compiler plugins and lifecycle hooks
+    List,
+    /// Scan and display auto-detected foreign source files (.c, .cpp, .rs, .py, .js)
+    Scan {
+        /// Directory to scan (defaults to current directory)
+        path: Option<PathBuf>,
     },
 }
 
