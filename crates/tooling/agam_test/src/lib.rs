@@ -6,19 +6,25 @@ pub mod async_concurrency;
 pub mod bench;
 pub mod c_output;
 pub mod coverage;
+pub mod doctest;
 pub mod error_reporting;
+pub mod fuzz;
 pub mod gpu_output;
 pub mod llvm_output;
 pub mod opt_semantics;
 pub mod perf_speed;
 pub mod pipeline_integration;
 pub mod property;
+pub mod snapshot;
 pub mod toolchain_output;
 pub mod unit_passes;
 
 pub use bench::{BenchConfig, BenchResult, BenchmarkHarness};
 pub use coverage::{CoverageReport, FileCoverage, LineStatus};
+pub use doctest::{DocTestCase, DocTestExtractor};
+pub use fuzz::{FuzzRunner, MutationStrategy};
 pub use property::{PropertyResult, PropertyRunner, TestRng};
+pub use snapshot::{SnapshotError, SnapshotManager};
 
 use std::fs;
 use std::path::{Path, PathBuf};
