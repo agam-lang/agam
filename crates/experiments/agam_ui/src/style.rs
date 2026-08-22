@@ -26,6 +26,7 @@ impl Color {
     pub const SECONDARY: Self = Self::rgb(168, 85, 247); // Purple
     pub const SUCCESS: Self = Self::rgb(34, 197, 94); // Green
     pub const DANGER: Self = Self::rgb(239, 68, 68); // Red
+    pub const SURFACE: Self = Self::rgb(30, 41, 59); // Slate-800
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

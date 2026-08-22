@@ -9,6 +9,7 @@
 //! - CSS-inspired composable styling engine.
 
 pub mod a2ui;
+pub mod backend;
 pub mod catalog;
 pub mod diff;
 pub mod reactive;
@@ -19,6 +20,7 @@ pub mod view;
 pub mod widget;
 
 pub use a2ui::{A2UiError, A2UiNode, A2UiProtocol};
+pub use backend::{DisplayList, NativeBackend, PaintCommand, Rect, compile_widget_to_display_list};
 pub use catalog::{ComponentCatalog, ComponentDescriptor};
 pub use diff::{PatchOp, diff_trees};
 pub use reactive::{Computed, Signal, batch, create_effect};
