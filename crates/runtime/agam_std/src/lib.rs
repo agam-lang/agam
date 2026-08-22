@@ -9,6 +9,7 @@ pub mod collections;
 pub mod combinatorics;
 pub mod complex;
 pub mod dataframe;
+pub mod ebpf;
 pub mod effects;
 pub mod ehrhart;
 pub mod env;
@@ -37,6 +38,10 @@ pub mod units;
 pub use collections::{CompactGraph, FastRingBuffer};
 pub use combinatorics::{MatrixCover, ramsey_multi_color_lower_bound, saturated_matrix_cover};
 pub use complex::Complex;
+pub use ebpf::{
+    EbpfInstruction, EbpfMap, EbpfMapKind, EbpfProgram, EbpfProgramKind, EbpfVerifier,
+    VerifierError,
+};
 pub use ehrhart::{
     barycentric_convex_volume_upper_bound, bergman_initial_slope, bergman_potential_ray,
     simplex_volume,
