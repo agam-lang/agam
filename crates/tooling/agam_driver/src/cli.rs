@@ -404,6 +404,42 @@ pub(crate) enum Command {
         command: Option<DaemonCommand>,
     },
 
+    /// Add a dependency to the current project's `agam.toml`
+    Add {
+        /// Name of the package dependency to add
+        package: String,
+
+        /// Version requirement (e.g. "^1.0.0", "=0.2.1")
+        #[arg(long)]
+        version: Option<String>,
+
+        /// Path to a local dependency
+        #[arg(long)]
+        path: Option<PathBuf>,
+
+        /// Add to dev-dependencies instead of dependencies
+        #[arg(long)]
+        dev: bool,
+
+        /// Add to build-dependencies instead of dependencies
+        #[arg(long)]
+        build: bool,
+    },
+
+    /// Remove a dependency from the current project's `agam.toml`
+    Remove {
+        /// Name of the package dependency to remove
+        package: String,
+
+        /// Remove from dev-dependencies
+        #[arg(long)]
+        dev: bool,
+
+        /// Remove from build-dependencies
+        #[arg(long)]
+        build: bool,
+    },
+
     /// Run tests
     Test {
         /// Source file(s) containing tests
@@ -412,6 +448,30 @@ pub(crate) enum Command {
         /// Enable code coverage
         #[arg(long)]
         coverage: bool,
+    },
+
+    /// Run performance benchmarks (@bench)
+    Bench {
+        /// Source file(s) containing benchmark definitions
+        files: Vec<PathBuf>,
+
+        /// Filter benchmark names matching pattern
+        #[arg(long)]
+        filter: Option<String>,
+
+        /// Number of warm-up iterations
+        #[arg(long, default_value_t = 100)]
+        warmup: u64,
+    },
+
+    /// Analyze and lint Agam source files for style and correctness
+    Lint {
+        /// Source file(s) or workspace directory to lint
+        files: Vec<PathBuf>,
+
+        /// Automatically apply fix suggestions where available
+        #[arg(long)]
+        fix: bool,
     },
 
     /// Start an MCP (Model Context Protocol) server for AI agent integration

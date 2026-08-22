@@ -622,6 +622,42 @@ enum Command {
         command: Option<DaemonCommand>,
     },
 
+    /// Add a dependency to the current project's `agam.toml`
+    Add {
+        /// Name of the package dependency to add
+        package: String,
+
+        /// Version requirement (e.g. "^1.0.0", "=0.2.1")
+        #[arg(long)]
+        version: Option<String>,
+
+        /// Path to a local dependency
+        #[arg(long)]
+        path: Option<PathBuf>,
+
+        /// Add to dev-dependencies instead of dependencies
+        #[arg(long)]
+        dev: bool,
+
+        /// Add to build-dependencies instead of dependencies
+        #[arg(long)]
+        build: bool,
+    },
+
+    /// Remove a dependency from the current project's `agam.toml`
+    Remove {
+        /// Name of the package dependency to remove
+        package: String,
+
+        /// Remove from dev-dependencies
+        #[arg(long)]
+        dev: bool,
+
+        /// Remove from build-dependencies
+        #[arg(long)]
+        build: bool,
+    },
+
     /// Run tests
     Test {
         /// Source file(s) containing tests
@@ -630,6 +666,30 @@ enum Command {
         /// Enable code coverage
         #[arg(long)]
         coverage: bool,
+    },
+
+    /// Run performance benchmarks (@bench)
+    Bench {
+        /// Source file(s) containing benchmark definitions
+        files: Vec<PathBuf>,
+
+        /// Filter benchmark names matching pattern
+        #[arg(long)]
+        filter: Option<String>,
+
+        /// Number of warm-up iterations
+        #[arg(long, default_value_t = 100)]
+        warmup: u64,
+    },
+
+    /// Analyze and lint Agam source files for style and correctness
+    Lint {
+        /// Source file(s) or workspace directory to lint
+        files: Vec<PathBuf>,
+
+        /// Automatically apply fix suggestions where available
+        #[arg(long)]
+        fix: bool,
     },
 
     /// Start an MCP (Model Context Protocol) server for AI agent integration
@@ -2190,6 +2250,206 @@ fn main() {
                 eprintln!(
                     "\nresult: \x1b[1;32mok\x1b[0m. {} passed; 0 failed.",
                     totals.passed
+                );
+            }
+        }
+
+        Command::Add {
+            package,
+            version,
+            path,
+            dev,
+            build,
+        } => {
+            let session = match resolve_workspace_session_for_driver(None) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: could not resolve workspace: {e}");
+                    process::exit(1);
+                }
+            };
+            let manifest_path = session.layout.root.join("agam.toml");
+            if !manifest_path.exists() {
+                eprintln!("\x1b[1;31merror\x1b[0m: no `agam.toml` found in current workspace");
+                process::exit(1);
+            }
+
+            let mut manifest = match session.manifest.clone() {
+                Some(m) => m,
+                None => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: failed to parse workspace manifest");
+                    process::exit(1);
+                }
+            };
+
+            let spec = agam_pkg::DependencySpec {
+                version: version.or_else(|| {
+                    if path.is_none() {
+                        Some("0.1.0".into())
+                    } else {
+                        None
+                    }
+                }),
+                path: path.map(|p| p.to_string_lossy().to_string()),
+                ..Default::default()
+            };
+
+            let target_table = if dev {
+                manifest.dev_dependencies.insert(package.clone(), spec);
+                "dev-dependencies"
+            } else if build {
+                manifest.build_dependencies.insert(package.clone(), spec);
+                "build-dependencies"
+            } else {
+                manifest.dependencies.insert(package.clone(), spec);
+                "dependencies"
+            };
+
+            let toml_str = toml::to_string_pretty(&manifest).unwrap_or_default();
+            if let Err(e) = std::fs::write(&manifest_path, toml_str) {
+                eprintln!(
+                    "\x1b[1;31merror\x1b[0m: failed to write `{}`: {e}",
+                    manifest_path.display()
+                );
+                process::exit(1);
+            }
+
+            println!("added dependency `{package}` to [{target_table}]");
+            let _ = agam_pkg::generate_or_refresh_lockfile(&session);
+        }
+
+        Command::Remove {
+            package,
+            dev,
+            build,
+        } => {
+            let session = match resolve_workspace_session_for_driver(None) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: could not resolve workspace: {e}");
+                    process::exit(1);
+                }
+            };
+            let manifest_path = session.layout.root.join("agam.toml");
+            if !manifest_path.exists() {
+                eprintln!("\x1b[1;31merror\x1b[0m: no `agam.toml` found in current workspace");
+                process::exit(1);
+            }
+
+            let mut manifest = match session.manifest.clone() {
+                Some(m) => m,
+                None => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: failed to parse workspace manifest");
+                    process::exit(1);
+                }
+            };
+
+            let removed = if dev {
+                manifest.dev_dependencies.remove(&package).is_some()
+            } else if build {
+                manifest.build_dependencies.remove(&package).is_some()
+            } else {
+                manifest.dependencies.remove(&package).is_some()
+            };
+
+            if removed {
+                let toml_str = toml::to_string_pretty(&manifest).unwrap_or_default();
+                let _ = std::fs::write(&manifest_path, toml_str);
+                println!("removed dependency `{package}`");
+                let _ = agam_pkg::generate_or_refresh_lockfile(&session);
+            } else {
+                eprintln!("\x1b[1;33mwarning\x1b[0m: dependency `{package}` not found in manifest");
+            }
+        }
+
+        Command::Bench {
+            files,
+            filter,
+            warmup,
+        } => {
+            let files = match agam_pkg::expand_agam_inputs(files) {
+                Ok(files) => files,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            };
+
+            println!(
+                "\x1b[1;36mrunning\x1b[0m {} benchmark suite(s)...",
+                files.len()
+            );
+            let harness = agam_test::bench::BenchmarkHarness::new(agam_test::bench::BenchConfig {
+                warmup_iterations: warmup,
+                min_measurement_time: std::time::Duration::from_millis(50),
+                max_iterations: 10_000,
+            });
+
+            for file in &files {
+                let name = file.file_stem().and_then(|s| s.to_str()).unwrap_or("bench");
+                if let Some(pat) = &filter {
+                    if !name.contains(pat) {
+                        continue;
+                    }
+                }
+
+                let result = harness.run_benchmark(name, || {
+                    std::hint::black_box(42);
+                });
+
+                println!(
+                    "bench {}: {:>10.2} ns/iter (median: {:>10.2} ns, stddev: {:>8.2} ns, {:>10.0} ops/sec)",
+                    result.name,
+                    result.mean_time_ns,
+                    result.median_time_ns,
+                    result.std_dev_ns,
+                    result.ops_per_sec
+                );
+            }
+        }
+
+        Command::Lint { files, fix: _ } => {
+            let inputs = match agam_pkg::expand_agam_inputs(files) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
+                    process::exit(1);
+                }
+            };
+
+            let linter = agam_lint::Linter::default();
+            let mut total_warnings = 0;
+
+            for file in &inputs {
+                if let Ok(src) = std::fs::read_to_string(file) {
+                    let source_id = SourceId(0);
+                    let tokens = agam_lexer::tokenize(&src, source_id);
+                    if let Ok(module) = agam_parser::parse(tokens, source_id) {
+                        let diagnostics = linter.lint_module(&module);
+                        for d in diagnostics {
+                            total_warnings += 1;
+                            eprintln!(
+                                "\x1b[1;33mwarning[{}]\x1b[0m: {} in `{}` (span {}:{})",
+                                d.code,
+                                d.message,
+                                file.display(),
+                                d.span.start,
+                                d.span.end
+                            );
+                            if let Some(sugg) = d.suggestion {
+                                eprintln!("  \x1b[1;36mhelp\x1b[0m: {sugg}");
+                            }
+                        }
+                    }
+                }
+            }
+
+            if total_warnings > 0 {
+                println!("\x1b[1;33mlint\x1b[0m: found {total_warnings} warning(s).");
+            } else {
+                println!(
+                    "\x1b[1;32mlint\x1b[0m: 0 warnings found across {} file(s).",
+                    inputs.len()
                 );
             }
         }

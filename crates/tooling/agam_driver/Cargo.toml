@@ -26,12 +26,14 @@ agam_profile = { workspace = true }
 agam_fmt = { workspace = true }
 agam_lsp = { workspace = true }
 agam_doc = { workspace = true }
+agam_lint = { workspace = true }
 agam_notebook = { workspace = true }
 agam_test = { workspace = true }
 clap = { workspace = true }
 miette = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

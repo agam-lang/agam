@@ -73,6 +73,7 @@ dependencies = [
  "agam_interface",
  "agam_jit",
  "agam_lexer",
+ "agam_lint",
  "agam_lsp",
  "agam_mir",
  "agam_notebook",
@@ -87,6 +88,7 @@ dependencies = [
  "miette",
  "serde",
  "serde_json",
+ "toml",
  "windows-sys 0.61.2",
 ]
 
