@@ -21,6 +21,7 @@ pub struct SimdCapabilities {
     pub avx512f: bool,
     pub fma: bool,
     pub neon: bool,
+    pub rvv: bool,
 }
 
 impl SimdCapabilities {
@@ -37,6 +38,7 @@ impl SimdCapabilities {
                 avx512f: std::is_x86_feature_detected!("avx512f"),
                 fma: std::is_x86_feature_detected!("fma"),
                 neon: false,
+                rvv: false,
             }
         }
         #[cfg(target_arch = "aarch64")]
@@ -50,9 +52,10 @@ impl SimdCapabilities {
                 avx512f: false,
                 fma: false,
                 neon: true, // NEON is mandatory on AArch64
+                rvv: false,
             }
         }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
         {
             Self {
                 sse2: false,
@@ -63,6 +66,26 @@ impl SimdCapabilities {
                 avx512f: false,
                 fma: false,
                 neon: false,
+                rvv: true, // RVA23 RVV extension
+            }
+        }
+        #[cfg(not(any(
+            target_arch = "x86_64",
+            target_arch = "aarch64",
+            target_arch = "riscv64",
+            target_arch = "riscv32"
+        )))]
+        {
+            Self {
+                sse2: false,
+                sse4_1: false,
+                sse4_2: false,
+                avx: false,
+                avx2: false,
+                avx512f: false,
+                fma: false,
+                neon: false,
+                rvv: false,
             }
         }
     }
@@ -71,7 +94,7 @@ impl SimdCapabilities {
     pub fn best_simd_width(&self) -> usize {
         if self.avx512f {
             64
-        } else if self.avx2 || self.avx {
+        } else if self.avx2 || self.avx || self.rvv {
             32
         } else if self.sse2 || self.neon {
             16
@@ -88,6 +111,8 @@ impl SimdCapabilities {
             SimdTier::Avx2
         } else if self.avx {
             SimdTier::Avx
+        } else if self.rvv {
+            SimdTier::Rvv
         } else if self.sse4_2 {
             SimdTier::Sse42
         } else if self.sse2 {
@@ -107,9 +132,10 @@ pub enum SimdTier {
     Sse2 = 1,
     Sse42 = 2,
     Neon = 3,
-    Avx = 4,
-    Avx2 = 5,
-    Avx512 = 6,
+    Rvv = 4,
+    Avx = 5,
+    Avx2 = 6,
+    Avx512 = 7,
 }
 
 impl SimdTier {
@@ -117,7 +143,7 @@ impl SimdTier {
         match self {
             SimdTier::Scalar => 8,
             SimdTier::Sse2 | SimdTier::Sse42 | SimdTier::Neon => 16,
-            SimdTier::Avx | SimdTier::Avx2 => 32,
+            SimdTier::Rvv | SimdTier::Avx | SimdTier::Avx2 => 32,
             SimdTier::Avx512 => 64,
         }
     }
