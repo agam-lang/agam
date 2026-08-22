@@ -127,6 +127,138 @@ pub fn entangled_game_value_decay(
     exponent.exp().min(1.0)
 }
 
+// ────────────────────────────────────────────────
+// Quantum Gate Operations & Circuit Simulator
+// ────────────────────────────────────────────────
+
+/// Single and multi-qubit unitary quantum logic gates.
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuantumGate {
+    /// Hadamard gate $H = \frac{1}{\sqrt{2}} \begin{pmatrix} 1 & 1 \\ 1 & -1 \end{pmatrix}$.
+    Hadamard { target: usize },
+    /// Pauli-X (NOT) gate $X = \begin{pmatrix} 0 & 1 \\ 1 & 0 \end{pmatrix}$.
+    PauliX { target: usize },
+    /// Pauli-Y gate $Y = \begin{pmatrix} 0 & -i \\ i & 0 \end{pmatrix}$.
+    PauliY { target: usize },
+    /// Pauli-Z gate $Z = \begin{pmatrix} 1 & 0 \\ 0 & -1 \end{pmatrix}$.
+    PauliZ { target: usize },
+    /// Controlled-NOT (CNOT / CX) gate.
+    CNOT { control: usize, target: usize },
+}
+
+/// A quantum computation circuit.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QuantumCircuit {
+    pub num_qubits: usize,
+    pub gates: Vec<QuantumGate>,
+}
+
+impl QuantumCircuit {
+    pub fn new(num_qubits: usize) -> Self {
+        Self {
+            num_qubits,
+            gates: Vec::new(),
+        }
+    }
+
+    pub fn h(mut self, target: usize) -> Self {
+        assert!(target < self.num_qubits);
+        self.gates.push(QuantumGate::Hadamard { target });
+        self
+    }
+
+    pub fn x(mut self, target: usize) -> Self {
+        assert!(target < self.num_qubits);
+        self.gates.push(QuantumGate::PauliX { target });
+        self
+    }
+
+    pub fn z(mut self, target: usize) -> Self {
+        assert!(target < self.num_qubits);
+        self.gates.push(QuantumGate::PauliZ { target });
+        self
+    }
+
+    pub fn cnot(mut self, control: usize, target: usize) -> Self {
+        assert!(control < self.num_qubits && target < self.num_qubits && control != target);
+        self.gates.push(QuantumGate::CNOT { control, target });
+        self
+    }
+
+    /// Simulate the quantum circuit starting from $|0\dots 0\rangle$.
+    pub fn execute(&self) -> QuantumState {
+        let mut state = QuantumState::zero(self.num_qubits);
+        let sqrt2_inv = 1.0 / 2.0f64.sqrt();
+
+        for gate in &self.gates {
+            match gate {
+                QuantumGate::Hadamard { target } => {
+                    let mut new_amps = state.amplitudes.clone();
+                    let bit = 1usize << target;
+                    for i in 0..state.amplitudes.len() {
+                        if (i & bit) == 0 {
+                            let a0 = state.amplitudes[i];
+                            let a1 = state.amplitudes[i | bit];
+                            new_amps[i] = Complex::new(
+                                sqrt2_inv * (a0.re + a1.re),
+                                sqrt2_inv * (a0.im + a1.im),
+                            );
+                            new_amps[i | bit] = Complex::new(
+                                sqrt2_inv * (a0.re - a1.re),
+                                sqrt2_inv * (a0.im - a1.im),
+                            );
+                        }
+                    }
+                    state.amplitudes = new_amps;
+                }
+                QuantumGate::PauliX { target } => {
+                    let bit = 1usize << target;
+                    for i in 0..state.amplitudes.len() {
+                        if (i & bit) == 0 {
+                            state.amplitudes.swap(i, i | bit);
+                        }
+                    }
+                }
+                QuantumGate::PauliY { target } => {
+                    let mut new_amps = state.amplitudes.clone();
+                    let bit = 1usize << target;
+                    for i in 0..state.amplitudes.len() {
+                        if (i & bit) == 0 {
+                            let a0 = state.amplitudes[i];
+                            let a1 = state.amplitudes[i | bit];
+                            // Y |0> = i|1>, Y |1> = -i|0>
+                            new_amps[i] = Complex::new(a1.im, -a1.re);
+                            new_amps[i | bit] = Complex::new(-a0.im, a0.re);
+                        }
+                    }
+                    state.amplitudes = new_amps;
+                }
+                QuantumGate::PauliZ { target } => {
+                    let bit = 1usize << target;
+                    for i in 0..state.amplitudes.len() {
+                        if (i & bit) != 0 {
+                            state.amplitudes[i] =
+                                Complex::new(-state.amplitudes[i].re, -state.amplitudes[i].im);
+                        }
+                    }
+                }
+                QuantumGate::CNOT { control, target } => {
+                    let ctrl_bit = 1usize << control;
+                    let tgt_bit = 1usize << target;
+                    for i in 0..state.amplitudes.len() {
+                        if (i & ctrl_bit) != 0 && (i & tgt_bit) == 0 {
+                            state.amplitudes.swap(i, i | tgt_bit);
+                        }
+                    }
+                }
+            }
+        }
+
+        state.normalize();
+        state
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +296,21 @@ mod tests {
             val_1000 < val_100,
             "Decay must strictly decrease with rounds"
         );
+    }
+
+    #[test]
+    fn test_bell_state_circuit() {
+        // Bell state |Phi+> = (|00> + |11>) / sqrt(2)
+        let circuit = QuantumCircuit::new(2).h(0).cnot(0, 1);
+        let state = circuit.execute();
+
+        assert_eq!(state.num_qubits, 2);
+        assert!((state.norm() - 1.0).abs() < 1e-10);
+
+        let sqrt2_inv = 1.0 / 2.0f64.sqrt();
+        assert!((state.amplitudes[0].re - sqrt2_inv).abs() < 1e-6);
+        assert!((state.amplitudes[1].re).abs() < 1e-6);
+        assert!((state.amplitudes[2].re).abs() < 1e-6);
+        assert!((state.amplitudes[3].re - sqrt2_inv).abs() < 1e-6);
     }
 }
