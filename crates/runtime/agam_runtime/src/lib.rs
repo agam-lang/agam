@@ -13,6 +13,7 @@
 
 pub mod arc;
 pub mod cache;
+pub mod capability;
 pub mod contract;
 pub mod coroutine;
 pub mod crypto;
@@ -22,6 +23,9 @@ pub mod sandbox;
 pub mod security;
 pub mod simd;
 
+pub use capability::{
+    Capability, CapabilitySet, IsolationTier, PermissionDeniedError, global_capabilities,
+};
 pub use crypto::{Sha256, chacha20_xor, hmac_sha256, sha256_digest};
 pub use hwinfo::{
     GpuTelemetry, HardwareInfo, MemoryTopology, NpuTelemetry, PerfTelemetry, SimdCapabilities,
