@@ -27,6 +27,7 @@ pub mod net;
 pub mod numerical;
 pub mod packing;
 pub mod precision;
+pub mod probabilistic;
 pub mod process;
 pub mod quantum;
 pub mod serial;
@@ -54,6 +55,7 @@ pub use ipc::{IpcError, SharedMemoryRegion, SpscRingBuffer};
 pub use linalg::{Matrix, glynn_permanent, ryser_permanent};
 pub use net::{HttpHeaders, HttpMethod, HttpRequest, HttpResponse, NetError, NetworkManager, Url};
 pub use packing::{cohn_elkies_bound, fourier_sign_uncertainty_radius, mellin_hankel_transform};
+pub use probabilistic::{BayesianInference, Distribution, ModelTrace};
 pub use quantum::{QuantumState, entangled_game_value_decay, quantum_correlated_sampling};
 pub use serial::{
     SerialEnvelopeHeader, SerialError, ZeroCopy, decode_envelope, encode_envelope, from_bytes,
