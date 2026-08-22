@@ -15,6 +15,7 @@ use agam_runtime::contract::{
 use serde::{Deserialize, Serialize};
 
 pub mod build_graph;
+pub mod cross_target;
 pub mod federation;
 pub mod plugin;
 pub mod reproducible;
@@ -23,6 +24,10 @@ pub mod supply_chain;
 pub use build_graph::{
     BuildGraph, BuildGraphError, BuildNode, BuildScheduleReport, BuildStage, BuildTargetKind,
     ParallelBuildScheduler,
+};
+pub use cross_target::{
+    CrossCompilePlan, CrossCompilePlanner, SysrootManager, SysrootStatus, TargetAbi, TargetArch,
+    TargetOs, TargetTriple,
 };
 pub use federation::{
     FederatedResolver, FederationConfig, LocalRegistryServer, RegistryEndpoint,
