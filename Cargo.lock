@@ -313,6 +313,8 @@ dependencies = [
  "agam_pkg",
  "agam_runtime",
  "agam_sema",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

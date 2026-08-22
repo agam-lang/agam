@@ -5,15 +5,15 @@
 //! Enforces semantic correctness, idiomatic naming conventions, dead-code detection,
 //! suspicious self-comparisons, redundant type casts, and cognitive complexity bounds.
 
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
+use agam_ast::Module;
 use agam_ast::decl::*;
 use agam_ast::expr::*;
 use agam_ast::pattern::{Pattern, PatternKind};
 use agam_ast::stmt::*;
 use agam_ast::visitor::Visitor;
-use agam_ast::Module;
 use agam_errors::Span;
 
 /// Severity level of a lint rule.
@@ -198,7 +198,9 @@ impl<'a> LintContext<'a> {
 
     fn pop_scope(&mut self) {
         if let Some(scope) = self.scopes.pop() {
-            let level = self.config.get_level(LintCode::UNUSED_VARIABLE, LintLevel::Warn);
+            let level = self
+                .config
+                .get_level(LintCode::UNUSED_VARIABLE, LintLevel::Warn);
             if level != LintLevel::Allow {
                 for (name, (span, used)) in scope.variables {
                     if !used && !name.starts_with('_') {
@@ -253,8 +255,14 @@ impl Visitor for LintVisitor<'_> {
 
     fn visit_function(&mut self, func: &FunctionDecl) {
         // Check function naming convention (snake_case)
-        let name_level = self.ctx.config.get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
-        if name_level != LintLevel::Allow && !is_snake_case(&func.name.name) && !func.name.name.starts_with('_') {
+        let name_level = self
+            .ctx
+            .config
+            .get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
+        if name_level != LintLevel::Allow
+            && !is_snake_case(&func.name.name)
+            && !func.name.name.starts_with('_')
+        {
             self.ctx.diagnostics.push(
                 LintDiagnostic::new(
                     LintCode::NAMING_CONVENTION,
@@ -283,7 +291,10 @@ impl Visitor for LintVisitor<'_> {
 
         if let Some(body) = &func.body {
             if body.stmts.is_empty() && body.expr.is_none() {
-                let empty_level = self.ctx.config.get_level(LintCode::EMPTY_BLOCK, LintLevel::Warn);
+                let empty_level = self
+                    .ctx
+                    .config
+                    .get_level(LintCode::EMPTY_BLOCK, LintLevel::Warn);
                 if empty_level != LintLevel::Allow {
                     self.ctx.diagnostics.push(LintDiagnostic::new(
                         LintCode::EMPTY_BLOCK,
@@ -299,7 +310,10 @@ impl Visitor for LintVisitor<'_> {
         self.ctx.pop_scope();
 
         // Check cognitive complexity
-        let comp_level = self.ctx.config.get_level(LintCode::COGNITIVE_COMPLEXITY, LintLevel::Warn);
+        let comp_level = self
+            .ctx
+            .config
+            .get_level(LintCode::COGNITIVE_COMPLEXITY, LintLevel::Warn);
         let max_allowed = if self.ctx.config.max_cognitive_complexity == 0 {
             15
         } else {
@@ -325,7 +339,10 @@ impl Visitor for LintVisitor<'_> {
     }
 
     fn visit_struct(&mut self, s: &StructDecl) {
-        let name_level = self.ctx.config.get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
+        let name_level = self
+            .ctx
+            .config
+            .get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
         if name_level != LintLevel::Allow && !is_pascal_case(&s.name.name) {
             self.ctx.diagnostics.push(
                 LintDiagnostic::new(
@@ -340,7 +357,10 @@ impl Visitor for LintVisitor<'_> {
     }
 
     fn visit_enum(&mut self, e: &EnumDecl) {
-        let name_level = self.ctx.config.get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
+        let name_level = self
+            .ctx
+            .config
+            .get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
         if name_level != LintLevel::Allow {
             if !is_pascal_case(&e.name.name) {
                 self.ctx.diagnostics.push(
@@ -359,7 +379,10 @@ impl Visitor for LintVisitor<'_> {
                         LintDiagnostic::new(
                             LintCode::NAMING_CONVENTION,
                             name_level,
-                            format!("Enum variant `{}` should be in PascalCase", variant.name.name),
+                            format!(
+                                "Enum variant `{}` should be in PascalCase",
+                                variant.name.name
+                            ),
                             variant.name.span,
                         )
                         .with_suggestion(to_pascal_case(&variant.name.name)),
@@ -370,7 +393,10 @@ impl Visitor for LintVisitor<'_> {
     }
 
     fn visit_trait(&mut self, t: &TraitDecl) {
-        let name_level = self.ctx.config.get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
+        let name_level = self
+            .ctx
+            .config
+            .get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
         if name_level != LintLevel::Allow && !is_pascal_case(&t.name.name) {
             self.ctx.diagnostics.push(
                 LintDiagnostic::new(
@@ -387,7 +413,10 @@ impl Visitor for LintVisitor<'_> {
     fn visit_block(&mut self, block: &Block) {
         self.ctx.push_scope();
 
-        let dead_code_level = self.ctx.config.get_level(LintCode::DEAD_CODE, LintLevel::Warn);
+        let dead_code_level = self
+            .ctx
+            .config
+            .get_level(LintCode::DEAD_CODE, LintLevel::Warn);
         let mut has_terminated = false;
 
         for stmt in &block.stmts {
@@ -432,8 +461,14 @@ impl Visitor for LintVisitor<'_> {
                 let mut vars = Vec::new();
                 collect_pattern_identifiers(pattern, &mut vars);
                 for (name, span) in vars {
-                    let name_level = self.ctx.config.get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
-                    if name_level != LintLevel::Allow && !is_snake_case(&name) && !name.starts_with('_') {
+                    let name_level = self
+                        .ctx
+                        .config
+                        .get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
+                    if name_level != LintLevel::Allow
+                        && !is_snake_case(&name)
+                        && !name.starts_with('_')
+                    {
                         self.ctx.diagnostics.push(
                             LintDiagnostic::new(
                                 LintCode::NAMING_CONVENTION,
@@ -476,7 +511,10 @@ impl Visitor for LintVisitor<'_> {
                 self.ctx.nesting_level -= 1;
             }
             StmtKind::Const { name, value, .. } => {
-                let name_level = self.ctx.config.get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
+                let name_level = self
+                    .ctx
+                    .config
+                    .get_level(LintCode::NAMING_CONVENTION, LintLevel::Warn);
                 if name_level != LintLevel::Allow && !is_screaming_snake_case(&name.name) {
                     self.ctx.diagnostics.push(
                         LintDiagnostic::new(
@@ -501,8 +539,14 @@ impl Visitor for LintVisitor<'_> {
             }
 
             ExprKind::Binary { op, left, right } => {
-                let self_comp_level = self.ctx.config.get_level(LintCode::SELF_COMPARISON, LintLevel::Warn);
-                if self_comp_level != LintLevel::Allow && is_comparison_op(op) && are_exprs_identical(left, right) {
+                let self_comp_level = self
+                    .ctx
+                    .config
+                    .get_level(LintCode::SELF_COMPARISON, LintLevel::Warn);
+                if self_comp_level != LintLevel::Allow
+                    && is_comparison_op(op)
+                    && are_exprs_identical(left, right)
+                {
                     self.ctx.diagnostics.push(
                         LintDiagnostic::new(
                             LintCode::SELF_COMPARISON,
@@ -518,7 +562,11 @@ impl Visitor for LintVisitor<'_> {
                 self.visit_expr(right);
             }
 
-            ExprKind::If { condition, then_branch, else_branch } => {
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.ctx.function_complexity += 1 + self.ctx.nesting_level;
                 self.ctx.nesting_level += 1;
 
@@ -592,7 +640,11 @@ impl Visitor for LintVisitor<'_> {
                 self.visit_expr(expr);
             }
 
-            ExprKind::Try(e) | ExprKind::Await(e) | ExprKind::Spawn(e) | ExprKind::Backward(e) | ExprKind::Resume(e) => {
+            ExprKind::Try(e)
+            | ExprKind::Await(e)
+            | ExprKind::Spawn(e)
+            | ExprKind::Backward(e)
+            | ExprKind::Resume(e) => {
                 self.visit_expr(e);
             }
 
@@ -685,8 +737,7 @@ pub fn is_pascal_case(s: &str) -> bool {
     if !first.is_ascii_uppercase() {
         return false;
     }
-    s.chars()
-        .all(|c| c.is_ascii_alphanumeric())
+    s.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 /// Check if a string is valid `SCREAMING_SNAKE_CASE`.
@@ -825,7 +876,10 @@ mod tests {
 
         assert_eq!(to_snake_case("CalculateFibonacci"), "calculate_fibonacci");
         assert_eq!(to_pascal_case("matrix_multiplier"), "MatrixMultiplier");
-        assert_eq!(to_screaming_snake_case("buffer_capacity"), "BUFFER_CAPACITY");
+        assert_eq!(
+            to_screaming_snake_case("buffer_capacity"),
+            "BUFFER_CAPACITY"
+        );
     }
 
     #[test]
