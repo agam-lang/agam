@@ -312,6 +312,162 @@ pub fn knn_classify(train_x: &[Tensor], train_y: &[usize], query: &Tensor, k: us
     *votes.iter().max_by_key(|(_, v)| **v).unwrap().0
 }
 
+// ────────────────────────────────────────────────
+// Optimizers & Neural Network Models
+// ────────────────────────────────────────────────
+
+/// Trait for first-order gradient optimizers.
+pub trait Optimizer {
+    /// Update model weights in-place given gradients.
+    fn step(&mut self, weights: &mut Tensor, grads: &Tensor);
+}
+
+/// Stochastic Gradient Descent with Momentum.
+#[derive(Debug, Clone)]
+pub struct Sgd {
+    pub lr: f64,
+    pub momentum: f64,
+    pub velocity: Option<Tensor>,
+}
+
+impl Sgd {
+    pub fn new(lr: f64, momentum: f64) -> Self {
+        Self {
+            lr,
+            momentum,
+            velocity: None,
+        }
+    }
+}
+
+impl Optimizer for Sgd {
+    fn step(&mut self, weights: &mut Tensor, grads: &Tensor) {
+        assert_eq!(weights.shape, grads.shape);
+        let vel = self
+            .velocity
+            .get_or_insert_with(|| Tensor::zeros(&weights.shape));
+        for i in 0..weights.data.len() {
+            vel.data[i] = self.momentum * vel.data[i] + self.lr * grads.data[i];
+            weights.data[i] -= vel.data[i];
+        }
+    }
+}
+
+/// Adam (Adaptive Moment Estimation) Optimizer.
+#[derive(Debug, Clone)]
+pub struct Adam {
+    pub lr: f64,
+    pub beta1: f64,
+    pub beta2: f64,
+    pub eps: f64,
+    pub t: usize,
+    pub m: Option<Tensor>,
+    pub v: Option<Tensor>,
+}
+
+impl Adam {
+    pub fn new(lr: f64) -> Self {
+        Self {
+            lr,
+            beta1: 0.9,
+            beta2: 0.999,
+            eps: 1e-8,
+            t: 0,
+            m: None,
+            v: None,
+        }
+    }
+}
+
+impl Optimizer for Adam {
+    fn step(&mut self, weights: &mut Tensor, grads: &Tensor) {
+        assert_eq!(weights.shape, grads.shape);
+        self.t += 1;
+        let t_f = self.t as f64;
+        let m = self.m.get_or_insert_with(|| Tensor::zeros(&weights.shape));
+        let v = self.v.get_or_insert_with(|| Tensor::zeros(&weights.shape));
+
+        for i in 0..weights.data.len() {
+            let g = grads.data[i];
+            m.data[i] = self.beta1 * m.data[i] + (1.0 - self.beta1) * g;
+            v.data[i] = self.beta2 * v.data[i] + (1.0 - self.beta2) * g * g;
+
+            // Bias correction
+            let m_hat = m.data[i] / (1.0 - self.beta1.powf(t_f));
+            let v_hat = v.data[i] / (1.0 - self.beta2.powf(t_f));
+
+            weights.data[i] -= self.lr * m_hat / (v_hat.sqrt() + self.eps);
+        }
+    }
+}
+
+/// A trainable Dense/Linear Neural Network Layer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DenseLayer {
+    pub weights: Tensor,
+    pub bias: Tensor,
+    pub in_features: usize,
+    pub out_features: usize,
+}
+
+impl DenseLayer {
+    pub fn new(in_features: usize, out_features: usize) -> Self {
+        let bound = (6.0 / (in_features + out_features) as f64).sqrt();
+        let mut data = Vec::with_capacity(in_features * out_features);
+        // Simple deterministic Xavier initialization
+        for i in 0..(in_features * out_features) {
+            let pseudo_rand = ((i as f64 * 0.12345).sin()) * bound;
+            data.push(pseudo_rand);
+        }
+        let weights = Tensor::from_data(&[in_features, out_features], data);
+        let bias = Tensor::zeros(&[out_features]);
+        Self {
+            weights,
+            bias,
+            in_features,
+            out_features,
+        }
+    }
+
+    pub fn forward(&self, input: &Tensor) -> Tensor {
+        dense(input, &self.weights, &self.bias)
+    }
+}
+
+/// A Sequential Neural Network Model.
+#[derive(Debug, Clone)]
+pub struct SequentialModel {
+    pub layers: Vec<DenseLayer>,
+}
+
+impl SequentialModel {
+    pub fn new() -> Self {
+        Self { layers: Vec::new() }
+    }
+
+    pub fn add_dense(mut self, in_features: usize, out_features: usize) -> Self {
+        self.layers.push(DenseLayer::new(in_features, out_features));
+        self
+    }
+
+    pub fn forward(&self, input: &Tensor) -> Tensor {
+        let mut curr = input.clone();
+        for (i, layer) in self.layers.iter().enumerate() {
+            curr = layer.forward(&curr);
+            if i + 1 < self.layers.len() {
+                curr = curr.relu();
+            }
+        }
+        curr
+    }
+}
+
+impl Default for SequentialModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +617,36 @@ mod tests {
         let a = Tensor::vector(vec![0.0, 0.0]);
         let b = Tensor::vector(vec![3.0, 4.0]);
         assert!((euclidean_distance(&a, &b) - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_sgd_optimizer_step() {
+        let mut weights = Tensor::vector(vec![1.0, 2.0]);
+        let grads = Tensor::vector(vec![0.1, 0.2]);
+        let mut sgd = Sgd::new(0.1, 0.9);
+
+        sgd.step(&mut weights, &grads);
+        assert!((weights.data[0] - 0.99).abs() < 1e-10);
+        assert!((weights.data[1] - 1.98).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_adam_optimizer_step() {
+        let mut weights = Tensor::vector(vec![1.0, 2.0]);
+        let grads = Tensor::vector(vec![0.1, 0.2]);
+        let mut adam = Adam::new(0.01);
+
+        adam.step(&mut weights, &grads);
+        assert!(weights.data[0] < 1.0);
+        assert!(weights.data[1] < 2.0);
+    }
+
+    #[test]
+    fn test_sequential_model_forward() {
+        let model = SequentialModel::new().add_dense(4, 8).add_dense(8, 2);
+
+        let input = Tensor::from_data(&[1, 4], vec![0.5, -0.2, 0.1, 0.9]);
+        let output = model.forward(&input);
+        assert_eq!(output.shape, vec![1, 2]);
     }
 }
