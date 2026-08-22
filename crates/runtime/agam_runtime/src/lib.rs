@@ -19,6 +19,7 @@ pub mod coroutine;
 pub mod crypto;
 pub mod effects;
 pub mod hwinfo;
+pub mod pqc;
 pub mod sandbox;
 pub mod security;
 pub mod simd;
@@ -30,6 +31,10 @@ pub use crypto::{Sha256, chacha20_xor, hmac_sha256, sha256_digest};
 pub use hwinfo::{
     GpuTelemetry, HardwareInfo, MemoryTopology, NpuTelemetry, PerfTelemetry, SimdCapabilities,
     SimdTier, hwinfo,
+};
+pub use pqc::{
+    MlDsaKeyPair, MlDsaParameter, MlDsaPublicKey, MlDsaSecretKey, MlKemKeyPair, MlKemParameter,
+    MlKemPublicKey, MlKemSecretKey,
 };
 pub use security::{Secret, SecureRandom, constant_time_eq, zeroize};
 
