@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="100%" height="100%">
+  <defs>
+    <!-- Background Radial Glow -->
+    <radialGradient id="bgGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1E293B" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#0B0F19" stop-opacity="1"/>
+    </radialGradient>
+
+    <!-- Energy Gradients -->
+    <linearGradient id="saffronGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFB347"/>
+      <stop offset="50%" stop-color="#FF7A00"/>
+      <stop offset="100%" stop-color="#E65100"/>
+    </linearGradient>
+
+    <linearGradient id="cyanGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00E5FF"/>
+      <stop offset="50%" stop-color="#00B0FF"/>
+      <stop offset="100%" stop-color="#7C4DFF"/>
+    </linearGradient>
+
+    <linearGradient id="goldTensorGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFE082"/>
+      <stop offset="50%" stop-color="#FFB300"/>
+      <stop offset="100%" stop-color="#FF6F00"/>
+    </linearGradient>
+
+    <!-- Neon Glow Filters -->
+    <filter id="neonGlowSaffron" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="24" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="neonGlowCyan" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="16" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background Base -->
+  <rect width="800" height="800" rx="160" fill="url(#bgGlow)"/>
+  
+  <!-- Outer Sacred Geometry Ring -->
+  <circle cx="400" cy="400" r="320" fill="none" stroke="url(#cyanGrad)" stroke-width="2.5" stroke-dasharray="8 12" opacity="0.4"/>
+  <circle cx="400" cy="400" r="280" fill="none" stroke="url(#saffronGrad)" stroke-width="1.5" opacity="0.6"/>
+
+  <!-- Hyper-Dimensional Tensor Core Coordinate Axes -->
+  <g opacity="0.35">
+    <line x1="400" y1="80" x2="400" y2="720" stroke="#00E5FF" stroke-width="1.5" stroke-dasharray="4 8"/>
+    <line x1="80" y1="400" x2="720" y2="400" stroke="#FFB300" stroke-width="1.5" stroke-dasharray="4 8"/>
+    <line x1="174" y1="174" x2="626" y2="626" stroke="#7C4DFF" stroke-width="1.5" stroke-dasharray="4 8"/>
+    <line x1="174" y1="626" x2="626" y2="174" stroke="#00E5FF" stroke-width="1.5" stroke-dasharray="4 8"/>
+  </g>
+
+  <!-- Outer Isometric Hexagonal Tensor Frame -->
+  <polygon points="400,140 625,270 625,530 400,660 175,530 175,270" 
+           fill="none" 
+           stroke="url(#cyanGrad)" 
+           stroke-width="7" 
+           stroke-linejoin="round"
+           filter="url(#neonGlowCyan)"
+           opacity="0.85"/>
+
+  <!-- Inner Inverted Golden Hexagram Layer -->
+  <polygon points="400,200 573,300 573,500 400,600 227,500 227,300" 
+           fill="none" 
+           stroke="url(#saffronGrad)" 
+           stroke-width="5" 
+           stroke-linejoin="round"
+           filter="url(#neonGlowSaffron)"
+           opacity="0.9"/>
+
+  <!-- Central Indic 'A' (अ) Tensor Monad & Sri Yantra Knot -->
+  <!-- Stylized modern Sanskrit 'अ' fused with infinite loop -->
+  <g filter="url(#neonGlowSaffron)">
+    <!-- Top Bar (Shirorekha) with quantum end-caps -->
+    <path d="M 280 260 L 520 260" stroke="url(#goldTensorGrad)" stroke-width="14" stroke-linecap="round"/>
+    
+    <!-- Central Vertical Spine -->
+    <path d="M 450 260 L 450 540" stroke="url(#goldTensorGrad)" stroke-width="14" stroke-linecap="round"/>
+
+    <!-- Left Upper Arc (Upper curve of 'अ') -->
+    <path d="M 330 310 C 390 300 420 350 420 380 C 420 410 380 430 350 430" 
+          fill="none" stroke="url(#saffronGrad)" stroke-width="14" stroke-linecap="round"/>
+
+    <!-- Left Lower Arc (Lower curve of 'अ') sweeping into infinity loop -->
+    <path d="M 350 430 C 400 430 430 470 430 510 C 430 550 380 570 320 550" 
+          fill="none" stroke="url(#saffronGrad)" stroke-width="14" stroke-linecap="round"/>
+
+    <!-- Horizontal Connective Bridge -->
+    <path d="M 390 430 L 450 430" stroke="url(#goldTensorGrad)" stroke-width="12" stroke-linecap="round"/>
+
+    <!-- Right Flanking Accent Curve (Avagraha Harmonic) -->
+    <path d="M 480 340 C 520 370 520 430 480 460" 
+          fill="none" stroke="url(#cyanGrad)" stroke-width="10" stroke-linecap="round" filter="url(#neonGlowCyan)"/>
+  </g>
+
+  <!-- High-Dimensional Tensor Nodes (Hexagon Vertices) -->
+  <circle cx="400" cy="140" r="12" fill="#00E5FF" filter="url(#neonGlowCyan)"/>
+  <circle cx="625" cy="270" r="12" fill="#7C4DFF" filter="url(#neonGlowCyan)"/>
+  <circle cx="625" cy="530" r="12" fill="#FF7A00" filter="url(#neonGlowSaffron)"/>
+  <circle cx="400" cy="660" r="12" fill="#FFB300" filter="url(#neonGlowSaffron)"/>
+  <circle cx="175" cy="530" r="12" fill="#00E5FF" filter="url(#neonGlowCyan)"/>
+  <circle cx="175" cy="270" r="12" fill="#00B0FF" filter="url(#neonGlowCyan)"/>
+
+  <!-- Core Quantum Singularity Center Dot -->
+  <circle cx="400" cy="400" r="7" fill="#FFFFFF" filter="url(#neonGlowCyan)"/>
+</svg>
