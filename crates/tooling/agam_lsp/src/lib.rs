@@ -12,15 +12,27 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 
 const TEXT_DOCUMENT_SYNC_FULL: u8 = 1;
-const LSP_METHOD_NOT_FOUND: i64 = -32601;
-const LSP_INVALID_PARAMS: i64 = -32602;
-const LSP_SERVER_NOT_INITIALIZED: i64 = -32002;
+pub const LSP_METHOD_NOT_FOUND: i64 = -32601;
+pub const LSP_INVALID_PARAMS: i64 = -32602;
+pub const LSP_SERVER_NOT_INITIALIZED: i64 = -32002;
+pub const LSP_REQUEST_CANCELLED: i64 = -32800;
 
 #[derive(Default)]
 pub struct ServerState {
     pub initialized: bool,
     pub workspace: Option<agam_pkg::WorkspaceSession>,
     pub open_documents: HashMap<String, String>,
+    pub cancelled_requests: std::collections::HashSet<String>,
+}
+
+impl ServerState {
+    pub fn cancel_request(&mut self, id: &Value) {
+        self.cancelled_requests.insert(id.to_string());
+    }
+
+    pub fn is_cancelled(&self, id: &Value) -> bool {
+        self.cancelled_requests.contains(&id.to_string())
+    }
 }
 
 pub fn run_stdio() -> Result<(), String> {
@@ -50,7 +62,27 @@ pub fn handle_message(state: &mut ServerState, message: &Value) -> Result<Option
         return Ok(None);
     };
 
+    if method != "$/cancelRequest"
+        && let Some(id) = message.get("id")
+        && state.is_cancelled(id)
+    {
+        return Ok(Some(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": LSP_REQUEST_CANCELLED,
+                "message": "Request cancelled by client"
+            }
+        })));
+    }
+
     match method {
+        "$/cancelRequest" => {
+            if let Some(id) = message.get("params").and_then(|p| p.get("id")) {
+                state.cancel_request(id);
+            }
+            Ok(None)
+        }
         "initialize" => {
             let id = message
                 .get("id")
@@ -1097,5 +1129,33 @@ rev = "abc123"
             .expect("read message")
             .expect("message payload");
         assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn test_cancel_request_returns_cancelled_error() {
+        let mut state = ServerState::default();
+        let cancel_msg = json!({
+            "jsonrpc": "2.0",
+            "method": "$/cancelRequest",
+            "params": {
+                "id": 99
+            }
+        });
+        let res = handle_message(&mut state, &cancel_msg).expect("handle cancel");
+        assert_eq!(res, None);
+
+        let req_msg = json!({
+            "jsonrpc": "2.0",
+            "id": 99,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": "file:///test.agam" },
+                "position": { "line": 0, "character": 0 }
+            }
+        });
+        let res2 = handle_message(&mut state, &req_msg)
+            .expect("handle request")
+            .expect("response");
+        assert_eq!(res2["error"]["code"], LSP_REQUEST_CANCELLED);
     }
 }
