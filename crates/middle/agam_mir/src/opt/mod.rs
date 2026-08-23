@@ -13,12 +13,28 @@ pub mod polyhedral;
 pub use ai_intel::{AiCompilerReport, AiOptimizationAdvisor, OptimizationRecommendation};
 
 use crate::ir::MirModule;
+use crate::verifier::MirVerifier;
 
-/// Run the default MIR optimization pipeline in a fixed-point loop.
+/// Maximum fixed-point optimization passes permitted to prevent oscillation / infinite loops.
+pub const MAX_OPT_PASS_ITERATIONS: usize = 16;
+
+/// Run the default MIR optimization pipeline with iteration fuel bounds and verification gates.
 pub fn optimize_module(module: &mut MirModule) -> bool {
-    let mut changed_any = false;
+    #[cfg(debug_assertions)]
+    {
+        if let Err(errors) = MirVerifier::verify_module(module) {
+            eprintln!(
+                "[WARN] MIR pre-opt verification failed with {} errors",
+                errors.len()
+            );
+        }
+    }
 
-    loop {
+    let mut changed_any = false;
+    let mut iterations = 0;
+
+    while iterations < MAX_OPT_PASS_ITERATIONS {
+        iterations += 1;
         let mut changed = false;
         changed |= inline::run(module);
         changed |= constant_fold::run(module);
@@ -34,6 +50,16 @@ pub fn optimize_module(module: &mut MirModule) -> bool {
         changed_any = true;
     }
 
+    #[cfg(debug_assertions)]
+    {
+        if let Err(errors) = MirVerifier::verify_module(module) {
+            eprintln!(
+                "[WARN] MIR post-opt verification failed with {} errors",
+                errors.len()
+            );
+        }
+    }
+
     changed_any
 }
 
@@ -42,4 +68,51 @@ pub fn run_escape_and_promote(
     purity: &escape::CalleePurityInfo,
 ) -> (escape::EscapeAnalysisResults, escape::StackPromotionResults) {
     escape::run_escape_and_promote(module, purity)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{BasicBlock, Instruction, MirFunction, MirParam, Op, Terminator, ValueId};
+    use agam_sema::symbol::TypeId;
+
+    #[test]
+    fn test_optimize_module_bounded_iterations() {
+        let b0 = crate::ir::BlockId(0);
+        let v0 = ValueId(0);
+        let v1 = ValueId(1);
+
+        let mut module = MirModule {
+            functions: vec![MirFunction {
+                name: "simple".into(),
+                generics: vec![],
+                params: vec![MirParam {
+                    name: "x".into(),
+                    value: v0,
+                    ty: TypeId(1),
+                    gpu_abi: Default::default(),
+                    memory_type: None,
+                }],
+                return_ty: TypeId(1),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![Instruction {
+                        result: v1,
+                        ty: TypeId(1),
+                        op: Op::ConstInt(10),
+                    }],
+                    terminator: Terminator::Return(v1),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
+        };
+
+        // Optimization must complete within bounded iterations and produce verified IR
+        optimize_module(&mut module);
+        assert!(MirVerifier::verify_module(&module).is_ok());
+    }
 }

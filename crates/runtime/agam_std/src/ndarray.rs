@@ -52,24 +52,56 @@ pub fn squeeze(t: &Tensor) -> Tensor {
     }
 }
 
-/// Argmax: index of the maximum element.
+/// Argmax: index of the maximum element. Returns 0 if empty.
 pub fn argmax(t: &Tensor) -> usize {
+    if t.data.is_empty() {
+        return 0;
+    }
     t.data
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(i, _)| i)
-        .unwrap()
+        .unwrap_or(0)
 }
 
-/// Argmin: index of the minimum element.
+/// Argmin: index of the minimum element. Returns 0 if empty.
 pub fn argmin(t: &Tensor) -> usize {
+    if t.data.is_empty() {
+        return 0;
+    }
     t.data
         .iter()
         .enumerate()
-        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(i, _)| i)
-        .unwrap()
+        .unwrap_or(0)
+}
+
+/// Fallible argmax returning None if empty.
+pub fn try_argmax(t: &Tensor) -> Option<usize> {
+    if t.data.is_empty() {
+        None
+    } else {
+        t.data
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(i, _)| i)
+    }
+}
+
+/// Fallible argmin returning None if empty.
+pub fn try_argmin(t: &Tensor) -> Option<usize> {
+    if t.data.is_empty() {
+        None
+    } else {
+        t.data
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.total_cmp(b))
+            .map(|(i, _)| i)
+    }
 }
 
 /// Cumulative sum along the flattened tensor.
@@ -320,5 +352,21 @@ mod tests {
         let t = Tensor::vector(vec![2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]);
         assert_eq!(variance(&t), 4.0);
         assert_eq!(std_dev(&t), 2.0);
+    }
+
+    #[test]
+    fn test_argmax_nan_and_empty_safety() {
+        let empty = Tensor::vector(vec![]);
+        assert_eq!(argmax(&empty), 0);
+        assert_eq!(argmin(&empty), 0);
+        assert_eq!(try_argmax(&empty), None);
+        assert_eq!(try_argmin(&empty), None);
+
+        let nan_tensor = Tensor::vector(vec![1.0, f64::NAN, 3.0]);
+        // total_cmp guarantees deterministic comparison without panics
+        let max_idx = argmax(&nan_tensor);
+        let min_idx = argmin(&nan_tensor);
+        assert!(max_idx < 3);
+        assert!(min_idx < 3);
     }
 }

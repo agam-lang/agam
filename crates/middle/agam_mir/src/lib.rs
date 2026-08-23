@@ -15,9 +15,14 @@ pub mod ir;
 pub mod lower;
 pub mod monomorphize;
 pub mod opt;
+pub mod verifier;
 
+pub use analysis::{
+    ControlFlowGraph, DominanceFrontier, DominatorTree, LoopForest, NaturalLoop, ReversePostOrder,
+};
 pub use dialect::{
     AsyncDialectOp, BarrierScope, DialectKind, DialectLoweringEngine, GpuDialectOp, MultiLevelOp,
     TensorOp, TensorReduceKind,
 };
 pub use eval::{ComptimeError, ComptimeInterpreter, ConstValue};
+pub use verifier::{MirVerificationError, MirVerifier};

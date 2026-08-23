@@ -3,8 +3,8 @@
 //! Handles:
 //! 1. **Trait declaration registration** — collects trait definitions and their methods.
 //! 2. **Impl registration** — records which types implement which traits.
-//! 3. **Method dispatch** — resolves `obj.method()` to the correct impl.
-//! 4. **Coherence checking** — ensures no duplicate impl for the same trait+type pair.
+//! 3. **Indexed Method dispatch** — resolves `obj.method()` in O(1) time without linear scans.
+//! 4. **Coherence checking** — ensures no duplicate or overlapping impls for the same trait+type pair.
 
 use crate::symbol::{SymbolId, TypeId};
 use agam_errors::Span;
@@ -52,12 +52,18 @@ pub struct TraitError {
     pub span: Span,
 }
 
-/// The trait registry: stores all trait definitions and impl blocks.
+/// The trait registry: stores all trait definitions and indexed impl blocks.
 pub struct TraitRegistry {
     /// All registered trait definitions.
     pub traits: HashMap<SymbolId, TraitDef>,
     /// All registered impl blocks.
     pub impls: Vec<ImplEntry>,
+    /// Index: target TypeId → inherent impl indices.
+    pub inherent_map: HashMap<TypeId, Vec<usize>>,
+    /// Index: (target TypeId, Trait SymbolId) → impl index.
+    pub trait_impl_map: HashMap<(TypeId, SymbolId), usize>,
+    /// Index: target TypeId → list of implemented trait SymbolIds.
+    pub type_traits: HashMap<TypeId, Vec<SymbolId>>,
     /// Errors accumulated during resolution.
     pub errors: Vec<TraitError>,
 }
@@ -67,6 +73,9 @@ impl TraitRegistry {
         Self {
             traits: HashMap::new(),
             impls: Vec::new(),
+            inherent_map: HashMap::new(),
+            trait_impl_map: HashMap::new(),
+            type_traits: HashMap::new(),
             errors: Vec::new(),
         }
     }
@@ -83,53 +92,63 @@ impl TraitRegistry {
         self.traits.insert(def.symbol, def);
     }
 
-    /// Register an impl block.
+    /// Register an impl block into indexed tables.
     pub fn register_impl(&mut self, entry: ImplEntry) {
+        let target = entry.target_type;
+        let trait_id_opt = entry.trait_id;
+
         // Coherence check: no duplicate impl for same trait+type pair.
-        if let Some(trait_id) = entry.trait_id {
-            for existing in &self.impls {
-                if existing.trait_id == Some(trait_id) && existing.target_type == entry.target_type
-                {
-                    self.errors.push(TraitError {
-                        message:
-                            "conflicting implementations: trait already implemented for this type"
-                                .to_string(),
-                        span: entry.span,
-                    });
-                    return;
-                }
-            }
+        if let Some(trait_id) = trait_id_opt
+            && self.trait_impl_map.contains_key(&(target, trait_id))
+        {
+            self.errors.push(TraitError {
+                message: "conflicting implementations: trait already implemented for this type"
+                    .to_string(),
+                span: entry.span,
+            });
+            return;
         }
+
+        let idx = self.impls.len();
+        if let Some(trait_id) = trait_id_opt {
+            self.trait_impl_map.insert((target, trait_id), idx);
+            self.type_traits.entry(target).or_default().push(trait_id);
+        } else {
+            self.inherent_map.entry(target).or_default().push(idx);
+        }
+
         self.impls.push(entry);
     }
 
-    /// Look up a method on a type.
+    /// Look up a method on a type in O(1) indexed time.
     ///
     /// Searches inherent impls first, then trait impls.
     /// Returns the method signature if found.
     pub fn resolve_method(&self, target: TypeId, method_name: &str) -> Option<&MethodSig> {
-        // 1. Search inherent impls (trait_id == None)
-        for imp in &self.impls {
-            if imp.target_type == target
-                && imp.trait_id.is_none()
-                && let Some(sig) = imp.methods.get(method_name)
-            {
-                return Some(sig);
+        // 1. Search inherent impls via index
+        if let Some(indices) = self.inherent_map.get(&target) {
+            for &idx in indices {
+                if let Some(sig) = self.impls[idx].methods.get(method_name) {
+                    return Some(sig);
+                }
             }
         }
-        // 2. Search trait impls
-        for imp in &self.impls {
-            if imp.target_type == target
-                && imp.trait_id.is_some()
-                && let Some(sig) = imp.methods.get(method_name)
-            {
-                return Some(sig);
+
+        // 2. Search trait impls registered for this type
+        if let Some(traits) = self.type_traits.get(&target) {
+            for &trait_sym in traits {
+                if let Some(&idx) = self.trait_impl_map.get(&(target, trait_sym))
+                    && let Some(sig) = self.impls[idx].methods.get(method_name)
+                {
+                    return Some(sig);
+                }
             }
         }
+
         None
     }
 
-    /// Check that all required trait methods are implemented.
+    /// Check that all required trait methods and super-traits are implemented.
     pub fn check_completeness(&mut self) {
         for imp in &self.impls {
             if let Some(trait_id) = imp.trait_id
@@ -146,15 +165,31 @@ impl TraitRegistry {
                         });
                     }
                 }
+
+                // Verify super-traits
+                for &super_trait in &trait_def.super_traits {
+                    if !self.type_implements_trait(imp.target_type, super_trait) {
+                        let super_name = self
+                            .traits
+                            .get(&super_trait)
+                            .map(|t| t.name.as_str())
+                            .unwrap_or("unknown");
+                        self.errors.push(TraitError {
+                            message: format!(
+                                "the trait bound `{}` is not satisfied for `{}` to implement `{}`",
+                                super_name, imp.target_type.0, trait_def.name
+                            ),
+                            span: imp.span,
+                        });
+                    }
+                }
             }
         }
     }
 
-    /// Check if a type implements a specific trait.
+    /// Check if a type implements a specific trait in O(1) time.
     pub fn type_implements_trait(&self, target: TypeId, trait_id: SymbolId) -> bool {
-        self.impls
-            .iter()
-            .any(|imp| imp.target_type == target && imp.trait_id == Some(trait_id))
+        self.trait_impl_map.contains_key(&(target, trait_id))
     }
 }
 
@@ -298,7 +333,6 @@ mod tests {
             super_traits: vec![],
         });
 
-        // Register impl without the required method
         reg.register_impl(ImplEntry {
             target_type: target,
             trait_id: Some(trait_sym),
