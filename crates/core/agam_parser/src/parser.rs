@@ -1072,8 +1072,16 @@ impl Parser {
 
         let mut stmts = Vec::new();
         while !self.at_end() {
-            if has_brace && self.peek_kind() == TokenKind::RBrace {
-                break;
+            if has_brace {
+                while self.peek_kind() == TokenKind::Indent
+                    || self.peek_kind() == TokenKind::Dedent
+                    || self.peek_kind() == TokenKind::Newline
+                {
+                    self.advance();
+                }
+                if self.peek_kind() == TokenKind::RBrace {
+                    break;
+                }
             }
             if has_indent && self.peek_kind() == TokenKind::Dedent {
                 break;
