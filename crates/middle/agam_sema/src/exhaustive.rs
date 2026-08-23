@@ -1,262 +1,634 @@
-//! Pattern exhaustiveness checking for `match` expressions.
+//! Maranget-style usefulness and exhaustiveness checking for `match`.
 //!
-//! Ensures that every possible value of the scrutinee type is covered
-//! by at least one match arm. Reports:
-//! - **Non-exhaustive patterns** — missing cases.
-//! - **Unreachable patterns** — arms that can never match.
+//! A row is useful when it matches a value not matched by preceding unguarded
+//! rows. Checking every arm finds unreachable arms; a wildcard query produces
+//! a missing-pattern witness.
 
-use agam_errors::Span;
-use std::collections::HashSet;
+use agam_errors::{Diagnostic, Label, NyayaProof, Span};
 
-/// A simplified pattern representation for exhaustiveness analysis.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimplePattern {
-    /// Wildcard `_` or variable binding — matches everything.
     Wildcard,
-    /// A specific boolean value.
     Bool(bool),
-    /// A specific integer literal.
     Int(i64),
-    /// A specific string literal.
     Str(String),
-    /// An enum variant by name.
     Variant(String),
-    /// A tuple of patterns.
     Tuple(Vec<SimplePattern>),
-    /// A constructor with fields (enum variant with data).
     Constructor {
         name: String,
         fields: Vec<SimplePattern>,
     },
 }
 
-/// The type shape being matched against (needed to know what's exhaustive).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantShape {
+    pub name: String,
+    pub fields: Vec<TypeShape>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeShape {
-    /// Boolean — exactly two values.
     Bool,
-    /// An enum with known variant names.
-    Enum { variants: Vec<String> },
-    /// Integer — unbounded, needs wildcard.
+    /// Compatibility form for fieldless enums.
+    Enum {
+        variants: Vec<String>,
+    },
+    EnumWithPayload {
+        variants: Vec<VariantShape>,
+    },
     Int,
-    /// String — unbounded, needs wildcard.
     Str,
-    /// Tuple of shapes.
     Tuple(Vec<TypeShape>),
-    /// Any other type — needs wildcard for exhaustiveness.
+    Struct {
+        name: String,
+        fields: Vec<TypeShape>,
+    },
     Other,
 }
 
-/// Error from exhaustiveness checking.
+/// A guarded arm is checked for reachability but does not cover later arms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternArm {
+    pub pattern: SimplePattern,
+    pub has_guard: bool,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExhaustivenessError {
     pub message: String,
     pub span: Span,
 }
 
-/// Check if a set of patterns exhaustively covers a type shape.
+#[derive(Debug, Clone)]
+pub struct ExhaustivenessReport {
+    pub unreachable_arms: Vec<usize>,
+    pub missing_witness: Option<SimplePattern>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Constructor {
+    Bool(bool),
+    Int(i64),
+    Str(String),
+    Variant { name: String, arity: usize },
+    Tuple(usize),
+    Struct { name: String, arity: usize },
+}
+
+impl Constructor {
+    fn arity(&self) -> usize {
+        match self {
+            Self::Bool(_) | Self::Int(_) | Self::Str(_) => 0,
+            Self::Variant { arity, .. } | Self::Tuple(arity) | Self::Struct { arity, .. } => *arity,
+        }
+    }
+}
+
+/// Run Maranget's P × Q usefulness matrix algorithm on one match expression.
+pub fn check_match_exhaustiveness(
+    arms: &[PatternArm],
+    shape: &TypeShape,
+    match_span: Span,
+) -> ExhaustivenessReport {
+    let mut matrix = Vec::new();
+    let mut unreachable_arms = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    for (index, arm) in arms.iter().enumerate() {
+        let query = vec![arm.pattern.clone()];
+        if useful(&matrix, &query, std::slice::from_ref(shape)).is_none() {
+            unreachable_arms.push(index);
+            diagnostics.push(unreachable_diagnostic(index, arm.span));
+        }
+        if !arm.has_guard {
+            matrix.push(query);
+        }
+    }
+
+    let missing_witness = useful(
+        &matrix,
+        &[SimplePattern::Wildcard],
+        std::slice::from_ref(shape),
+    )
+    .and_then(|mut values| values.pop());
+    if let Some(witness) = &missing_witness {
+        diagnostics.push(non_exhaustive_diagnostic(witness, match_span));
+    }
+    ExhaustivenessReport {
+        unreachable_arms,
+        missing_witness,
+        diagnostics,
+    }
+}
+
+/// Compatibility entry point for existing, unguarded callers.
 pub fn check_exhaustiveness(
     patterns: &[SimplePattern],
     shape: &TypeShape,
     span: Span,
 ) -> Vec<ExhaustivenessError> {
-    let mut errors = Vec::new();
-
-    // If any pattern is a wildcard, it's automatically exhaustive.
-    if patterns
+    let arms: Vec<PatternArm> = patterns
         .iter()
-        .any(|p| matches!(p, SimplePattern::Wildcard))
-    {
-        // Check for unreachable patterns after the wildcard.
-        let mut found_wildcard = false;
-        for (i, p) in patterns.iter().enumerate() {
-            if found_wildcard {
-                errors.push(ExhaustivenessError {
-                    message: format!("unreachable pattern (arm {})", i + 1),
-                    span,
-                });
-            }
-            if matches!(p, SimplePattern::Wildcard) {
-                found_wildcard = true;
-            }
-        }
-        return errors;
+        .cloned()
+        .map(|pattern| PatternArm {
+            pattern,
+            has_guard: false,
+            span,
+        })
+        .collect();
+    check_match_exhaustiveness(&arms, shape, span)
+        .diagnostics
+        .into_iter()
+        .map(|diagnostic| ExhaustivenessError {
+            message: diagnostic.message,
+            span,
+        })
+        .collect()
+}
+
+/// `useful(P, q)`: returns a witness for `q` outside matrix `P`.
+fn useful(
+    matrix: &[Vec<SimplePattern>],
+    query: &[SimplePattern],
+    types: &[TypeShape],
+) -> Option<Vec<SimplePattern>> {
+    if query.is_empty() {
+        return if matrix.is_empty() {
+            Some(Vec::new())
+        } else {
+            None
+        };
+    }
+    let (shape, tail_types) = types.split_first()?;
+    let (head, tail_query) = query.split_first()?;
+
+    if let Some(constructor) = constructor_for_pattern(head, shape) {
+        let mut q = specialize_pattern(head, &constructor, shape)?;
+        q.extend_from_slice(tail_query);
+        let mut specialized_types = constructor_field_types(&constructor, shape)?;
+        specialized_types.extend_from_slice(tail_types);
+        let witness = useful(
+            &specialize_matrix(matrix, &constructor, shape),
+            &q,
+            &specialized_types,
+        )?;
+        return rebuild_witness(constructor, witness);
+    }
+    if !matches!(head, SimplePattern::Wildcard) {
+        // An ill-shaped pattern matches no inhabitant of this column type.
+        return None;
     }
 
+    let constructors = constructors_for_type(shape);
+    if constructors.is_empty() {
+        let mut witness = useful(&default_matrix(matrix), tail_query, tail_types)?;
+        witness.insert(0, SimplePattern::Wildcard);
+        return Some(witness);
+    }
+    for constructor in constructors {
+        let mut q = wildcard_fields(constructor.arity());
+        q.extend_from_slice(tail_query);
+        let mut specialized_types = constructor_field_types(&constructor, shape)?;
+        specialized_types.extend_from_slice(tail_types);
+        if let Some(witness) = useful(
+            &specialize_matrix(matrix, &constructor, shape),
+            &q,
+            &specialized_types,
+        ) {
+            return rebuild_witness(constructor, witness);
+        }
+    }
+    None
+}
+
+fn constructors_for_type(shape: &TypeShape) -> Vec<Constructor> {
     match shape {
-        TypeShape::Bool => {
-            let covered: HashSet<bool> = patterns
-                .iter()
-                .filter_map(|p| {
-                    if let SimplePattern::Bool(v) = p {
-                        Some(*v)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if !covered.contains(&true) {
-                errors.push(ExhaustivenessError {
-                    message: "non-exhaustive pattern: missing `true`".into(),
-                    span,
-                });
-            }
-            if !covered.contains(&false) {
-                errors.push(ExhaustivenessError {
-                    message: "non-exhaustive pattern: missing `false`".into(),
-                    span,
-                });
-            }
-        }
-
-        TypeShape::Enum { variants } => {
-            let covered: HashSet<&str> = patterns
-                .iter()
-                .filter_map(|p| match p {
-                    SimplePattern::Variant(name) => Some(name.as_str()),
-                    SimplePattern::Constructor { name, .. } => Some(name.as_str()),
-                    _ => None,
-                })
-                .collect();
-
-            let missing: Vec<&str> = variants
-                .iter()
-                .filter(|v| !covered.contains(v.as_str()))
-                .map(|v| v.as_str())
-                .collect();
-
-            if !missing.is_empty() {
-                errors.push(ExhaustivenessError {
-                    message: format!(
-                        "non-exhaustive pattern: missing variant(s): {}",
-                        missing.join(", ")
-                    ),
-                    span,
-                });
-            }
-        }
-
-        TypeShape::Int | TypeShape::Str | TypeShape::Other => {
-            // These types are unbounded — without a wildcard, they're never exhaustive.
-            errors.push(ExhaustivenessError {
-                message: "non-exhaustive pattern: missing wildcard `_` or default case".into(),
-                span,
-            });
-        }
-
-        TypeShape::Tuple(_shapes) => {
-            // For tuples, each position must be independently exhaustive.
-            // Simple check: if no wildcard exists, report non-exhaustive.
-            errors.push(ExhaustivenessError {
-                message: "non-exhaustive pattern: tuple match missing wildcard `_`".into(),
-                span,
-            });
-        }
+        TypeShape::Bool => vec![Constructor::Bool(false), Constructor::Bool(true)],
+        TypeShape::Enum { variants } => variants
+            .iter()
+            .map(|name| Constructor::Variant {
+                name: name.clone(),
+                arity: 0,
+            })
+            .collect(),
+        TypeShape::EnumWithPayload { variants } => variants
+            .iter()
+            .map(|variant| Constructor::Variant {
+                name: variant.name.clone(),
+                arity: variant.fields.len(),
+            })
+            .collect(),
+        TypeShape::Tuple(fields) => vec![Constructor::Tuple(fields.len())],
+        TypeShape::Struct { name, fields } => vec![Constructor::Struct {
+            name: name.clone(),
+            arity: fields.len(),
+        }],
+        TypeShape::Int | TypeShape::Str | TypeShape::Other => Vec::new(),
     }
+}
 
-    // Check for duplicate/unreachable patterns.
-    let mut seen = HashSet::new();
-    for (i, p) in patterns.iter().enumerate() {
-        if !seen.insert(p) {
-            errors.push(ExhaustivenessError {
-                message: format!("unreachable pattern: duplicate arm {}", i + 1),
-                span,
-            });
+fn constructor_for_pattern(pattern: &SimplePattern, shape: &TypeShape) -> Option<Constructor> {
+    match (pattern, shape) {
+        (SimplePattern::Bool(value), TypeShape::Bool) => Some(Constructor::Bool(*value)),
+        (SimplePattern::Int(value), TypeShape::Int) => Some(Constructor::Int(*value)),
+        (SimplePattern::Str(value), TypeShape::Str) => Some(Constructor::Str(value.clone())),
+        (SimplePattern::Variant(name), TypeShape::Enum { variants })
+            if variants.iter().any(|variant| variant == name) =>
+        {
+            Some(Constructor::Variant {
+                name: name.clone(),
+                arity: 0,
+            })
         }
+        (SimplePattern::Variant(name), TypeShape::EnumWithPayload { variants }) => variants
+            .iter()
+            .find(|variant| variant.name == *name && variant.fields.is_empty())
+            .map(|variant| Constructor::Variant {
+                name: variant.name.clone(),
+                arity: 0,
+            }),
+        (SimplePattern::Constructor { name, fields }, TypeShape::EnumWithPayload { variants }) => {
+            variants
+                .iter()
+                .find(|variant| variant.name == *name && variant.fields.len() == fields.len())
+                .map(|variant| Constructor::Variant {
+                    name: variant.name.clone(),
+                    arity: variant.fields.len(),
+                })
+        }
+        (SimplePattern::Tuple(fields), TypeShape::Tuple(types)) if fields.len() == types.len() => {
+            Some(Constructor::Tuple(fields.len()))
+        }
+        (
+            SimplePattern::Constructor { name, fields },
+            TypeShape::Struct {
+                name: type_name,
+                fields: types,
+            },
+        ) if name == type_name && fields.len() == types.len() => Some(Constructor::Struct {
+            name: name.clone(),
+            arity: fields.len(),
+        }),
+        _ => None,
     }
+}
 
-    errors
+fn constructor_field_types(constructor: &Constructor, shape: &TypeShape) -> Option<Vec<TypeShape>> {
+    match (constructor, shape) {
+        (Constructor::Bool(_) | Constructor::Int(_) | Constructor::Str(_), _) => Some(Vec::new()),
+        (Constructor::Tuple(arity), TypeShape::Tuple(fields)) if *arity == fields.len() => {
+            Some(fields.clone())
+        }
+        (
+            Constructor::Struct { name, arity },
+            TypeShape::Struct {
+                name: type_name,
+                fields,
+            },
+        ) if name == type_name && *arity == fields.len() => Some(fields.clone()),
+        (Constructor::Variant { name, arity }, TypeShape::Enum { variants })
+            if *arity == 0 && variants.iter().any(|variant| variant == name) =>
+        {
+            Some(Vec::new())
+        }
+        (Constructor::Variant { name, arity }, TypeShape::EnumWithPayload { variants }) => variants
+            .iter()
+            .find(|variant| variant.name == *name && variant.fields.len() == *arity)
+            .map(|variant| variant.fields.clone()),
+        _ => None,
+    }
+}
+
+fn specialize_matrix(
+    matrix: &[Vec<SimplePattern>],
+    constructor: &Constructor,
+    shape: &TypeShape,
+) -> Vec<Vec<SimplePattern>> {
+    matrix
+        .iter()
+        .filter_map(|row| {
+            let (head, tail) = row.split_first()?;
+            let mut specialized = specialize_pattern(head, constructor, shape)?;
+            specialized.extend_from_slice(tail);
+            Some(specialized)
+        })
+        .collect()
+}
+
+fn specialize_pattern(
+    pattern: &SimplePattern,
+    constructor: &Constructor,
+    shape: &TypeShape,
+) -> Option<Vec<SimplePattern>> {
+    if matches!(pattern, SimplePattern::Wildcard) {
+        return Some(wildcard_fields(constructor.arity()));
+    }
+    if constructor_for_pattern(pattern, shape).as_ref() != Some(constructor) {
+        return None;
+    }
+    match pattern {
+        SimplePattern::Tuple(fields) | SimplePattern::Constructor { fields, .. } => {
+            Some(fields.clone())
+        }
+        SimplePattern::Bool(_)
+        | SimplePattern::Int(_)
+        | SimplePattern::Str(_)
+        | SimplePattern::Variant(_) => Some(Vec::new()),
+        SimplePattern::Wildcard => Some(wildcard_fields(constructor.arity())),
+    }
+}
+
+fn default_matrix(matrix: &[Vec<SimplePattern>]) -> Vec<Vec<SimplePattern>> {
+    matrix
+        .iter()
+        .filter_map(|row| {
+            let (head, tail) = row.split_first()?;
+            if matches!(head, SimplePattern::Wildcard) {
+                Some(tail.to_vec())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn wildcard_fields(arity: usize) -> Vec<SimplePattern> {
+    std::iter::repeat_n(SimplePattern::Wildcard, arity).collect()
+}
+
+fn rebuild_witness(
+    constructor: Constructor,
+    values: Vec<SimplePattern>,
+) -> Option<Vec<SimplePattern>> {
+    let arity = constructor.arity();
+    if values.len() < arity {
+        return None;
+    }
+    let mut values = values.into_iter();
+    let fields: Vec<SimplePattern> = values.by_ref().take(arity).collect();
+    let head = match constructor {
+        Constructor::Bool(value) => SimplePattern::Bool(value),
+        Constructor::Int(value) => SimplePattern::Int(value),
+        Constructor::Str(value) => SimplePattern::Str(value),
+        Constructor::Variant { name, arity: 0 } => SimplePattern::Variant(name),
+        Constructor::Variant { name, .. } | Constructor::Struct { name, .. } => {
+            SimplePattern::Constructor { name, fields }
+        }
+        Constructor::Tuple(_) => SimplePattern::Tuple(fields),
+    };
+    let mut rebuilt = vec![head];
+    rebuilt.extend(values);
+    Some(rebuilt)
+}
+
+fn non_exhaustive_diagnostic(witness: &SimplePattern, span: Span) -> Diagnostic {
+    let value = render_pattern(witness);
+    Diagnostic::error(
+        "E0004",
+        format!("non-exhaustive match: missing pattern `{value}`"),
+    )
+    .with_label(Label::primary(
+        span,
+        "this match does not cover every possible value",
+    ))
+    .with_help(format!("add an arm for `{value}` or add a final `_` arm"))
+    .with_proof(NyayaProof::new(
+        format!("the usefulness matrix produced uncovered value `{value}`"),
+        "no preceding unguarded arm matches that value",
+        Some(format!("add `{value} => ...` or `_ => ...`")),
+        "a match expression must cover every value of its scrutinee type",
+    ))
+}
+
+fn unreachable_diagnostic(index: usize, span: Span) -> Diagnostic {
+    let arm = index + 1;
+    Diagnostic::warning("W0004", format!("unreachable match arm {arm}"))
+        .with_label(Label::primary(
+            span,
+            "this pattern is covered by earlier unguarded arms",
+        ))
+        .with_proof(NyayaProof::new(
+            format!("arm {arm} has no useful witness"),
+            "the preceding unguarded matrix covers every value matched by this arm",
+            Some("remove this arm or make an earlier arm more specific"),
+            "each reachable match arm must match a value not matched by earlier unguarded arms",
+        ))
+}
+
+pub fn render_pattern(pattern: &SimplePattern) -> String {
+    match pattern {
+        SimplePattern::Wildcard => "_".into(),
+        SimplePattern::Bool(value) => value.to_string(),
+        SimplePattern::Int(value) => value.to_string(),
+        SimplePattern::Str(value) => format!("{value:?}"),
+        SimplePattern::Variant(name) => name.clone(),
+        SimplePattern::Tuple(fields) => format!(
+            "({})",
+            fields
+                .iter()
+                .map(render_pattern)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        SimplePattern::Constructor { name, fields } => format!(
+            "{}({})",
+            name,
+            fields
+                .iter()
+                .map(render_pattern)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn dummy_span() -> Span {
+    fn span() -> Span {
         Span::dummy()
     }
-
-    #[test]
-    fn test_bool_exhaustive() {
-        let patterns = vec![SimplePattern::Bool(true), SimplePattern::Bool(false)];
-        let errors = check_exhaustiveness(&patterns, &TypeShape::Bool, dummy_span());
-        assert!(errors.is_empty(), "errors: {:?}", errors);
+    fn arm(pattern: SimplePattern) -> PatternArm {
+        PatternArm {
+            pattern,
+            has_guard: false,
+            span: span(),
+        }
+    }
+    fn option_of(inner: TypeShape) -> TypeShape {
+        TypeShape::EnumWithPayload {
+            variants: vec![
+                VariantShape {
+                    name: "None".into(),
+                    fields: Vec::new(),
+                },
+                VariantShape {
+                    name: "Some".into(),
+                    fields: vec![inner],
+                },
+            ],
+        }
     }
 
     #[test]
-    fn test_bool_missing_true() {
-        let patterns = vec![SimplePattern::Bool(false)];
-        let errors = check_exhaustiveness(&patterns, &TypeShape::Bool, dummy_span());
-        assert!(errors.iter().any(|e| e.message.contains("missing `true`")));
+    fn bool_is_exhaustive() {
+        let report = check_match_exhaustiveness(
+            &[
+                arm(SimplePattern::Bool(true)),
+                arm(SimplePattern::Bool(false)),
+            ],
+            &TypeShape::Bool,
+            span(),
+        );
+        assert!(report.missing_witness.is_none());
+        assert!(report.unreachable_arms.is_empty());
     }
 
     #[test]
-    fn test_bool_missing_false() {
-        let patterns = vec![SimplePattern::Bool(true)];
-        let errors = check_exhaustiveness(&patterns, &TypeShape::Bool, dummy_span());
-        assert!(errors.iter().any(|e| e.message.contains("missing `false`")));
-    }
-
-    #[test]
-    fn test_enum_exhaustive() {
-        let shape = TypeShape::Enum {
-            variants: vec!["None".into(), "Some".into()],
-        };
-        let patterns = vec![
-            SimplePattern::Variant("None".into()),
-            SimplePattern::Variant("Some".into()),
-        ];
-        let errors = check_exhaustiveness(&patterns, &shape, dummy_span());
-        assert!(errors.is_empty(), "errors: {:?}", errors);
-    }
-
-    #[test]
-    fn test_enum_missing_variant() {
-        let shape = TypeShape::Enum {
-            variants: vec!["Red".into(), "Green".into(), "Blue".into()],
-        };
-        let patterns = vec![
-            SimplePattern::Variant("Red".into()),
-            SimplePattern::Variant("Green".into()),
-        ];
-        let errors = check_exhaustiveness(&patterns, &shape, dummy_span());
-        assert!(errors.iter().any(|e| e.message.contains("Blue")));
-    }
-
-    #[test]
-    fn test_wildcard_is_exhaustive() {
-        let patterns = vec![SimplePattern::Wildcard];
-        let errors = check_exhaustiveness(&patterns, &TypeShape::Int, dummy_span());
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn test_unreachable_after_wildcard() {
-        let patterns = vec![SimplePattern::Wildcard, SimplePattern::Bool(true)];
-        let errors = check_exhaustiveness(&patterns, &TypeShape::Bool, dummy_span());
-        assert!(errors.iter().any(|e| e.message.contains("unreachable")));
-    }
-
-    #[test]
-    fn test_int_without_wildcard() {
-        let patterns = vec![SimplePattern::Int(1), SimplePattern::Int(2)];
-        let errors = check_exhaustiveness(&patterns, &TypeShape::Int, dummy_span());
-        assert!(
-            errors
-                .iter()
-                .any(|e| e.message.contains("missing wildcard"))
+    fn nested_tuple_produces_a_concrete_witness() {
+        let shape = TypeShape::Tuple(vec![TypeShape::Bool, option_of(TypeShape::Bool)]);
+        let report = check_match_exhaustiveness(
+            &[
+                arm(SimplePattern::Tuple(vec![
+                    SimplePattern::Bool(false),
+                    SimplePattern::Wildcard,
+                ])),
+                arm(SimplePattern::Tuple(vec![
+                    SimplePattern::Bool(true),
+                    SimplePattern::Constructor {
+                        name: "Some".into(),
+                        fields: vec![SimplePattern::Wildcard],
+                    },
+                ])),
+            ],
+            &shape,
+            span(),
+        );
+        assert_eq!(
+            report.missing_witness.as_ref().map(render_pattern),
+            Some("(true, None)".into())
         );
     }
 
     #[test]
-    fn test_duplicate_pattern() {
-        let patterns = vec![
-            SimplePattern::Bool(true),
-            SimplePattern::Bool(true),
-            SimplePattern::Bool(false),
-        ];
-        let errors = check_exhaustiveness(&patterns, &TypeShape::Bool, dummy_span());
-        assert!(errors.iter().any(|e| e.message.contains("duplicate")));
+    fn deep_enum_payload_requires_nested_case() {
+        let shape = option_of(TypeShape::Tuple(vec![
+            TypeShape::Bool,
+            option_of(TypeShape::Bool),
+        ]));
+        let report = check_match_exhaustiveness(
+            &[
+                arm(SimplePattern::Variant("None".into())),
+                arm(SimplePattern::Constructor {
+                    name: "Some".into(),
+                    fields: vec![SimplePattern::Tuple(vec![
+                        SimplePattern::Wildcard,
+                        SimplePattern::Constructor {
+                            name: "Some".into(),
+                            fields: vec![SimplePattern::Wildcard],
+                        },
+                    ])],
+                }),
+            ],
+            &shape,
+            span(),
+        );
+        assert_eq!(
+            report.missing_witness.as_ref().map(render_pattern),
+            Some("Some((false, None))".into())
+        );
+    }
+
+    #[test]
+    fn guard_does_not_cover_values() {
+        let guarded = PatternArm {
+            pattern: SimplePattern::Wildcard,
+            has_guard: true,
+            span: span(),
+        };
+        let report = check_match_exhaustiveness(&[guarded], &TypeShape::Bool, span());
+        assert_eq!(report.missing_witness, Some(SimplePattern::Bool(false)));
+    }
+
+    #[test]
+    fn guarded_arm_does_not_make_following_arm_redundant() {
+        let guarded = PatternArm {
+            pattern: SimplePattern::Bool(true),
+            has_guard: true,
+            span: span(),
+        };
+        let report = check_match_exhaustiveness(
+            &[
+                guarded,
+                arm(SimplePattern::Bool(true)),
+                arm(SimplePattern::Bool(false)),
+            ],
+            &TypeShape::Bool,
+            span(),
+        );
+        assert!(report.unreachable_arms.is_empty());
+        assert!(report.missing_witness.is_none());
+    }
+
+    #[test]
+    fn redundant_nested_arm_is_detected() {
+        let report = check_match_exhaustiveness(
+            &[
+                arm(SimplePattern::Constructor {
+                    name: "Some".into(),
+                    fields: vec![SimplePattern::Wildcard],
+                }),
+                arm(SimplePattern::Constructor {
+                    name: "Some".into(),
+                    fields: vec![SimplePattern::Bool(true)],
+                }),
+                arm(SimplePattern::Variant("None".into())),
+            ],
+            &option_of(TypeShape::Bool),
+            span(),
+        );
+        assert_eq!(report.unreachable_arms, vec![1]);
+        assert!(report.missing_witness.is_none());
+    }
+
+    #[test]
+    fn struct_product_space_is_checked() {
+        let shape = TypeShape::Struct {
+            name: "Point".into(),
+            fields: vec![TypeShape::Bool, TypeShape::Bool],
+        };
+        let report = check_match_exhaustiveness(
+            &[
+                arm(SimplePattern::Constructor {
+                    name: "Point".into(),
+                    fields: vec![SimplePattern::Bool(false), SimplePattern::Wildcard],
+                }),
+                arm(SimplePattern::Constructor {
+                    name: "Point".into(),
+                    fields: vec![SimplePattern::Bool(true), SimplePattern::Bool(false)],
+                }),
+            ],
+            &shape,
+            span(),
+        );
+        assert_eq!(
+            report.missing_witness.as_ref().map(render_pattern),
+            Some("Point(true, true)".into())
+        );
+    }
+
+    #[test]
+    fn diagnostics_include_nyaya_proof() {
+        let report = check_match_exhaustiveness(&[], &TypeShape::Bool, span());
+        assert_eq!(report.diagnostics.len(), 1);
+        assert!(report.diagnostics[0].proof.is_some());
+    }
+
+    #[test]
+    fn compatibility_api_reports_witness() {
+        let errors = check_exhaustiveness(&[SimplePattern::Bool(true)], &TypeShape::Bool, span());
+        assert!(errors.iter().any(|error| error.message.contains("false")));
     }
 }

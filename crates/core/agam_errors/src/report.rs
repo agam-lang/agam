@@ -2,10 +2,12 @@
 //!
 //! Produces `rustc`-style error output with colored source snippets,
 //! line numbers, underlined error locations, and formal 4-part Nyāya proofs.
+//!
+//! Defensively structured to prevent any panics on out-of-bounds spans,
+//! missing source files, or mid-sequence multi-byte UTF-8 boundaries.
 
 use crate::diagnostic::{Diagnostic, DiagnosticLevel};
-use crate::span::SourceFile;
-use crate::span::SourceId;
+use crate::span::{SourceFile, SourceId};
 use std::collections::HashMap;
 
 /// Collects diagnostics and renders them for the user.
@@ -73,67 +75,86 @@ impl DiagnosticEmitter {
         };
 
         // Error code
-        let code_str = diag
-            .code
-            .as_ref()
-            .map(|c| format!("[{}]", c))
-            .unwrap_or_default();
+        let code_str = match &diag.code {
+            Some(c) => format!("[{c}]"),
+            None => String::new(),
+        };
 
         self.render_line(&format!(
             "{}{}\x1b[1;37m: {}\x1b[0m",
             level_str, code_str, diag.message
         ));
 
-        // Render each label
+        // Render each label defensively
         for label in &diag.labels {
             if label.span.is_dummy() {
                 continue;
             }
 
-            if let Some(source) = self.sources.get(&label.span.source_id) {
-                let (line, col) = source.offset_to_line_col(label.span.start as usize);
-                let source_path = source.path.clone();
-                let line_text = source.line_text(line).to_string();
-                let line_num = line + 1;
-                let col_num = col + 1;
+            let mut lines_to_render = Vec::new();
+            match self.sources.get(&label.span.source_id) {
+                Some(source) => {
+                    let val_span = source.validate_span(label.span);
+                    let (line, col) = source.offset_to_line_col(val_span.start_byte as usize);
+                    let source_path = source.path.clone();
+                    let line_text = source.line_text(line).to_string();
+                    let line_num = line + 1;
+                    let col_num = col + 1;
 
-                // File location
-                self.render_line(&format!(
-                    " \x1b[1;34m-->\x1b[0m {}:{}:{}",
-                    source_path, line_num, col_num
-                ));
+                    // File location
+                    lines_to_render.push(format!(
+                        " \x1b[1;34m-->\x1b[0m {}:{}:{}",
+                        source_path, line_num, col_num
+                    ));
 
-                // Line number gutter width
-                let gutter_width = format!("{}", line_num).len();
+                    // Line number gutter width
+                    let gutter_width = format!("{}", line_num).len();
 
-                // Empty gutter line
-                self.render_line(&format!(" {:>gutter_width$} \x1b[1;34m|\x1b[0m", ""));
+                    // Empty gutter line
+                    lines_to_render.push(format!(" {:>gutter_width$} \x1b[1;34m|\x1b[0m", ""));
 
-                // Source line
-                self.render_line(&format!(
-                    " \x1b[1;34m{:>gutter_width$}\x1b[0m \x1b[1;34m|\x1b[0m {}",
-                    line_num, line_text
-                ));
+                    // Source line
+                    lines_to_render.push(format!(
+                        " \x1b[1;34m{:>gutter_width$}\x1b[0m \x1b[1;34m|\x1b[0m {}",
+                        line_num, line_text
+                    ));
 
-                // Underline
-                let span_len = (label.span.end - label.span.start).max(1) as usize;
-                let padding = " ".repeat(col);
-                let underline_char = if label.is_primary { '^' } else { '-' };
-                let color = if label.is_primary {
-                    "\x1b[1;31m"
-                } else {
-                    "\x1b[1;34m"
-                };
-                let underline = std::iter::repeat_n(
-                    underline_char,
-                    span_len.min(line_text.len().saturating_sub(col)),
-                )
-                .collect::<String>();
+                    // Underline calculation based on character counts
+                    let line_char_count = line_text.chars().count();
+                    let safe_col = col.min(line_char_count);
+                    let span_slice = val_span.slice(&source.source);
+                    let span_char_len = span_slice.chars().count().max(1);
+                    let underline_len = span_char_len
+                        .min(line_char_count.saturating_sub(safe_col))
+                        .max(1);
 
-                self.render_line(&format!(
-                    " {:>gutter_width$} \x1b[1;34m|\x1b[0m {}{}{} {}\x1b[0m",
-                    "", padding, color, underline, label.message
-                ));
+                    let padding = " ".repeat(safe_col);
+                    let underline_char = if label.is_primary { '^' } else { '-' };
+                    let color = if label.is_primary {
+                        "\x1b[1;31m"
+                    } else {
+                        "\x1b[1;34m"
+                    };
+                    let underline =
+                        std::iter::repeat_n(underline_char, underline_len).collect::<String>();
+
+                    lines_to_render.push(format!(
+                        " {:>gutter_width$} \x1b[1;34m|\x1b[0m {}{}{} {}\x1b[0m",
+                        "", padding, color, underline, label.message
+                    ));
+                }
+                None => {
+                    // ICE-safe fallback label when source file is unregistered or missing
+                    lines_to_render.push(format!(
+                        " \x1b[1;34m-->\x1b[0m <unknown source #{}>:{}..{} \x1b[1;33m(source text unavailable)\x1b[0m",
+                        label.span.source_id.0, label.span.start, label.span.end
+                    ));
+                    lines_to_render.push(format!("   \x1b[1;34m|\x1b[0m {}", label.message));
+                }
+            }
+
+            for line in lines_to_render {
+                self.render_line(&line);
             }
         }
 
@@ -326,5 +347,43 @@ mod tests {
         assert!(rendered.contains("change declaration to `let mut x`"));
         assert!(rendered.contains("[Law / Nigamana]"));
         assert!(rendered.contains("variables in Agam are immutable by default"));
+    }
+
+    #[test]
+    fn test_missing_source_ice_safe_fallback() {
+        let mut emitter = DiagnosticEmitter::buffered();
+        // Label refers to SourceId(999) which is not in emitter.sources
+        let diag = Diagnostic::error("E0999", "ghost file error").with_label(Label::primary(
+            Span::new(SourceId(999), 10, 20),
+            "unmapped span locus",
+        ));
+
+        emitter.emit(diag);
+        let output = emitter.take_rendered_output();
+        assert!(output.contains("<unknown source #999>:10..20"));
+        assert!(output.contains("source text unavailable"));
+        assert!(output.contains("unmapped span locus"));
+    }
+
+    #[test]
+    fn test_multibyte_utf8_corrupt_span_rendering() {
+        let mut emitter = DiagnosticEmitter::buffered();
+        emitter.add_source(SourceFile::new(
+            SourceId(1),
+            "indic.agam".into(),
+            "let x = \"नमस्ते Agam\";\n".into(),
+        ));
+
+        // Corrupted span pointing mid-byte into Devanagari sequence and past line end
+        let diag = Diagnostic::error("E0100", "unicode boundary test").with_label(Label::primary(
+            Span::new(SourceId(1), 10, 500),
+            "invalid mid-byte slice",
+        ));
+
+        emitter.emit(diag);
+        let output = emitter.take_rendered_output();
+        assert!(output.contains("indic.agam:1:"));
+        assert!(output.contains("नमस्ते Agam"));
+        assert!(output.contains("invalid mid-byte slice"));
     }
 }
