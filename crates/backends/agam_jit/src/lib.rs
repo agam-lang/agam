@@ -53,12 +53,12 @@ impl JitType {
     fn clif_type(self, pointer_type: ClifType) -> ClifType {
         match self {
             JitType::Int { bits, .. } => match bits {
-                8 => types::I8,
-                16 => types::I16,
-                32 => types::I32,
-                64 => types::I64,
-                128 => types::I128,
-                _ => panic!("JIT backend does not support {bits}-bit integers"),
+                0..=8 => types::I8,
+                9..=16 => types::I16,
+                17..=32 => types::I32,
+                33..=64 => types::I64,
+                65..=128 => types::I128,
+                _ => types::I64,
             },
             JitType::Float32 => types::F32,
             JitType::Float64 => types::F64,

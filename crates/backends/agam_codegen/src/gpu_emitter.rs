@@ -1071,9 +1071,18 @@ fn emit_gpu_intrinsic(
             }
         }
         GpuIntrinsicKind::WarpReduceAdd => {
-            // Simplified fallback if it's an intrinsic directly mapped, though real NVPTX requires a loop
-            write!(out, "  ; WARN: WarpReduceAdd mapped to stub\n").unwrap();
-            write!(out, "  %v{} = add i32 0, 0\n", id).unwrap();
+            let val = args.first().map(|v| v.0).unwrap_or(0);
+            writeln!(out, "  ; Warp butterfly reduction across 32 threads").unwrap();
+            writeln!(out, "  %v{id}_s16 = call i32 @llvm.nvvm.shfl.sync.down.i32(i32 -1, i32 %v{val}, i32 16, i32 31)").unwrap();
+            writeln!(out, "  %v{id}_r16 = add i32 %v{val}, %v{id}_s16").unwrap();
+            writeln!(out, "  %v{id}_s8 = call i32 @llvm.nvvm.shfl.sync.down.i32(i32 -1, i32 %v{id}_r16, i32 8, i32 31)").unwrap();
+            writeln!(out, "  %v{id}_r8 = add i32 %v{id}_r16, %v{id}_s8").unwrap();
+            writeln!(out, "  %v{id}_s4 = call i32 @llvm.nvvm.shfl.sync.down.i32(i32 -1, i32 %v{id}_r8, i32 4, i32 31)").unwrap();
+            writeln!(out, "  %v{id}_r4 = add i32 %v{id}_r8, %v{id}_s4").unwrap();
+            writeln!(out, "  %v{id}_s2 = call i32 @llvm.nvvm.shfl.sync.down.i32(i32 -1, i32 %v{id}_r4, i32 2, i32 31)").unwrap();
+            writeln!(out, "  %v{id}_r2 = add i32 %v{id}_r4, %v{id}_s2").unwrap();
+            writeln!(out, "  %v{id}_s1 = call i32 @llvm.nvvm.shfl.sync.down.i32(i32 -1, i32 %v{id}_r2, i32 1, i32 31)").unwrap();
+            writeln!(out, "  %v{id} = add i32 %v{id}_r2, %v{id}_s1").unwrap();
         }
         GpuIntrinsicKind::BallotSync => {
             if args.len() == 2 {
