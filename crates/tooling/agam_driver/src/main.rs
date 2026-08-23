@@ -16733,9 +16733,21 @@ struct Point { x: f64, y: f64 }
         let parser_agm = crates_dir.join("core/agam_parser/self_host/parser.agm");
         let sema_agm = crates_dir.join("middle/agam_sema/self_host/type_check.agm");
 
-        assert!(lexer_agm.exists(), "Self-hosting stage-0 Lexer must exist at {:?}", lexer_agm);
-        assert!(parser_agm.exists(), "Self-hosting stage-0 Parser must exist at {:?}", parser_agm);
-        assert!(sema_agm.exists(), "Self-hosting stage-0 Type Checker must exist at {:?}", sema_agm);
+        assert!(
+            lexer_agm.exists(),
+            "Self-hosting stage-0 Lexer must exist at {:?}",
+            lexer_agm
+        );
+        assert!(
+            parser_agm.exists(),
+            "Self-hosting stage-0 Parser must exist at {:?}",
+            parser_agm
+        );
+        assert!(
+            sema_agm.exists(),
+            "Self-hosting stage-0 Type Checker must exist at {:?}",
+            sema_agm
+        );
 
         let lexer_src = fs::read_to_string(&lexer_agm).expect("read lexer.agm");
         let parser_src = fs::read_to_string(&parser_agm).expect("read parser.agm");
