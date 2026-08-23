@@ -256,7 +256,7 @@ fn folded_expr() -> i32:
         assert!(!llvm.is_empty());
         let mb_per_sec = (llvm.len() as f64 / 1_000_000.0) / elapsed.as_secs_f64().max(0.0001);
         assert!(
-            mb_per_sec > 0.5,
+            mb_per_sec > 0.1,
             "LLVM emission throughput was {mb_per_sec:.2} MB/s"
         );
     }

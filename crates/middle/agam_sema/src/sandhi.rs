@@ -8,6 +8,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::symbol::{SymbolId, TypeId};
 use crate::traits::TraitRegistry;
+use agam_smt::solver::SmtSolver;
 
 /// A canonical trait bound conjunction representing a node in the trait lattice.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -261,6 +262,226 @@ impl SandhiGraph {
     }
 }
 
+/// SMT-backed verification engine for global Type Sandhi lattice coherence.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SandhiSmtVerifier;
+
+impl SandhiSmtVerifier {
+    /// Verify global trait lattice coherence and supertrait acyclicity using SMT logic.
+    pub fn verify_coherence(graph: &SandhiGraph) -> bool {
+        let mut solver = agam_smt::solver::Z3Solver::new();
+
+        // 1. Declare an integer rank variable for each trait symbol
+        for &sym in graph.nodes.keys() {
+            solver.declare_int(&format!("trait_rank_{}", sym.0));
+        }
+
+        // 2. For every direct supertrait edge Child -> Parent, assert rank(Child) > rank(Parent)
+        for (&sym, node) in &graph.nodes {
+            for &super_id in &node.direct_supertraits {
+                solver.assert(agam_smt::solver::Constraint::Gt(
+                    Box::new(agam_smt::solver::Constraint::Var(format!(
+                        "trait_rank_{}",
+                        sym.0
+                    ))),
+                    Box::new(agam_smt::solver::Constraint::Var(format!(
+                        "trait_rank_{}",
+                        super_id.0
+                    ))),
+                ));
+            }
+        }
+
+        // 3. Check SAT: If SAT, there exists a valid non-cyclic topological ranking
+        match solver.check_sat() {
+            agam_smt::solver::SolverResult::Sat => true,
+            agam_smt::solver::SolverResult::Unsat | agam_smt::solver::SolverResult::Unknown => {
+                false
+            }
+        }
+    }
+}
+
+/// Maximum allowed depth of nested generic monomorphization to prevent infinite expansion.
+pub const MAX_MONOMORPHIZATION_DEPTH: usize = 64;
+/// Maximum total instantiations per compilation unit.
+pub const MAX_INSTANTIATION_COUNT: usize = 4096;
+
+/// An instantiated node in the monomorphization dependency graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonomorphizationNode {
+    pub instance_id: String,
+    pub symbol_id: SymbolId,
+    pub type_args: Vec<TypeId>,
+    pub callers: Vec<String>,
+    pub callees: Vec<String>,
+    pub depth: usize,
+}
+
+/// Errors occurring during polymorphic monomorphization graph resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MonomorphizationError {
+    RecursionLimitExceeded { instance_id: String, depth: usize },
+    InstantiationLimitExceeded { count: usize },
+    CycleDetected { cycle: Vec<String> },
+}
+
+/// Directed graph managing concrete instantiations of generic definitions.
+#[derive(Debug, Clone, Default)]
+pub struct MonomorphizationGraph {
+    pub instances: HashMap<String, MonomorphizationNode>,
+    pub roots: Vec<String>,
+}
+
+impl MonomorphizationGraph {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Compute canonical instance identifier string from SymbolId and concrete TypeIds.
+    pub fn instance_id(symbol_id: SymbolId, type_args: &[TypeId]) -> String {
+        let args_str: Vec<String> = type_args.iter().map(|t| format!("T{}", t.0)).collect();
+        format!("sym_{}_{}", symbol_id.0, args_str.join("_"))
+    }
+
+    /// Register a root entry-point function or struct instantiation.
+    pub fn add_root(
+        &mut self,
+        symbol_id: SymbolId,
+        type_args: Vec<TypeId>,
+    ) -> Result<String, MonomorphizationError> {
+        let id = Self::instance_id(symbol_id, &type_args);
+        if !self.instances.contains_key(&id) {
+            if self.instances.len() >= MAX_INSTANTIATION_COUNT {
+                return Err(MonomorphizationError::InstantiationLimitExceeded {
+                    count: self.instances.len(),
+                });
+            }
+            self.instances.insert(
+                id.clone(),
+                MonomorphizationNode {
+                    instance_id: id.clone(),
+                    symbol_id,
+                    type_args,
+                    callers: Vec::new(),
+                    callees: Vec::new(),
+                    depth: 0,
+                },
+            );
+            self.roots.push(id.clone());
+        }
+        Ok(id)
+    }
+
+    /// Record an instantiation invoked by an existing caller.
+    pub fn instantiate(
+        &mut self,
+        caller_id: Option<&str>,
+        symbol_id: SymbolId,
+        type_args: Vec<TypeId>,
+    ) -> Result<String, MonomorphizationError> {
+        let id = Self::instance_id(symbol_id, &type_args);
+
+        let caller_depth = if let Some(caller) = caller_id {
+            self.instances.get(caller).map(|n| n.depth).unwrap_or(0)
+        } else {
+            0
+        };
+
+        let next_depth = caller_depth + 1;
+        if next_depth > MAX_MONOMORPHIZATION_DEPTH {
+            return Err(MonomorphizationError::RecursionLimitExceeded {
+                instance_id: id,
+                depth: next_depth,
+            });
+        }
+
+        if let Some(node) = self.instances.get_mut(&id) {
+            if let Some(caller) = caller_id
+                && !node.callers.iter().any(|c| c == caller)
+            {
+                node.callers.push(caller.to_string());
+            }
+        } else {
+            if self.instances.len() >= MAX_INSTANTIATION_COUNT {
+                return Err(MonomorphizationError::InstantiationLimitExceeded {
+                    count: self.instances.len(),
+                });
+            }
+
+            let callers = if let Some(caller) = caller_id {
+                vec![caller.to_string()]
+            } else {
+                Vec::new()
+            };
+
+            self.instances.insert(
+                id.clone(),
+                MonomorphizationNode {
+                    instance_id: id.clone(),
+                    symbol_id,
+                    type_args,
+                    callers,
+                    callees: Vec::new(),
+                    depth: next_depth,
+                },
+            );
+        }
+
+        if let Some(caller) = caller_id
+            && let Some(caller_node) = self.instances.get_mut(caller)
+            && !caller_node.callees.iter().any(|c| c == &id)
+        {
+            caller_node.callees.push(id.clone());
+        }
+
+        Ok(id)
+    }
+
+    /// Compute reverse topological monomorphization order (leaves first, roots last).
+    pub fn compute_compilation_order(&self) -> Result<Vec<String>, MonomorphizationError> {
+        let mut in_degrees: HashMap<&str, usize> = HashMap::new();
+        for id in self.instances.keys() {
+            in_degrees.insert(id.as_str(), 0);
+        }
+
+        for node in self.instances.values() {
+            for callee in &node.callees {
+                if let Some(entry) = in_degrees.get_mut(callee.as_str()) {
+                    *entry += 1;
+                }
+            }
+        }
+
+        let mut queue: Vec<&str> = in_degrees
+            .iter()
+            .filter(|(_, deg)| **deg == 0)
+            .map(|(&id, _)| id)
+            .collect();
+
+        let mut order = Vec::new();
+        while let Some(current) = queue.pop() {
+            order.push(current.to_string());
+            if let Some(node) = self.instances.get(current) {
+                for callee in &node.callees {
+                    if let Some(deg) = in_degrees.get_mut(callee.as_str()) {
+                        *deg = deg.saturating_sub(1);
+                        if *deg == 0 {
+                            queue.push(callee.as_str());
+                        }
+                    }
+                }
+            }
+        }
+
+        if order.len() < self.instances.len() {
+            return Err(MonomorphizationError::CycleDetected { cycle: order });
+        }
+
+        Ok(order)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,5 +599,85 @@ mod tests {
 
         let cycles = graph.detect_cycles();
         assert!(!cycles.is_empty());
+    }
+
+    #[test]
+    fn test_sandhi_smt_coherence_verification() {
+        let mut registry = TraitRegistry::new();
+        let t1 = SymbolId(1);
+        let t2 = SymbolId(2);
+
+        registry.register_trait(TraitDef {
+            symbol: t1,
+            name: "Child".to_string(),
+            methods: HashMap::new(),
+            super_traits: vec![t2],
+        });
+        registry.register_trait(TraitDef {
+            symbol: t2,
+            name: "Parent".to_string(),
+            methods: HashMap::new(),
+            super_traits: vec![],
+        });
+
+        let mut graph = SandhiGraph::new();
+        graph.build_from_registry(&registry);
+
+        assert!(SandhiSmtVerifier::verify_coherence(&graph));
+    }
+
+    #[test]
+    fn test_monomorphization_graph_instantiation_and_ordering() {
+        let mut mono = MonomorphizationGraph::new();
+        let sym_main = SymbolId(1);
+        let sym_helper = SymbolId(2);
+        let sym_leaf = SymbolId(3);
+
+        let ty_i32 = TypeId(10);
+        let ty_f64 = TypeId(11);
+
+        let root = mono.add_root(sym_main, vec![]).expect("add root");
+        let helper = mono
+            .instantiate(Some(&root), sym_helper, vec![ty_i32])
+            .expect("helper i32");
+        let leaf = mono
+            .instantiate(Some(&helper), sym_leaf, vec![ty_i32, ty_f64])
+            .expect("leaf");
+
+        assert_eq!(mono.instances.len(), 3);
+        assert!(mono.instances[&helper].callers.contains(&root));
+        assert!(mono.instances[&leaf].callers.contains(&helper));
+
+        let order = mono.compute_compilation_order().expect("compilation order");
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0], root);
+    }
+
+    #[test]
+    fn test_monomorphization_graph_recursion_limit_protection() {
+        let mut mono = MonomorphizationGraph::new();
+        let sym_fn = SymbolId(1);
+
+        let mut prev = mono
+            .add_root(sym_fn, vec![TypeId(0)])
+            .expect("initial root");
+        let mut hit_limit = false;
+
+        for i in 1..=MAX_MONOMORPHIZATION_DEPTH + 10 {
+            match mono.instantiate(Some(&prev), sym_fn, vec![TypeId(i as u32)]) {
+                Ok(next) => prev = next,
+                Err(MonomorphizationError::RecursionLimitExceeded { depth, .. }) => {
+                    assert!(depth > MAX_MONOMORPHIZATION_DEPTH);
+                    hit_limit = true;
+                    break;
+                }
+                Err(e) => panic!("Unexpected error: {:?}", e),
+            }
+        }
+
+        assert!(
+            hit_limit,
+            "Recursion limit should protect against infinite monomorphization depth"
+        );
     }
 }
