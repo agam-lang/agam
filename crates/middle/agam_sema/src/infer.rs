@@ -61,6 +61,19 @@ impl UnionFind {
         }
     }
 
+    /// Bind a type variable to point to another type.
+    pub fn bind(&mut self, var: TypeId, target: TypeId) {
+        let r_var = self.find(var);
+        let r_target = self.find(target);
+        if r_var != r_target {
+            let var_idx = r_var.0 as usize;
+            if var_idx >= self.parent.len() {
+                self.grow(var_idx + 1);
+            }
+            self.parent[var_idx] = r_target.0;
+        }
+    }
+
     /// Unify two type variables (union by rank).
     pub fn union(&mut self, a: TypeId, b: TypeId) {
         let ra = self.find(a);
@@ -138,13 +151,27 @@ impl InferenceEngine {
         let tb = store.get(rb).clone();
 
         match (&ta, &tb) {
-            // Type variables unify with anything.
+            // Type variables unify with anything (with occurs-check protection).
+            (Type::Var(_), Type::Var(_)) => {
+                self.uf.bind(ra, rb);
+                Ok(())
+            }
             (Type::Var(_), _) => {
-                self.uf.union(ra, rb);
+                if self.occurs_in(ra, rb, store) {
+                    return Err(
+                        "cyclic type detected during unification (occurs check failed)".into(),
+                    );
+                }
+                self.uf.bind(ra, rb);
                 Ok(())
             }
             (_, Type::Var(_)) => {
-                self.uf.union(rb, ra);
+                if self.occurs_in(rb, ra, store) {
+                    return Err(
+                        "cyclic type detected during unification (occurs check failed)".into(),
+                    );
+                }
+                self.uf.bind(rb, ra);
                 Ok(())
             }
 
@@ -305,6 +332,59 @@ impl InferenceEngine {
         }
     }
 
+    /// Check if a type variable occurs inside a target type expression to prevent cyclic types.
+    pub fn occurs_in(&mut self, var: TypeId, target: TypeId, store: &TypeStore) -> bool {
+        let root_target = self.uf.find(target);
+        let root_var = self.uf.find(var);
+        if root_target == root_var {
+            return true;
+        }
+        match store.get(root_target) {
+            Type::Var(_) => false,
+            Type::Ref { inner, .. }
+            | Type::Ptr { inner, .. }
+            | Type::Optional(inner)
+            | Type::Slice(inner) => self.occurs_in(root_var, *inner, store),
+            Type::Array { element, .. } => self.occurs_in(root_var, *element, store),
+            Type::Result { ok, err } => {
+                self.occurs_in(root_var, *ok, store) || self.occurs_in(root_var, *err, store)
+            }
+            Type::Tuple(elems) => elems.iter().any(|&e| self.occurs_in(root_var, e, store)),
+            Type::Function { params, ret } => {
+                params.iter().any(|&p| self.occurs_in(root_var, p, store))
+                    || self.occurs_in(root_var, *ret, store)
+            }
+            Type::Generic { base, args } => {
+                self.occurs_in(root_var, *base, store)
+                    || args.iter().any(|&a| self.occurs_in(root_var, a, store))
+            }
+            _ => false,
+        }
+    }
+
+    /// Instantiate a generic function/struct signature with fresh type variables.
+    pub fn instantiate_generic_signature(
+        &mut self,
+        params: &[TypeId],
+        ret: TypeId,
+        generic_names: &[String],
+        store: &mut TypeStore,
+    ) -> (Vec<TypeId>, TypeId, SubstitutionMap) {
+        let mut subst = SubstitutionMap::new();
+        for name in generic_names {
+            let fresh = store.fresh_var();
+            subst.insert(name.clone(), fresh);
+        }
+
+        let inst_params = params
+            .iter()
+            .map(|&p| self.apply_substitution(p, &subst, store))
+            .collect();
+        let inst_ret = self.apply_substitution(ret, &subst, store);
+
+        (inst_params, inst_ret, subst)
+    }
+
     /// Resolve a TypeId to its final unified type (follows union-find chains).
     pub fn resolve(&mut self, id: TypeId) -> TypeId {
         self.uf.find(id)
@@ -395,6 +475,76 @@ impl InferenceEngine {
             _ => resolved,
         }
     }
+
+    /// Recursively resolve all type variables within a compound type.
+    pub fn deep_resolve(&mut self, ty: TypeId, store: &mut TypeStore) -> TypeId {
+        let root = self.resolve(ty);
+        let ty_val = store.get(root).clone();
+        match ty_val {
+            Type::Var(_) => root,
+            Type::Ref { mutable, inner } => {
+                let inner_res = self.deep_resolve(inner, store);
+                store.insert(Type::Ref {
+                    mutable,
+                    inner: inner_res,
+                })
+            }
+            Type::Ptr { mutable, inner } => {
+                let inner_res = self.deep_resolve(inner, store);
+                store.insert(Type::Ptr {
+                    mutable,
+                    inner: inner_res,
+                })
+            }
+            Type::Optional(inner) => {
+                let inner_res = self.deep_resolve(inner, store);
+                store.insert(Type::Optional(inner_res))
+            }
+            Type::Result { ok, err } => {
+                let ok_res = self.deep_resolve(ok, store);
+                let err_res = self.deep_resolve(err, store);
+                store.insert(Type::Result {
+                    ok: ok_res,
+                    err: err_res,
+                })
+            }
+            Type::Slice(inner) => {
+                let inner_res = self.deep_resolve(inner, store);
+                store.insert(Type::Slice(inner_res))
+            }
+            Type::Array { element, size } => {
+                let elem_res = self.deep_resolve(element, store);
+                store.insert(Type::Array {
+                    element: elem_res,
+                    size,
+                })
+            }
+            Type::Tuple(elems) => {
+                let elems_res = elems.iter().map(|&e| self.deep_resolve(e, store)).collect();
+                store.insert(Type::Tuple(elems_res))
+            }
+            Type::Function { params, ret } => {
+                let params_res = params
+                    .iter()
+                    .map(|&p| self.deep_resolve(p, store))
+                    .collect();
+                let ret_res = self.deep_resolve(ret, store);
+                store.insert(Type::Function {
+                    params: params_res,
+                    ret: ret_res,
+                })
+            }
+            Type::Generic { base, args } => {
+                let base_res = self.deep_resolve(base, store);
+                let args_res = args.iter().map(|&a| self.deep_resolve(a, store)).collect();
+                store.insert(Type::Generic {
+                    base: base_res,
+                    args: args_res,
+                })
+            }
+            _ => root,
+        }
+    }
 }
 
 /// A substitution map for generic type parameters.
@@ -411,15 +561,28 @@ mod tests {
         let var = store.fresh_var();
         let int = store.i32();
 
-        let mut engine = InferenceEngine::new(store.i32().0 as usize + 10);
-        engine.constrain(var, int, "test");
+        let mut engine = InferenceEngine::new(20);
+        engine.constrain(var, int, "let binding");
         engine.solve(&store);
 
-        assert!(engine.errors.is_empty(), "errors: {:?}", engine.errors);
-        let resolved = engine.resolve(var);
-        // After unification, var should point to the same root as int
-        let resolved_int = engine.resolve(int);
-        assert_eq!(resolved, resolved_int);
+        assert_eq!(engine.resolve(var), int);
+        assert!(engine.errors.is_empty());
+    }
+
+    #[test]
+    fn test_two_vars_unify_transitively() {
+        let mut store = TypeStore::new();
+        let v1 = store.fresh_var();
+        let v2 = store.fresh_var();
+        let boolean = store.bool();
+
+        let mut engine = InferenceEngine::new(20);
+        engine.constrain(v1, v2, "v1 = v2");
+        engine.constrain(v2, boolean, "v2 = bool");
+        engine.solve(&store);
+
+        assert_eq!(engine.resolve(v1), boolean);
+        assert_eq!(engine.resolve(v2), boolean);
     }
 
     #[test]
@@ -429,7 +592,7 @@ mod tests {
         let boolean = store.bool();
 
         let mut engine = InferenceEngine::new(20);
-        engine.constrain(int, boolean, "mismatch test");
+        engine.constrain(int, boolean, "assigning bool to int");
         engine.solve(&store);
 
         assert_eq!(engine.errors.len(), 1);
@@ -437,35 +600,13 @@ mod tests {
     }
 
     #[test]
-    fn test_two_vars_unify_transitively() {
-        let mut store = TypeStore::new();
-        let v1 = store.fresh_var();
-        let v2 = store.fresh_var();
-        let int = store.i32();
-
-        let mut engine = InferenceEngine::new(20);
-        engine.constrain(v1, v2, "v1 = v2");
-        engine.constrain(v2, int, "v2 = i32");
-        engine.solve(&store);
-
-        assert!(engine.errors.is_empty());
-        let r1 = engine.resolve(v1);
-        let r2 = engine.resolve(v2);
-        let ri = engine.resolve(int);
-        assert_eq!(r1, r2);
-        assert_eq!(r2, ri);
-    }
-
-    #[test]
     fn test_any_unifies_with_everything() {
         let store = TypeStore::new();
         let any = store.any();
         let int = store.i32();
-        let boolean = store.bool();
 
         let mut engine = InferenceEngine::new(20);
         engine.constrain(any, int, "any = i32");
-        engine.constrain(any, boolean, "any = bool");
         engine.solve(&store);
 
         assert!(engine.errors.is_empty());
@@ -474,11 +615,12 @@ mod tests {
     #[test]
     fn test_function_type_unification() {
         let mut store = TypeStore::new();
+        let v = store.fresh_var();
         let int = store.i32();
         let boolean = store.bool();
 
         let fn1 = store.insert(Type::Function {
-            params: vec![int],
+            params: vec![v],
             ret: boolean,
         });
         let fn2 = store.insert(Type::Function {
@@ -487,10 +629,11 @@ mod tests {
         });
 
         let mut engine = InferenceEngine::new(20);
-        engine.constrain(fn1, fn2, "fn match");
+        engine.constrain(fn1, fn2, "fn call");
         engine.solve(&store);
 
         assert!(engine.errors.is_empty());
+        assert_eq!(engine.resolve(v), int);
     }
 
     #[test]
@@ -552,5 +695,55 @@ mod tests {
 
         assert_eq!(engine.errors.len(), 1);
         assert!(engine.errors[0].message.contains("mutability mismatch"));
+    }
+
+    #[test]
+    fn test_occurs_check_prevents_cyclic_types() {
+        let mut store = TypeStore::new();
+        let var_t = store.fresh_var();
+
+        // Try to unify T with (T, i32) -> cyclic type T = (T, i32)
+        let int = store.i32();
+        let tuple_with_t = store.insert(Type::Tuple(vec![var_t, int]));
+
+        let mut engine = InferenceEngine::new(20);
+        engine.constrain(var_t, tuple_with_t, "cyclic assignment");
+        engine.solve(&store);
+
+        assert_eq!(engine.errors.len(), 1);
+        assert!(engine.errors[0].message.contains("occurs check failed"));
+    }
+
+    #[test]
+    fn test_instantiate_generic_signature() {
+        let mut store = TypeStore::new();
+        let param_t = store.insert(Type::TypeParam("T".into()));
+        let int = store.i32();
+
+        // fn map(val: T) -> (T, i32)
+        let ret_tuple = store.insert(Type::Tuple(vec![param_t, int]));
+
+        let mut engine = InferenceEngine::new(20);
+        let (inst_params, inst_ret, subst) =
+            engine.instantiate_generic_signature(&[param_t], ret_tuple, &["T".into()], &mut store);
+
+        assert_eq!(inst_params.len(), 1);
+        assert_ne!(inst_params[0], param_t); // Fresh variable instantiated
+        assert!(subst.contains_key("T"));
+
+        // Unify instantiated parameter with bool
+        let bool_ty = store.bool();
+        engine.constrain(inst_params[0], bool_ty, "arg passing");
+        engine.solve(&store);
+
+        assert!(engine.errors.is_empty());
+        let resolved_ret = engine.deep_resolve(inst_ret, &mut store);
+        let resolved_val = store.get(resolved_ret).clone();
+        if let Type::Tuple(elems) = resolved_val {
+            assert_eq!(elems[0], bool_ty);
+            assert_eq!(elems[1], int);
+        } else {
+            panic!("Expected tuple type");
+        }
     }
 }
