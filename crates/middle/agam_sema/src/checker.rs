@@ -14,11 +14,16 @@ use agam_ast::*;
 use agam_errors::Span;
 
 use crate::consteval::ConstEvaluator;
+use crate::exhaustive::{
+    PatternArm as ExhaustiveArm, TypeShape, VariantShape, check_match_exhaustiveness,
+    pattern_from_ast,
+};
 use crate::gpu::{resolve_gpu_builtin_expr, resolve_gpu_builtin_member};
 use crate::infer::InferenceEngine;
 use crate::resolver::Resolver;
 use crate::scope::ScopeStack;
 use crate::symbol::TypeId;
+use crate::symbol::{SymbolKind, VariantFieldKind};
 use crate::types::{Type, TypeStore, builtin_type_id_for_name};
 use agam_smt::solver::{Constraint, SmtSolver, SolverResult, Z3Solver};
 use agam_smt::verify::{VerificationCache, VerificationStatus};
@@ -109,9 +114,26 @@ impl TypeChecker {
     }
 
     fn check_function(&mut self, f: &FunctionDecl) {
+        self.scopes.push_scope();
+        for param in &f.params {
+            let ty = self.resolve_type_expr(&param.ty);
+            if let agam_ast::pattern::PatternKind::Identifier { name, mutable } =
+                &param.pattern.kind
+            {
+                let _ = self.scopes.declare(
+                    name.name.clone(),
+                    SymbolKind::Variable {
+                        mutable: *mutable,
+                        ty,
+                    },
+                    param.span,
+                );
+            }
+        }
         if let Some(body) = &f.body {
             self.check_block(body);
         }
+        self.scopes.pop_scope();
     }
 
     // ── Blocks & Statements ──
@@ -190,7 +212,8 @@ impl TypeChecker {
                 }
             }
             StmtKind::Match { scrutinee, arms } => {
-                self.infer_expr(scrutinee);
+                let scrutinee_ty = self.infer_expr(scrutinee);
+                self.check_match_exhaustiveness(scrutinee_ty, arms, stmt.span);
                 for arm in arms {
                     if let Some(guard) = &arm.guard {
                         let g_ty = self.infer_expr(guard);
@@ -415,7 +438,8 @@ impl TypeChecker {
                 tt
             }
             ExprKind::Match { scrutinee, arms } => {
-                self.infer_expr(scrutinee);
+                let scrutinee_ty = self.infer_expr(scrutinee);
+                self.check_match_exhaustiveness(scrutinee_ty, arms, expr.span);
                 let result_ty = self.types.fresh_var();
                 for arm in arms {
                     if let Some(guard) = &arm.guard {
@@ -533,13 +557,145 @@ impl TypeChecker {
 
     // ── Helpers ──
 
+    fn check_match_exhaustiveness(&mut self, scrutinee_ty: TypeId, arms: &[MatchArm], span: Span) {
+        let Some(shape) = self.type_shape(scrutinee_ty) else {
+            return;
+        };
+        let mut exhaustive_arms = Vec::with_capacity(arms.len());
+        for arm in arms {
+            if let agam_ast::pattern::PatternKind::Or(subpatterns) = &arm.pattern.kind {
+                for sub in subpatterns {
+                    match pattern_from_ast(sub, &shape) {
+                        Ok(pattern) => exhaustive_arms.push(ExhaustiveArm {
+                            pattern,
+                            has_guard: arm.guard.is_some(),
+                            span: sub.span,
+                        }),
+                        Err(error) => self.errors.push(TypeError {
+                            message: error.message,
+                            span: error.span,
+                        }),
+                    }
+                }
+            } else {
+                match pattern_from_ast(&arm.pattern, &shape) {
+                    Ok(pattern) => exhaustive_arms.push(ExhaustiveArm {
+                        pattern,
+                        has_guard: arm.guard.is_some(),
+                        span: arm.span,
+                    }),
+                    Err(error) => self.errors.push(TypeError {
+                        message: error.message,
+                        span: error.span,
+                    }),
+                }
+            }
+        }
+        let report = check_match_exhaustiveness(&exhaustive_arms, &shape, span);
+        for diagnostic in report.diagnostics {
+            let diagnostic_span = diagnostic
+                .labels
+                .first()
+                .map(|label| label.span)
+                .unwrap_or(span);
+            self.errors.push(TypeError {
+                message: diagnostic.message,
+                span: diagnostic_span,
+            });
+        }
+    }
+
+    fn type_shape(&self, ty: TypeId) -> Option<TypeShape> {
+        match self.types.get(ty) {
+            Type::Bool => Some(TypeShape::Bool),
+            Type::Int(_) | Type::UInt(_) => Some(TypeShape::Int),
+            Type::Str => Some(TypeShape::Str),
+            Type::Tuple(fields) => fields
+                .iter()
+                .map(|field| self.type_shape(*field))
+                .collect::<Option<Vec<_>>>()
+                .map(TypeShape::Tuple),
+            Type::Optional(inner) => {
+                self.type_shape(*inner)
+                    .map(|inner| TypeShape::EnumWithPayload {
+                        variants: vec![
+                            VariantShape {
+                                name: "None".into(),
+                                fields: Vec::new(),
+                            },
+                            VariantShape {
+                                name: "Some".into(),
+                                fields: vec![inner],
+                            },
+                        ],
+                    })
+            }
+            Type::Result { ok, err } => Some(TypeShape::EnumWithPayload {
+                variants: vec![
+                    VariantShape {
+                        name: "Ok".into(),
+                        fields: vec![self.type_shape(*ok)?],
+                    },
+                    VariantShape {
+                        name: "Err".into(),
+                        fields: vec![self.type_shape(*err)?],
+                    },
+                ],
+            }),
+            Type::Named(symbol_id) => match &self.scopes.get(*symbol_id).kind {
+                SymbolKind::Struct { fields } => fields
+                    .iter()
+                    .map(|(name, field_ty)| Some((name.clone(), self.type_shape(*field_ty)?)))
+                    .collect::<Option<Vec<_>>>()
+                    .map(|fields| TypeShape::StructNamed {
+                        name: self.scopes.get(*symbol_id).name.clone(),
+                        fields,
+                    }),
+                SymbolKind::Enum { variants, .. } => variants
+                    .iter()
+                    .map(|variant| {
+                        let fields = match &variant.fields {
+                            VariantFieldKind::Unit => Some(Vec::new()),
+                            VariantFieldKind::Tuple(fields) => {
+                                fields.iter().map(|field| self.type_shape(*field)).collect()
+                            }
+                            VariantFieldKind::Struct(fields) => fields
+                                .iter()
+                                .map(|(_, field)| self.type_shape(*field))
+                                .collect(),
+                        }?;
+                        Some(VariantShape {
+                            name: variant.name.clone(),
+                            fields,
+                        })
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|variants| TypeShape::EnumWithPayload { variants }),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Resolve an AST type expression to an internal TypeId.
     fn resolve_type_expr(&mut self, te: &TypeExpr) -> TypeId {
         match &te.kind {
             TypeExprKind::Named(path) => {
                 if let Some(seg) = path.segments.last() {
-                    builtin_type_id_for_name(&self.types, &seg.name)
-                        .unwrap_or_else(|| self.types.fresh_var())
+                    if let Some(builtin) = builtin_type_id_for_name(&self.types, &seg.name) {
+                        builtin
+                    } else if let Some(symbol) = self.scopes.lookup(&seg.name) {
+                        if matches!(
+                            &self.scopes.get(symbol).kind,
+                            SymbolKind::Struct { .. } | SymbolKind::Enum { .. }
+                        ) {
+                            self.types.insert(Type::Named(symbol))
+                        } else {
+                            self.types.fresh_var()
+                        }
+                    } else {
+                        self.types.fresh_var()
+                    }
                 } else {
                     self.types.error()
                 }
@@ -750,5 +906,17 @@ mod tests {
         let tc = check_source("fn compute(x: i32) -> i32 { let y = x?; return y; }");
         // In the absence of error annotations, try runs and returns type variable without sema crash
         assert!(tc.errors.is_empty(), "errors: {:?}", tc.errors);
+    }
+
+    #[test]
+    fn match_on_named_enum_reports_missing_variant() {
+        let tc = check_source("enum Color { Red, Green } fn main(x: Color): match x { Red => 1 }");
+        assert!(
+            tc.errors
+                .iter()
+                .any(|error| error.message.contains("Green")),
+            "expected exhaustive-match error, got {:?}",
+            tc.errors
+        );
     }
 }

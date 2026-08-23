@@ -4,7 +4,14 @@
 //! rows. Checking every arm finds unreachable arms; a wildcard query produces
 //! a missing-pattern witness.
 
+use agam_ast::expr::ExprKind;
+use agam_ast::pattern::{Pattern, PatternKind};
 use agam_errors::{Diagnostic, Label, NyayaProof, Span};
+use std::collections::HashSet;
+
+/// Bounds matrix expansion for hostile or accidentally enormous patterns.
+pub const MAX_PATTERN_DEPTH: usize = 128;
+pub const MAX_MATCH_ARMS: usize = 4_096;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimplePattern {
@@ -43,6 +50,11 @@ pub enum TypeShape {
         name: String,
         fields: Vec<TypeShape>,
     },
+    /// Struct layout retaining names for AST-pattern adaptation.
+    StructNamed {
+        name: String,
+        fields: Vec<(String, TypeShape)>,
+    },
     Other,
 }
 
@@ -65,6 +77,14 @@ pub struct ExhaustivenessReport {
     pub unreachable_arms: Vec<usize>,
     pub missing_witness: Option<SimplePattern>,
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// An AST pattern cannot be passed to the matrix until its syntax has been
+/// validated and named fields have been laid out in declaration order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatternConversionError {
+    pub message: String,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,11 +112,30 @@ pub fn check_match_exhaustiveness(
     shape: &TypeShape,
     match_span: Span,
 ) -> ExhaustivenessReport {
+    if arms.len() > MAX_MATCH_ARMS {
+        return limit_report(
+            match_span,
+            format!(
+                "match has {} arms; the limit is {MAX_MATCH_ARMS}",
+                arms.len()
+            ),
+        );
+    }
+    if let Err(message) = validate_shape(shape) {
+        return invalid_shape_report(match_span, message);
+    }
     let mut matrix = Vec::new();
     let mut unreachable_arms = Vec::new();
     let mut diagnostics = Vec::new();
 
     for (index, arm) in arms.iter().enumerate() {
+        if pattern_depth(&arm.pattern) > MAX_PATTERN_DEPTH {
+            diagnostics.push(limit_diagnostic(
+                arm.span,
+                format!("pattern nesting exceeds the limit of {MAX_PATTERN_DEPTH}"),
+            ));
+            continue;
+        }
         let query = vec![arm.pattern.clone()];
         if useful(&matrix, &query, std::slice::from_ref(shape)).is_none() {
             unreachable_arms.push(index);
@@ -120,6 +159,152 @@ pub fn check_match_exhaustiveness(
         unreachable_arms,
         missing_witness,
         diagnostics,
+    }
+}
+
+/// Convert an AST pattern into the canonical, positional matrix form.
+/// Unsupported surface forms are rejected explicitly rather than being
+/// mistaken for redundant arms.
+pub fn pattern_from_ast(
+    pattern: &Pattern,
+    shape: &TypeShape,
+) -> Result<SimplePattern, PatternConversionError> {
+    match (&pattern.kind, shape) {
+        (PatternKind::Wildcard, _) => Ok(SimplePattern::Wildcard),
+        (PatternKind::Identifier { name, .. }, TypeShape::EnumWithPayload { variants }) => variants
+            .iter()
+            .find(|variant| variant.name == name.name && variant.fields.is_empty())
+            .map(|variant| SimplePattern::Variant(variant.name.clone()))
+            .ok_or_else(|| conversion_error(pattern.span, "identifier bindings are only valid as wildcard patterns here; use a declared unit variant or `_`")),
+        (PatternKind::Identifier { .. }, _) => Ok(SimplePattern::Wildcard),
+        (PatternKind::Literal(expr), TypeShape::Bool) => match expr.kind {
+            ExprKind::BoolLiteral(value) => Ok(SimplePattern::Bool(value)),
+            _ => Err(conversion_error(
+                pattern.span,
+                "expected a boolean literal pattern",
+            )),
+        },
+        (PatternKind::Literal(expr), TypeShape::Int) => match expr.kind {
+            ExprKind::IntLiteral(value) => Ok(SimplePattern::Int(value)),
+            _ => Err(conversion_error(
+                pattern.span,
+                "expected an integer literal pattern",
+            )),
+        },
+        (PatternKind::Literal(expr), TypeShape::Str) => match &expr.kind {
+            ExprKind::StringLiteral(value) => Ok(SimplePattern::Str(value.clone())),
+            _ => Err(conversion_error(
+                pattern.span,
+                "expected a string literal pattern",
+            )),
+        },
+        (PatternKind::Tuple(patterns), TypeShape::Tuple(fields))
+            if patterns.len() == fields.len() =>
+        {
+            let mut converted = Vec::with_capacity(patterns.len());
+            for (field_pattern, field_shape) in patterns.iter().zip(fields) {
+                converted.push(pattern_from_ast(field_pattern, field_shape)?);
+            }
+            Ok(SimplePattern::Tuple(converted))
+        }
+        (
+            PatternKind::Struct { path, fields, rest },
+            TypeShape::StructNamed {
+                name,
+                fields: layout,
+            },
+        ) => {
+            let found_name = path.segments.last().map(|segment| segment.name.as_str());
+            if found_name != Some(name.as_str()) {
+                return Err(conversion_error(
+                    pattern.span,
+                    "struct pattern does not match the scrutinee type",
+                ));
+            }
+            let mut converted = Vec::with_capacity(layout.len());
+            for (field_name, field_shape) in layout {
+                let field = fields.iter().find(|field| field.name.name == *field_name);
+                match field {
+                    Some(field) => match &field.pattern {
+                        Some(value) => converted.push(pattern_from_ast(value, field_shape)?),
+                        None => converted.push(SimplePattern::Wildcard),
+                    },
+                    None if *rest => converted.push(SimplePattern::Wildcard),
+                    None => {
+                        return Err(conversion_error(
+                            pattern.span,
+                            format!(
+                                "struct pattern is missing field `{field_name}`; add `..` to ignore it"
+                            ),
+                        ));
+                    }
+                }
+            }
+            for field in fields {
+                if !layout.iter().any(|(name, _)| name == &field.name.name) {
+                    return Err(conversion_error(
+                        field.span,
+                        format!("unknown field `{}` in struct pattern", field.name.name),
+                    ));
+                }
+            }
+            Ok(SimplePattern::Constructor {
+                name: name.clone(),
+                fields: converted,
+            })
+        }
+        (PatternKind::Variant { path, fields }, TypeShape::EnumWithPayload { variants }) => {
+            let Some(name) = path.segments.last().map(|segment| segment.name.clone()) else {
+                return Err(conversion_error(
+                    pattern.span,
+                    "variant pattern has an empty path",
+                ));
+            };
+            let Some(variant) = variants.iter().find(|variant| variant.name == name) else {
+                return Err(conversion_error(
+                    pattern.span,
+                    format!("unknown variant `{name}`"),
+                ));
+            };
+            if fields.len() != variant.fields.len() {
+                return Err(conversion_error(
+                    pattern.span,
+                    format!(
+                        "variant `{name}` expects {} field(s), found {}",
+                        variant.fields.len(),
+                        fields.len()
+                    ),
+                ));
+            }
+            if fields.is_empty() {
+                Ok(SimplePattern::Variant(name))
+            } else {
+                let mut converted = Vec::with_capacity(fields.len());
+                for (field_pattern, field_shape) in fields.iter().zip(&variant.fields) {
+                    converted.push(pattern_from_ast(field_pattern, field_shape)?);
+                }
+                Ok(SimplePattern::Constructor {
+                    name,
+                    fields: converted,
+                })
+            }
+        }
+        (PatternKind::Binding { pattern: inner, .. }, _) => pattern_from_ast(inner, shape),
+        (PatternKind::Typed { pattern: inner, .. }, _) => pattern_from_ast(inner, shape),
+        (
+            PatternKind::Or(_)
+            | PatternKind::Range { .. }
+            | PatternKind::Array(_)
+            | PatternKind::Rest,
+            _,
+        ) => Err(conversion_error(
+            pattern.span,
+            "this pattern form is not yet representable in exhaustiveness checking",
+        )),
+        _ => Err(conversion_error(
+            pattern.span,
+            "pattern is incompatible with the scrutinee type",
+        )),
     }
 }
 
@@ -225,6 +410,10 @@ fn constructors_for_type(shape: &TypeShape) -> Vec<Constructor> {
             name: name.clone(),
             arity: fields.len(),
         }],
+        TypeShape::StructNamed { name, fields } => vec![Constructor::Struct {
+            name: name.clone(),
+            arity: fields.len(),
+        }],
         TypeShape::Int | TypeShape::Str | TypeShape::Other => Vec::new(),
     }
 }
@@ -271,6 +460,16 @@ fn constructor_for_pattern(pattern: &SimplePattern, shape: &TypeShape) -> Option
             name: name.clone(),
             arity: fields.len(),
         }),
+        (
+            SimplePattern::Constructor { name, fields },
+            TypeShape::StructNamed {
+                name: type_name,
+                fields: types,
+            },
+        ) if name == type_name && fields.len() == types.len() => Some(Constructor::Struct {
+            name: name.clone(),
+            arity: fields.len(),
+        }),
         _ => None,
     }
 }
@@ -288,6 +487,15 @@ fn constructor_field_types(constructor: &Constructor, shape: &TypeShape) -> Opti
                 fields,
             },
         ) if name == type_name && *arity == fields.len() => Some(fields.clone()),
+        (
+            Constructor::Struct { name, arity },
+            TypeShape::StructNamed {
+                name: type_name,
+                fields,
+            },
+        ) if name == type_name && *arity == fields.len() => {
+            Some(fields.iter().map(|(_, ty)| ty.clone()).collect())
+        }
         (Constructor::Variant { name, arity }, TypeShape::Enum { variants })
             if *arity == 0 && variants.iter().any(|variant| variant == name) =>
         {
@@ -356,6 +564,112 @@ fn default_matrix(matrix: &[Vec<SimplePattern>]) -> Vec<Vec<SimplePattern>> {
 
 fn wildcard_fields(arity: usize) -> Vec<SimplePattern> {
     std::iter::repeat_n(SimplePattern::Wildcard, arity).collect()
+}
+
+fn conversion_error(span: Span, message: impl Into<String>) -> PatternConversionError {
+    PatternConversionError {
+        message: message.into(),
+        span,
+    }
+}
+
+fn pattern_depth(pattern: &SimplePattern) -> usize {
+    match pattern {
+        SimplePattern::Tuple(fields) | SimplePattern::Constructor { fields, .. } => {
+            1 + fields
+                .iter()
+                .map(pattern_depth)
+                .max()
+                .map_or(0, |depth| depth)
+        }
+        _ => 1,
+    }
+}
+
+fn validate_shape(shape: &TypeShape) -> Result<(), String> {
+    match shape {
+        TypeShape::Enum { variants } => {
+            validate_names(variants.iter().map(String::as_str), "enum variant")
+        }
+        TypeShape::EnumWithPayload { variants } => {
+            validate_names(
+                variants.iter().map(|variant| variant.name.as_str()),
+                "enum variant",
+            )?;
+            for variant in variants {
+                for field in &variant.fields {
+                    validate_shape(field)?;
+                }
+            }
+            Ok(())
+        }
+        TypeShape::Tuple(fields) | TypeShape::Struct { fields, .. } => {
+            for field in fields {
+                validate_shape(field)?;
+            }
+            Ok(())
+        }
+        TypeShape::StructNamed { fields, .. } => {
+            validate_names(fields.iter().map(|(name, _)| name.as_str()), "struct field")?;
+            for (_, field) in fields {
+                validate_shape(field)?;
+            }
+            Ok(())
+        }
+        TypeShape::Bool | TypeShape::Int | TypeShape::Str | TypeShape::Other => Ok(()),
+    }
+}
+
+fn validate_names<'a>(names: impl Iterator<Item = &'a str>, kind: &str) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for name in names {
+        if name.is_empty() {
+            return Err(format!("{kind} names must not be empty"));
+        }
+        if !seen.insert(name) {
+            return Err(format!("duplicate {kind} `{name}`"));
+        }
+    }
+    Ok(())
+}
+
+fn invalid_shape_report(span: Span, message: String) -> ExhaustivenessReport {
+    ExhaustivenessReport {
+        unreachable_arms: Vec::new(),
+        missing_witness: None,
+        diagnostics: vec![
+            Diagnostic::error("E0005", format!("invalid pattern type shape: {message}"))
+                .with_label(Label::primary(
+                    span,
+                    "the type definition cannot be checked for exhaustiveness",
+                )),
+        ],
+    }
+}
+
+fn limit_report(span: Span, message: String) -> ExhaustivenessReport {
+    ExhaustivenessReport {
+        unreachable_arms: Vec::new(),
+        missing_witness: None,
+        diagnostics: vec![limit_diagnostic(span, message)],
+    }
+}
+
+fn limit_diagnostic(span: Span, message: String) -> Diagnostic {
+    Diagnostic::error(
+        "E0006",
+        format!("exhaustiveness analysis limit exceeded: {message}"),
+    )
+    .with_label(Label::primary(
+        span,
+        "analysis stopped before matrix expansion became excessive",
+    ))
+    .with_proof(NyayaProof::new(
+        "the match exceeds a resource safety limit",
+        "usefulness matrix expansion is bounded to preserve compiler availability",
+        Some("split the match into smaller expressions"),
+        "semantic analysis must terminate within configured resource limits",
+    ))
 }
 
 fn rebuild_witness(
@@ -630,5 +944,51 @@ mod tests {
     fn compatibility_api_reports_witness() {
         let errors = check_exhaustiveness(&[SimplePattern::Bool(true)], &TypeShape::Bool, span());
         assert!(errors.iter().any(|error| error.message.contains("false")));
+    }
+
+    #[test]
+    fn duplicate_variants_are_rejected_before_matrix_construction() {
+        let shape = TypeShape::Enum {
+            variants: vec!["Same".into(), "Same".into()],
+        };
+        let report = check_match_exhaustiveness(&[], &shape, span());
+        assert!(
+            report.diagnostics[0]
+                .message
+                .contains("duplicate enum variant")
+        );
+    }
+
+    #[test]
+    fn named_struct_adapter_rejects_unknown_fields() {
+        let pattern = Pattern {
+            id: agam_ast::NodeId(0),
+            span: span(),
+            kind: PatternKind::Struct {
+                path: agam_ast::Path {
+                    segments: vec![agam_ast::Ident::new("Point", span())],
+                    span: span(),
+                },
+                fields: vec![agam_ast::pattern::FieldPattern {
+                    name: agam_ast::Ident::new("z", span()),
+                    pattern: None,
+                    span: span(),
+                }],
+                rest: true,
+            },
+        };
+        let shape = TypeShape::StructNamed {
+            name: "Point".into(),
+            fields: vec![("x".into(), TypeShape::Int)],
+        };
+        let result = pattern_from_ast(&pattern, &shape);
+        assert!(matches!(result, Err(error) if error.message.contains("unknown field `z`")));
+    }
+
+    #[test]
+    fn analysis_limit_is_reported_without_expanding_the_matrix() {
+        let arms = vec![arm(SimplePattern::Wildcard); MAX_MATCH_ARMS + 1];
+        let report = check_match_exhaustiveness(&arms, &TypeShape::Bool, span());
+        assert!(report.diagnostics[0].message.contains("limit exceeded"));
     }
 }
