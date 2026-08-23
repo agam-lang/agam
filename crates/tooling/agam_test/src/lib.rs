@@ -16,6 +16,7 @@ pub mod opt_semantics;
 pub mod perf_speed;
 pub mod pipeline_integration;
 pub mod property;
+pub mod regression;
 pub mod snapshot;
 pub mod toolchain_output;
 pub mod unit_passes;

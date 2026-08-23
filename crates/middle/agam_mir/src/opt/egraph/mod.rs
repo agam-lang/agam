@@ -411,7 +411,7 @@ impl<'a> Extractor<'a> {
 
                     if all_children_known {
                         let current_best = self.costs.get(&class_id).map(|(c, _)| *c);
-                        if current_best.is_none() || node_cost < current_best.unwrap() {
+                        if current_best.is_none_or(|best| node_cost < best) {
                             self.costs.insert(class_id, (node_cost, node.clone()));
                             changed = true;
                         }

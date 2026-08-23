@@ -591,8 +591,19 @@ impl HirLowering {
                         }
                     }
                 }
+                if result_parts.is_empty() {
+                    return HirExpr {
+                        id: self.fresh_id(),
+                        ty: self.types.str(),
+                        kind: HirExprKind::StringLit(String::new()),
+                    };
+                }
                 if result_parts.len() == 1 {
-                    return result_parts.pop().unwrap();
+                    return result_parts.pop().unwrap_or_else(|| HirExpr {
+                        id: self.fresh_id(),
+                        ty: self.types.str(),
+                        kind: HirExprKind::StringLit(String::new()),
+                    });
                 }
                 // chain binary Add: part0 + part1 + part2 ...
                 let mut acc = result_parts.remove(0);
@@ -739,7 +750,10 @@ impl HirLowering {
                     )
                 }
                 Some(builtin) => {
-                    let callee_name = format!("{}::{}", expr_name(object).unwrap(), method.name);
+                    let callee_name = match expr_name(object) {
+                        Some(base) => format!("{base}::{}", method.name),
+                        None => method.name.clone(),
+                    };
                     (
                         builtin.return_type(&mut self.types),
                         HirExprKind::Call {
