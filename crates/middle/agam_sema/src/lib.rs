@@ -42,4 +42,7 @@ pub mod target;
 pub mod traits;
 pub mod types;
 
+pub use lifetime::{
+    ActiveLoan, BorrowChecker, BorrowKind, Lifetime, LifetimeAnalyzer, LifetimeId, Place,
+};
 pub use sandhi::{SandhiGraph, SandhiNode, TraitLattice};

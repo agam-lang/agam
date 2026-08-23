@@ -64,3 +64,4 @@ pub use serial::{
     from_bytes_slice, to_bytes, to_bytes_slice,
 };
 pub use sparse::{CooMatrix, CsrMatrix};
+pub use tensor::{Tensor, TensorError, TensorView, default_strides};

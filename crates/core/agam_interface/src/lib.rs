@@ -325,7 +325,7 @@ pub fn lower_module_to_hir_and_optimized_mir(
         }
     }
 
-    let purity = agam_mir::opt::escape::CalleePurityInfo;
+    let purity = agam_mir::opt::escape::CalleePurityInfo::default();
     let (escape_results, promo_results) = agam_mir::opt::run_escape_and_promote(&mut mir, &purity);
 
     if verbose {

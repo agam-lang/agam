@@ -1,11 +1,124 @@
-//! N-dimensional Tensor type for Agam.
+//! N-dimensional Tensor type and zero-copy Strided Views for Agam.
 //!
 //! Provides a shape-aware, contiguous-memory tensor with support for
-//! element-wise operations, broadcasting, and basic linear algebra.
+//! element-wise operations, broadcasting, zero-copy views, and basic linear algebra.
 //!
 //! This is the foundation for Agam's native AI/ML capabilities.
 
 use agam_runtime::simd::SimdOps;
+use std::fmt;
+
+/// Errors arising from invalid tensor operations or shape mismatches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TensorError {
+    ShapeMismatch {
+        expected: Vec<usize>,
+        actual: Vec<usize>,
+    },
+    DimensionMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    DataLengthMismatch {
+        expected: usize,
+        actual: usize,
+    },
+    IncompatibleInnerDimensions {
+        left: usize,
+        right: usize,
+    },
+    OutOfBoundsIndex {
+        index: usize,
+        total: usize,
+    },
+}
+
+impl fmt::Display for TensorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TensorError::ShapeMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "tensor shape mismatch: expected {:?}, got {:?}",
+                    expected, actual
+                )
+            }
+            TensorError::DimensionMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "tensor dimension mismatch: expected {}D, got {}D",
+                    expected, actual
+                )
+            }
+            TensorError::DataLengthMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "tensor data length mismatch: expected {} elements, got {}",
+                    expected, actual
+                )
+            }
+            TensorError::IncompatibleInnerDimensions { left, right } => {
+                write!(
+                    f,
+                    "incompatible inner dimensions for matrix multiplication: {} vs {}",
+                    left, right
+                )
+            }
+            TensorError::OutOfBoundsIndex { index, total } => {
+                write!(f, "tensor index out of bounds: {} >= {}", index, total)
+            }
+        }
+    }
+}
+
+impl std::error::Error for TensorError {}
+
+/// Compute canonical row-major strides for a given tensor shape.
+pub fn default_strides(shape: &[usize]) -> Vec<usize> {
+    if shape.is_empty() {
+        return Vec::new();
+    }
+    let mut strides = vec![1; shape.len()];
+    for i in (0..shape.len().saturating_sub(1)).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+    strides
+}
+
+/// Zero-copy strided view over an underlying tensor buffer.
+#[derive(Clone, Copy, Debug)]
+pub struct TensorView<'a> {
+    pub data: &'a [f64],
+    pub shape: &'a [usize],
+    pub strides: &'a [usize],
+    pub offset: usize,
+}
+
+impl<'a> TensorView<'a> {
+    pub fn new(data: &'a [f64], shape: &'a [usize], strides: &'a [usize], offset: usize) -> Self {
+        Self {
+            data,
+            shape,
+            strides,
+            offset,
+        }
+    }
+
+    /// Read an element by multi-dimensional coordinates in O(1) time without copies.
+    pub fn get(&self, indices: &[usize]) -> Option<f64> {
+        if indices.len() != self.shape.len() {
+            return None;
+        }
+        let mut flat_idx = self.offset;
+        for (i, &idx) in indices.iter().enumerate() {
+            if idx >= self.shape[i] {
+                return None;
+            }
+            flat_idx += idx * self.strides[i];
+        }
+        self.data.get(flat_idx).copied()
+    }
+}
 
 /// An N-dimensional tensor stored in row-major contiguous memory.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,14 +148,24 @@ impl Tensor {
         }
     }
 
-    /// Create a tensor from flat data and shape.
-    pub fn from_data(shape: &[usize], data: Vec<f64>) -> Self {
+    /// Fallible constructor from flat data and shape.
+    pub fn try_from_data(shape: &[usize], data: Vec<f64>) -> Result<Self, TensorError> {
         let expected: usize = shape.iter().product();
-        assert_eq!(data.len(), expected, "data length must match shape product");
-        Self {
+        if data.len() != expected {
+            return Err(TensorError::DataLengthMismatch {
+                expected,
+                actual: data.len(),
+            });
+        }
+        Ok(Self {
             shape: shape.to_vec(),
             data,
-        }
+        })
+    }
+
+    /// Create a tensor from flat data and shape (panicking on invalid input).
+    pub fn from_data(shape: &[usize], data: Vec<f64>) -> Self {
+        Self::try_from_data(shape, data).expect("data length must match shape product")
     }
 
     /// Create a scalar tensor.
@@ -82,37 +205,72 @@ impl Tensor {
         self.data[idx] = val;
     }
 
-    /// Element-wise addition. Shapes must match.
-    pub fn add(&self, other: &Tensor) -> Tensor {
-        assert_eq!(self.shape, other.shape, "shapes must match for add");
+    /// Borrow as a zero-copy strided view.
+    pub fn as_view<'a>(&'a self, strides: &'a [usize]) -> TensorView<'a> {
+        TensorView::new(&self.data, &self.shape, strides, 0)
+    }
+
+    /// Element-wise addition (fallible).
+    pub fn try_add(&self, other: &Tensor) -> Result<Tensor, TensorError> {
+        if self.shape != other.shape {
+            return Err(TensorError::ShapeMismatch {
+                expected: self.shape.clone(),
+                actual: other.shape.clone(),
+            });
+        }
         let mut data = vec![0.0; self.numel()];
         SimdOps::add(&self.data, &other.data, &mut data);
-        Tensor {
+        Ok(Tensor {
             shape: self.shape.clone(),
             data,
+        })
+    }
+
+    /// Element-wise addition. Shapes must match.
+    pub fn add(&self, other: &Tensor) -> Tensor {
+        self.try_add(other).expect("shapes must match for add")
+    }
+
+    /// Element-wise subtraction (fallible).
+    pub fn try_sub(&self, other: &Tensor) -> Result<Tensor, TensorError> {
+        if self.shape != other.shape {
+            return Err(TensorError::ShapeMismatch {
+                expected: self.shape.clone(),
+                actual: other.shape.clone(),
+            });
         }
+        let mut data = vec![0.0; self.numel()];
+        SimdOps::sub(&self.data, &other.data, &mut data);
+        Ok(Tensor {
+            shape: self.shape.clone(),
+            data,
+        })
     }
 
     /// Element-wise subtraction. Shapes must match.
     pub fn sub(&self, other: &Tensor) -> Tensor {
-        assert_eq!(self.shape, other.shape, "shapes must match for sub");
+        self.try_sub(other).expect("shapes must match for sub")
+    }
+
+    /// Element-wise multiplication (fallible).
+    pub fn try_mul(&self, other: &Tensor) -> Result<Tensor, TensorError> {
+        if self.shape != other.shape {
+            return Err(TensorError::ShapeMismatch {
+                expected: self.shape.clone(),
+                actual: other.shape.clone(),
+            });
+        }
         let mut data = vec![0.0; self.numel()];
-        SimdOps::sub(&self.data, &other.data, &mut data);
-        Tensor {
+        SimdOps::mul(&self.data, &other.data, &mut data);
+        Ok(Tensor {
             shape: self.shape.clone(),
             data,
-        }
+        })
     }
 
     /// Element-wise multiplication (Hadamard). Shapes must match.
     pub fn mul(&self, other: &Tensor) -> Tensor {
-        assert_eq!(self.shape, other.shape, "shapes must match for mul");
-        let mut data = vec![0.0; self.numel()];
-        SimdOps::mul(&self.data, &other.data, &mut data);
-        Tensor {
-            shape: self.shape.clone(),
-            data,
-        }
+        self.try_mul(other).expect("shapes must match for mul")
     }
 
     /// Scalar multiplication.
@@ -132,30 +290,76 @@ impl Tensor {
 
     /// Mean of all elements.
     pub fn mean(&self) -> f64 {
-        self.sum() / self.numel() as f64
+        if self.data.is_empty() {
+            0.0
+        } else {
+            self.sum() / self.numel() as f64
+        }
+    }
+
+    /// Dot product (for 1D tensors / vectors, fallible).
+    pub fn try_dot(&self, other: &Tensor) -> Result<f64, TensorError> {
+        if self.ndim() != 1 {
+            return Err(TensorError::DimensionMismatch {
+                expected: 1,
+                actual: self.ndim(),
+            });
+        }
+        if other.ndim() != 1 {
+            return Err(TensorError::DimensionMismatch {
+                expected: 1,
+                actual: other.ndim(),
+            });
+        }
+        if self.shape[0] != other.shape[0] {
+            return Err(TensorError::DataLengthMismatch {
+                expected: self.shape[0],
+                actual: other.shape[0],
+            });
+        }
+        Ok(SimdOps::dot(&self.data, &other.data))
     }
 
     /// Dot product (for 1D tensors / vectors).
     pub fn dot(&self, other: &Tensor) -> f64 {
-        assert_eq!(self.ndim(), 1, "dot requires 1D tensors");
-        assert_eq!(other.ndim(), 1, "dot requires 1D tensors");
-        assert_eq!(self.shape[0], other.shape[0], "lengths must match");
-        SimdOps::dot(&self.data, &other.data)
+        self.try_dot(other)
+            .expect("dot requires matching 1D tensors")
     }
 
-    /// Matrix multiplication for 2D tensors.
+    /// Matrix multiplication for 2D tensors (fallible).
     /// self: [M, K], other: [K, N] → result: [M, N]
-    pub fn matmul(&self, other: &Tensor) -> Tensor {
-        assert_eq!(self.ndim(), 2, "matmul requires 2D tensors");
-        assert_eq!(other.ndim(), 2, "matmul requires 2D tensors");
+    pub fn try_matmul(&self, other: &Tensor) -> Result<Tensor, TensorError> {
+        if self.ndim() != 2 {
+            return Err(TensorError::DimensionMismatch {
+                expected: 2,
+                actual: self.ndim(),
+            });
+        }
+        if other.ndim() != 2 {
+            return Err(TensorError::DimensionMismatch {
+                expected: 2,
+                actual: other.ndim(),
+            });
+        }
         let m = self.shape[0];
         let k = self.shape[1];
-        assert_eq!(k, other.shape[0], "inner dimensions must match");
+        if k != other.shape[0] {
+            return Err(TensorError::IncompatibleInnerDimensions {
+                left: k,
+                right: other.shape[0],
+            });
+        }
         let n = other.shape[1];
 
         let mut result = Tensor::zeros(&[m, n]);
         SimdOps::matmul_tiled(&self.data, &other.data, &mut result.data, m, k, n);
-        result
+        Ok(result)
+    }
+
+    /// Matrix multiplication for 2D tensors.
+    pub fn matmul(&self, other: &Tensor) -> Tensor {
+        self.try_matmul(other)
+            .expect("valid matrix multiplication shapes")
     }
 
     /// Transpose a 2D tensor.
@@ -240,6 +444,31 @@ mod tests {
     }
 
     #[test]
+    fn test_strided_view_access() {
+        let t = Tensor::from_data(&[2, 3], vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0]);
+        let strides = default_strides(&t.shape);
+        let view = t.as_view(&strides);
+
+        assert_eq!(view.get(&[0, 0]), Some(10.0));
+        assert_eq!(view.get(&[0, 2]), Some(30.0));
+        assert_eq!(view.get(&[1, 1]), Some(50.0));
+        assert_eq!(view.get(&[2, 0]), None); // Out of bounds
+    }
+
+    #[test]
+    fn test_try_from_data_error_handling() {
+        let res = Tensor::try_from_data(&[2, 2], vec![1.0, 2.0, 3.0]);
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err(),
+            TensorError::DataLengthMismatch {
+                expected: 4,
+                actual: 3
+            }
+        );
+    }
+
+    #[test]
     fn test_add() {
         let a = Tensor::vector(vec![1.0, 2.0, 3.0]);
         let b = Tensor::vector(vec![4.0, 5.0, 6.0]);
@@ -271,8 +500,6 @@ mod tests {
 
     #[test]
     fn test_matmul() {
-        // [1 2] × [5 6] = [1*5+2*7  1*6+2*8] = [19 22]
-        // [3 4]   [7 8]   [3*5+4*7  3*6+4*8]   [43 50]
         let a = Tensor::from_data(&[2, 2], vec![1.0, 2.0, 3.0, 4.0]);
         let b = Tensor::from_data(&[2, 2], vec![5.0, 6.0, 7.0, 8.0]);
         let c = a.matmul(&b);
@@ -306,7 +533,6 @@ mod tests {
         let t = Tensor::vector(vec![1.0, 2.0, 3.0]);
         let s = t.softmax();
         assert!((s.sum() - 1.0).abs() < 1e-10);
-        // Larger input → larger probability
         assert!(s.data[2] > s.data[1]);
         assert!(s.data[1] > s.data[0]);
     }
