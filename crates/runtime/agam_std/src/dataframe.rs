@@ -90,6 +90,29 @@ impl Column {
     }
 }
 
+/// An error from DataFrame operations.
+#[derive(Debug, Clone)]
+pub enum DataFrameError {
+    /// Column not found by name.
+    ColumnNotFound(String),
+    /// Operation requires a numeric column (Float or Int).
+    InvalidColumnType {
+        column: String,
+        expected: &'static str,
+    },
+}
+
+impl std::fmt::Display for DataFrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataFrameError::ColumnNotFound(name) => write!(f, "column not found: '{name}'"),
+            DataFrameError::InvalidColumnType { column, expected } => {
+                write!(f, "column '{column}' is not {expected}")
+            }
+        }
+    }
+}
+
 /// A tabular DataFrame with named columns (columnar storage).
 #[derive(Debug, Clone)]
 pub struct DataFrame {
@@ -195,13 +218,22 @@ impl DataFrame {
         DataFrame { columns }
     }
 
-    /// Sort by a float column (ascending).
-    pub fn sort_by(&self, col_name: &str) -> DataFrame {
-        let col = self.column(col_name).expect("column not found");
+    /// Sort by a numeric column (ascending).
+    ///
+    /// Returns `Err(DataFrameError::ColumnNotFound)` if the column doesn't exist,
+    /// or `Err(DataFrameError::InvalidColumnType)` if it isn't numeric (Float or Int).
+    pub fn sort_by(&self, col_name: &str) -> Result<DataFrame, DataFrameError> {
+        let col = self
+            .column(col_name)
+            .ok_or_else(|| DataFrameError::ColumnNotFound(col_name.to_string()))?;
         let indices: Vec<usize> = match col {
             Column::Float(v) => {
                 let mut idx: Vec<usize> = (0..v.len()).collect();
-                idx.sort_by(|a, b| v[*a].partial_cmp(&v[*b]).unwrap());
+                idx.sort_by(|a, b| {
+                    v[*a]
+                        .partial_cmp(&v[*b])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 idx
             }
             Column::Int(v) => {
@@ -209,9 +241,14 @@ impl DataFrame {
                 idx.sort_by_key(|i| v[*i]);
                 idx
             }
-            _ => panic!("sort_by requires numeric column"),
+            _ => {
+                return Err(DataFrameError::InvalidColumnType {
+                    column: col_name.to_string(),
+                    expected: "numeric (Float or Int)",
+                });
+            }
         };
-        self.reindex(&indices)
+        Ok(self.reindex(&indices))
     }
 
     /// Reindex the DataFrame by a permutation.
@@ -369,7 +406,7 @@ mod tests {
     #[test]
     fn test_df_sort() {
         let df = sample_df();
-        let sorted = df.sort_by("age");
+        let sorted = df.sort_by("age").unwrap();
         let ages = sorted.column("age").unwrap().as_float().unwrap();
         assert_eq!(ages[0], 25.0);
         assert_eq!(ages[3], 35.0);
