@@ -2485,8 +2485,16 @@ fn main() {
                     }
                 }
 
+                let mir = match lower_to_optimized_mir(file, false) {
+                    Ok((mir, _)) => mir,
+                    Err(e) => {
+                        eprintln!("\x1b[1;31merror\x1b[0m compiling {}: {}", file.display(), e);
+                        continue;
+                    }
+                };
+
                 let result = harness.run_benchmark(name, || {
-                    std::hint::black_box(42);
+                    let _ = agam_jit::run_main(&mir, &[]);
                 });
 
                 println!(
