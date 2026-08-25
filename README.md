@@ -123,16 +123,16 @@ Complete real-time execution times measured natively (5-run median warm timing i
 | **`image_blur`** | **1.42 ms** 🥇 | 11.56 ms | 15.69 ms | 14.54 ms | 12.11 ms | 12.98 ms | 91.87 ms | **64.7x faster** |
 | **`base64_encode`** | **6.37 ms** 🥇 | 17.94 ms | 19.09 ms | 19.61 ms | 17.86 ms | 21.14 ms | 244.80 ms | **38.4x faster** |
 | **`json_parse`** | **3.61 ms** 🥇 | 11.15 ms | 12.09 ms | 11.65 ms | 14.95 ms | 18.37 ms | 183.74 ms | **50.9x faster** |
+| **`special_functions`** | **2.95 ms** ⚡ | **0.90 ms** 💾 | 0.96 ms 🚀 | **0.75 ms** ⚙️ 🥇 | 0.91 ms 🦀 | — | 32.70 ms 🐍 | **36.3x faster** |
 
 ```
 Native Execution Speed (Lower is Faster):
-[Agam LLVM AOT] ██ 11.31ms (Fibonacci n=32)
-[Agam Native JIT]███ 15.03ms
-[Rustc -O]      ████ 17.84ms
-[Agam C AOT]    ████ 18.83ms
-[Clang++ 22]    ████ 19.36ms
-[Go 1.26]       █████ 25.59ms
-[CPython 3.14]  ████████████████████████████████████████████████████████████ 349.50ms
+[C++ Clang -O3]  █ 0.75ms (Special Functions 2,000 pts)
+[Agam LLVM AOT]  █ 0.90ms
+[Rustc -O]       █ 0.91ms
+[Agam C AOT]     █ 0.96ms
+[Agam Native JIT]███ 2.95ms
+[CPython 3.14]   ████████████████████████████████ 32.70ms
 ```
 
 ---

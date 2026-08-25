@@ -2402,7 +2402,7 @@ impl LlvmEmitter {
             Op::ConstFloat(val) => {
                 values.insert(
                     instr.result,
-                    ValueRef::new(result_ty, format!("f0x{:016X}", val.to_bits()), result_sign),
+                    ValueRef::new(result_ty, format!("0x{:016X}", val.to_bits()), result_sign),
                 );
             }
             Op::ConstBool(val) => {

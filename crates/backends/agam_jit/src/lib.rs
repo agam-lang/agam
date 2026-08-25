@@ -3192,9 +3192,9 @@ fn emit_cast(
         {
             let int_type = target.clif_type(pointer_type);
             if target.int_spec().map(|(_, signed)| signed).unwrap_or(false) {
-                builder.ins().fcvt_to_sint(int_type, value)
+                builder.ins().fcvt_to_sint_sat(int_type, value)
             } else {
-                builder.ins().fcvt_to_uint(int_type, value)
+                builder.ins().fcvt_to_uint_sat(int_type, value)
             }
         }
         (source, target)
