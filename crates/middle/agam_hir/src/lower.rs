@@ -569,7 +569,18 @@ impl HirLowering {
     ) -> HirExpr {
         let id = self.fresh_id();
         let (ty, kind) = match &expr.kind {
-            ExprKind::IntLiteral(v) => (self.types.i32(), HirExprKind::IntLit(*v)),
+            ExprKind::IntLiteral(v) => {
+                let ty = expected_ty
+                    .filter(|ty| matches!(self.types.get(*ty), Type::Int(_) | Type::UInt(_)))
+                    .unwrap_or_else(|| {
+                        if *v > i32::MAX as i64 || *v < i32::MIN as i64 {
+                            self.types.i64()
+                        } else {
+                            self.types.i32()
+                        }
+                    });
+                (ty, HirExprKind::IntLit(*v))
+            }
             ExprKind::FloatLiteral(v) => (self.types.f64(), HirExprKind::FloatLit(*v)),
             ExprKind::BoolLiteral(v) => (self.types.bool(), HirExprKind::BoolLit(*v)),
             ExprKind::StringLiteral(v) => (self.types.str(), HirExprKind::StringLit(v.clone())),

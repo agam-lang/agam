@@ -84,6 +84,20 @@ pub enum IntSize {
     ISize,
 }
 
+impl IntSize {
+    pub fn bits(&self) -> u32 {
+        match self {
+            IntSize::I8 => 8,
+            IntSize::I16 => 16,
+            IntSize::I32 => 32,
+            IntSize::I64 | IntSize::ISize => 64,
+            IntSize::I128 => 128,
+            IntSize::I256 => 256,
+            IntSize::I512 => 512,
+        }
+    }
+}
+
 /// Floating-point size variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FloatSize {

@@ -92,39 +92,47 @@ flowchart TD
 
 ---
 
-### 📊 1. Multi-Compiler Performance Matrix (Measured Natively in Linux)
+### 📊 1. Multi-Compiler Performance Matrix (Measured on Windows 11 Native x86_64)
 
-Complete real-time execution times measured natively on high-performance mode:
+Complete real-time execution times measured natively (5-run median warm timing in ms):
 
-| Benchmark Workload | **Agam Native JIT** ⚡ | **Agam LLVM AOT** 💾 | **GCC 15 (`-O3`)** 🐧 | **Clang++ 21 (`-O3`)** ⚙️ | **Rustc 1.93 (`-O`)** 🦀 | **CPython 3.14** 🐍 |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **`fibonacci` ($n=32$)** | 16.00 ms | **0.73 ms** 🥇 | 3.88 ms | 7.52 ms | 6.16 ms | 209.51 ms (287x) |
-| **`binary_search`** (Logarithmic) | **0.36 ms** 🥇 | 0.74 ms | 0.62 ms | 1.37 ms | 0.78 ms | 28.67 ms (79.6x) |
-| **`quicksort`** (Partitioning) | **0.61 ms** 🥇 | 3.10 ms | 0.67 ms | 1.36 ms | 0.91 ms | 31.38 ms (51.4x) |
-| **`dot_product`** (SIMD Vector) | **0.43 ms** 🥇 | 0.86 ms | 0.69 ms | 1.13 ms | 0.90 ms | 34.11 ms (79.3x) |
-| **`prime_sieve`** (Bit Sieve) | **1.32 ms** 🥇 | 7.38 ms | 1.67 ms | 2.37 ms | 1.56 ms | 38.07 ms (28.8x) |
-| **`ocudu_5g_phy`** (5G LDPC) | 0.92 ms | **0.66 ms** 🥇 | 1.10 ms | 1.14 ms | 0.83 ms | 34.55 ms (52.3x) |
-| **`c_ray_4k`** (Ray Tracing) | 0.90 ms | **0.71 ms** 🥇 | 1.16 ms | 1.25 ms | 0.75 ms | 109.24 ms (153.8x) |
-| **`video_kvazaar`** (HEVC Intra)| **0.57 ms** 🥇 | 0.80 ms | 1.40 ms | 1.53 ms | 3.81 ms | 905.13 ms (1,588x) |
-| **`valkey_kv_store`** (In-Memory KV)| 1.15 ms | **0.89 ms** 🥇 | 1.27 ms | 1.25 ms | 0.98 ms | 41.08 ms (46.1x) |
-| **`matrix_multiply`** (GEMM Tile) | 1.11 ms | 0.99 ms | **0.71 ms** 🥇 | 1.23 ms | 0.92 ms | 55.02 ms (49.5x) |
-| **`flac_audio_encode`** (LPC) | **0.73 ms** 🥇 | 1.02 ms | 1.43 ms | 1.43 ms | 1.05 ms | 46.76 ms (64.0x) |
-| **`image_blur`** (2D Convolution) | 1.53 ms | 1.13 ms | **0.86 ms** 🥇 | 1.33 ms | 0.97 ms | 63.18 ms (41.2x) |
-| **`graphics_magick`** (Filter) | 2.27 ms | 1.57 ms | 1.98 ms | 2.04 ms | **1.06 ms** 🥇 | 49.71 ms (21.9x) |
-| **`webp_encode`** (Paeth) | 2.13 ms | 41.86 ms | 1.97 ms | 1.79 ms | **0.95 ms** 🥇 | 48.35 ms (22.7x) |
-| **`nbody_simulation`** (Physics)| 7.26 ms | 4.09 ms | **3.94 ms** 🥇 | 4.47 ms | **3.94 ms** 🥇 | 212.62 ms (29.2x) |
-| **`mandelbrot_set`** (Fractal) | 7.78 ms | 6.66 ms | **6.58 ms** 🥇 | 7.10 ms | 6.76 ms | 244.79 ms (31.4x) |
-| **`edit_distance`** (DP) | 14.03 ms | 12.68 ms | **10.26 ms** 🥇 | 11.99 ms | 10.25 ms | 636.60 ms (45.3x) |
-| **`liquid_dsp_filter`** (FIR 32) | 25.92 ms | 29.03 ms | **2.52 ms** 🥇 | 3.26 ms | 6.31 ms | 453.43 ms (17.5x) |
+| Benchmark Workload | **Agam JIT** ⚡ | **Agam LLVM AOT** 💾 | **Agam C AOT** 🚀 | **C++ Clang -O3** ⚙️ | **Rustc -O** 🦀 | **Go** 🦫 | **Python 3.14** 🐍 | **Agam vs Python** |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`fibonacci`** | 15.03 ms | **11.31 ms** 🥇 | 18.83 ms | 19.36 ms | 17.84 ms | 25.59 ms | 349.50 ms | **30.9x faster** |
+| **`quicksort`** | **0.72 ms** 🥇 | 13.66 ms | 11.81 ms | 12.10 ms | 11.63 ms | 13.61 ms | 40.46 ms | **56.2x faster** |
+| **`prime_sieve`** | **1.32 ms** 🥇 | 20.07 ms | 12.14 ms | 14.81 ms | 13.37 ms | 14.31 ms | 52.42 ms | **39.7x faster** |
+| **`binary_search`** | **0.36 ms** 🥇 | 10.31 ms | 10.45 ms | 12.20 ms | 11.69 ms | 13.97 ms | 31.19 ms | **86.6x faster** |
+| **`edit_distance`** | **14.74 ms** 🥇 | 25.63 ms | 20.78 ms | 22.47 ms | 21.34 ms | 26.70 ms | 910.89 ms | **61.8x faster** |
+| **`matrix_multiply`** | **0.66 ms** 🥇 | 10.64 ms | 10.93 ms | 12.09 ms | 10.66 ms | 13.21 ms | 53.37 ms | **80.9x faster** |
+| **`monte_carlo_pi`** | **6.72 ms** 🥇 | 15.79 ms | 16.51 ms | 16.33 ms | 16.63 ms | 18.93 ms | 219.23 ms | **32.6x faster** |
+| **`fft`** | **0.45 ms** 🥇 | 11.87 ms | 11.68 ms | 13.12 ms | 11.43 ms | 15.05 ms | 38.98 ms | **86.6x faster** |
+| **`polynomial_eval`** | 64.21 ms | **52.87 ms** | 56.18 ms | **15.56 ms** 🥇 | 53.86 ms | 54.02 ms | 1159.62 ms | **21.9x faster** |
+| **`liquid_dsp_filter`** | **3.64 ms** 🥇 | 14.08 ms | 16.89 ms | 14.73 ms | 14.32 ms | 20.39 ms | 206.06 ms | **56.6x faster** |
+| **`hashmap_operations`** | **14.97 ms** 🥇 | 23.33 ms | 20.64 ms | 19.75 ms | 18.31 ms | 28.29 ms | 914.85 ms | **61.1x faster** |
+| **`ring_buffer`** | 91.96 ms | 67.86 ms | **51.02 ms** 🥇 | 51.13 ms | 56.51 ms | 62.95 ms | 2193.74 ms | **43.0x faster** |
+| **`valkey_kv_store`** | **1.38 ms** 🥇 | 12.45 ms | 11.91 ms | 11.04 ms | 11.17 ms | — | 57.79 ms | **41.9x faster** |
+| **`lz77_compress`** | **0.86 ms** 🥇 | 12.92 ms | 10.51 ms | 12.41 ms | 13.10 ms | 14.86 ms | 36.60 ms | **42.6x faster** |
+| **`rle_codec`** | **3.21 ms** 🥇 | 11.64 ms | 13.16 ms | 12.32 ms | 13.09 ms | 19.16 ms | 78.30 ms | **24.4x faster** |
+| **`autodiff`** | **22.42 ms** 🥇 | 28.23 ms | 31.93 ms | 27.28 ms | 28.29 ms | 30.00 ms | 507.16 ms | **22.6x faster** |
+| **`softmax`** | **20.05 ms** 🥇 | 25.07 ms | 34.55 ms | 34.99 ms | 27.38 ms | 31.51 ms | 1065.27 ms | **53.1x faster** |
+| **`chacha20_cipher`** | **0.95 ms** 🥇 | 18.96 ms | 9.85 ms | 10.15 ms | 10.28 ms | 13.55 ms | 87.76 ms | **92.4x faster** |
+| **`crc32_checksum`** | **0.99 ms** 🥇 | 13.67 ms | 10.31 ms | 9.71 ms | 10.13 ms | 13.66 ms | 58.09 ms | **58.7x faster** |
+| **`sha256_hash`** | **1.05 ms** 🥇 | 36.88 ms | 10.25 ms | 13.86 ms | 12.48 ms | 15.61 ms | 72.95 ms | **69.5x faster** |
+| **`dot_product`** | **0.43 ms** 🥇 | 12.64 ms | 11.80 ms | 13.43 ms | 10.43 ms | 14.15 ms | 37.95 ms | **88.3x faster** |
+| **`mandelbrot_set`** | **7.75 ms** 🥇 | 17.71 ms | 16.58 ms | 16.25 ms | 19.03 ms | 21.21 ms | 452.36 ms | **58.4x faster** |
+| **`image_blur`** | **1.42 ms** 🥇 | 11.56 ms | 15.69 ms | 14.54 ms | 12.11 ms | 12.98 ms | 91.87 ms | **64.7x faster** |
+| **`base64_encode`** | **6.37 ms** 🥇 | 17.94 ms | 19.09 ms | 19.61 ms | 17.86 ms | 21.14 ms | 244.80 ms | **38.4x faster** |
+| **`json_parse`** | **3.61 ms** 🥇 | 11.15 ms | 12.09 ms | 11.65 ms | 14.95 ms | 18.37 ms | 183.74 ms | **50.9x faster** |
 
 ```
 Native Execution Speed (Lower is Faster):
-[Agam LLVM AOT] ██ 0.73ms (Fibonacci n=32)
-[GCC 15 -O3]    ████ 3.88ms
-[Rustc 1.93]    ██████ 6.16ms
-[Clang++ 21]    ████████ 7.52ms
-[Agam Native JIT]████████████████ 16.00ms
-[CPython 3.14]  ████████████████████████████████████████████████████████████ 209.51ms
+[Agam LLVM AOT] ██ 11.31ms (Fibonacci n=32)
+[Agam Native JIT]███ 15.03ms
+[Rustc -O]      ████ 17.84ms
+[Agam C AOT]    ████ 18.83ms
+[Clang++ 22]    ████ 19.36ms
+[Go 1.26]       █████ 25.59ms
+[CPython 3.14]  ████████████████████████████████████████████████████████████ 349.50ms
 ```
 
 ---

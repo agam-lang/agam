@@ -1,6 +1,10 @@
 /* ── Agam Effect Runtime ───────────────────── */
 #include <sys/stat.h>
 #include <errno.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <io.h>
+#endif
 
 /* FileSystem.exists(path) -> bool */
 agam_bool agam_effect_FileSystem_exists(agam_str path) {

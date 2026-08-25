@@ -184,9 +184,33 @@ impl InferenceEngine {
             // Error type absorbs everything (error recovery).
             (Type::Error, _) | (_, Type::Error) => Ok(()),
 
-            // Structural equality for primitives.
-            (Type::Int(a), Type::Int(b)) if a == b => Ok(()),
-            (Type::UInt(a), Type::UInt(b)) if a == b => Ok(()),
+            // Structural equality for primitives and integer widening.
+            (Type::Int(a), Type::Int(b)) => {
+                if a == b {
+                    Ok(())
+                } else {
+                    let wider = if a.bits() >= b.bits() { ra } else { rb };
+                    self.uf.bind(ra, wider);
+                    self.uf.bind(rb, wider);
+                    Ok(())
+                }
+            }
+            (Type::UInt(a), Type::UInt(b)) => {
+                if a == b {
+                    Ok(())
+                } else {
+                    let wider = if a.bits() >= b.bits() { ra } else { rb };
+                    self.uf.bind(ra, wider);
+                    self.uf.bind(rb, wider);
+                    Ok(())
+                }
+            }
+            (Type::Int(a), Type::UInt(b)) | (Type::UInt(b), Type::Int(a)) => {
+                let wider = if a.bits() >= b.bits() { ra } else { rb };
+                self.uf.bind(ra, wider);
+                self.uf.bind(rb, wider);
+                Ok(())
+            }
             (Type::Float(a), Type::Float(b)) if a == b => Ok(()),
             (Type::Bool, Type::Bool) => Ok(()),
             (Type::Char, Type::Char) => Ok(()),

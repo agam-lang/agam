@@ -9,6 +9,12 @@ use agam_sema::types::TypeStore;
 
 use crate::ir::*;
 
+#[derive(Clone, Copy)]
+struct LoopContext {
+    cond_block: BlockId,
+    after_block: BlockId,
+}
+
 /// The MIR lowering context.
 pub struct MirLowering {
     next_value: u32,
@@ -24,6 +30,7 @@ pub struct MirLowering {
     known_methods: std::collections::HashMap<String, String>,
     /// Local variable aliases tracking function and lambda assignments (e.g. "f" -> "__lambda_0").
     var_aliases: std::collections::HashMap<String, String>,
+    loop_stack: Vec<LoopContext>,
 }
 
 impl MirLowering {
@@ -38,6 +45,7 @@ impl MirLowering {
             variant_tags: std::collections::HashMap::new(),
             known_methods: std::collections::HashMap::new(),
             var_aliases: std::collections::HashMap::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -52,6 +60,7 @@ impl MirLowering {
             variant_tags: std::collections::HashMap::new(),
             known_methods: std::collections::HashMap::new(),
             var_aliases: std::collections::HashMap::new(),
+            loop_stack: Vec::new(),
         }
     }
 
@@ -159,6 +168,7 @@ impl MirLowering {
         self.blocks.clear();
         self.current_instrs.clear();
         self.var_aliases.clear();
+        self.loop_stack.clear();
 
         let entry = self.fresh_block();
         self.current_block = entry;
@@ -268,11 +278,30 @@ impl MirLowering {
                     else_block: after_block,
                 });
 
+                self.loop_stack.push(LoopContext {
+                    cond_block,
+                    after_block,
+                });
+
                 self.current_block = body_block;
                 self.lower_block(body);
                 self.finish_block(Terminator::Jump(cond_block));
 
+                self.loop_stack.pop();
+
                 self.current_block = after_block;
+            }
+            HirStmt::Break(_) => {
+                if let Some(ctx) = self.loop_stack.last().copied() {
+                    self.finish_block(Terminator::Jump(ctx.after_block));
+                    self.current_block = self.fresh_block();
+                }
+            }
+            HirStmt::Continue => {
+                if let Some(ctx) = self.loop_stack.last().copied() {
+                    self.finish_block(Terminator::Jump(ctx.cond_block));
+                    self.current_block = self.fresh_block();
+                }
             }
             HirStmt::If {
                 condition,

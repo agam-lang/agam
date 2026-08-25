@@ -249,7 +249,13 @@ impl TypeChecker {
     fn infer_expr(&mut self, expr: &Expr) -> TypeId {
         match &expr.kind {
             // ── Literals ──
-            ExprKind::IntLiteral(_) => self.types.i32(),
+            ExprKind::IntLiteral(v) => {
+                if *v > i32::MAX as i64 || *v < i32::MIN as i64 {
+                    self.types.i64()
+                } else {
+                    self.types.i32()
+                }
+            }
             ExprKind::FloatLiteral(_) => self.types.f64(),
             ExprKind::StringLiteral(_) => self.types.str(),
             ExprKind::FStringLiteral { parts } => {
