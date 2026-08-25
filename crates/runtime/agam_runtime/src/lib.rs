@@ -18,6 +18,7 @@ pub mod contract;
 pub mod coroutine;
 pub mod crypto;
 pub mod effects;
+pub mod export;
 pub mod hwinfo;
 pub mod pqc;
 pub mod sandbox;

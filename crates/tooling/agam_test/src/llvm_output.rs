@@ -59,7 +59,8 @@ fn compute_scalars(a: i32, b: i64, f: f64) -> f64:
 "#;
         let llvm = compile_to_llvm(src);
         assert!(
-            llvm.contains("define noundef double @agam_compute_scalars("),
+            llvm.contains("define internal noundef double @agam_compute_scalars(")
+                || llvm.contains("define noundef double @agam_compute_scalars("),
             "must emit typed LLVM function signature"
         );
         assert!(llvm.contains("i32"), "must contain i32 parameter type");
@@ -133,7 +134,8 @@ fn main() -> i32:
 "#;
         let llvm = compile_to_llvm(src);
         assert!(
-            llvm.contains("define noundef i32 @agam_fib("),
+            llvm.contains("define internal noundef i32 @agam_fib(")
+                || llvm.contains("define noundef i32 @agam_fib("),
             "must define fib"
         );
         assert!(
@@ -159,7 +161,8 @@ fn sum_matrix(rows: i32, cols: i32) -> i32:
 "#;
         let llvm = compile_to_llvm(src);
         assert!(
-            llvm.contains("define noundef i32 @agam_sum_matrix("),
+            llvm.contains("define internal noundef i32 @agam_sum_matrix(")
+                || llvm.contains("define noundef i32 @agam_sum_matrix("),
             "must define sum_matrix"
         );
         assert!(

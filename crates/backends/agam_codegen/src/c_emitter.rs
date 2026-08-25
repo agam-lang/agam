@@ -106,6 +106,77 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
         local_types: HashMap::new(),
     };
 
+    for block in &func.blocks {
+        for instr in &block.instructions {
+            match &instr.op {
+                Op::GetField { object, .. } => {
+                    layout.value_types.insert(*object, CType::Struct);
+                    for prior_block in &func.blocks {
+                        for prior_instr in &prior_block.instructions {
+                            if prior_instr.result == *object
+                                && let Op::LoadLocal(name) = &prior_instr.op
+                            {
+                                layout.local_types.insert(name.clone(), CType::Struct);
+                                for (index, param) in func.params.iter().enumerate() {
+                                    if &param.name == name
+                                        && let Some(p) = layout.params.get_mut(index)
+                                    {
+                                        *p = CType::Struct;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (index, param) in func.params.iter().enumerate() {
+                        if param.value == *object
+                            && let Some(p) = layout.params.get_mut(index)
+                        {
+                            *p = CType::Struct;
+                        }
+                    }
+                }
+                Op::EnumTag(obj) | Op::EnumPayload { value: obj, .. } => {
+                    layout.value_types.insert(*obj, CType::Enum);
+                    for prior_block in &func.blocks {
+                        for prior_instr in &prior_block.instructions {
+                            if prior_instr.result == *obj
+                                && let Op::LoadLocal(name) = &prior_instr.op
+                            {
+                                layout.local_types.insert(name.clone(), CType::Enum);
+                                for (index, param) in func.params.iter().enumerate() {
+                                    if &param.name == name
+                                        && let Some(p) = layout.params.get_mut(index)
+                                    {
+                                        *p = CType::Enum;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (index, param) in func.params.iter().enumerate() {
+                        if param.value == *obj
+                            && let Some(p) = layout.params.get_mut(index)
+                        {
+                            *p = CType::Enum;
+                        }
+                    }
+                }
+                Op::StructConstruct { .. } => {
+                    layout.value_types.insert(instr.result, CType::Struct);
+                }
+                Op::EnumConstruct { .. } => {
+                    layout.value_types.insert(instr.result, CType::Enum);
+                }
+                Op::StoreLocal { name, value } => {
+                    if let Some(val_ty) = layout.value_types.get(value).copied() {
+                        layout.local_types.insert(name.clone(), val_ty);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     for (index, param) in func.params.iter().enumerate() {
         let ty = layout.params.get(index).copied().unwrap_or(CType::Int);
         layout.value_types.insert(param.value, ty);
@@ -157,10 +228,13 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                 }
                 Op::StoreIndex { value, .. } => value_type(&layout, *value),
                 Op::Alloca { name, ty } => {
-                    let ty = infer_ctype_from_type_id(*ty)
-                        .or_else(|| layout.local_types.get(name).copied())
+                    let ty = layout
+                        .local_types
+                        .get(name)
+                        .copied()
+                        .or_else(|| infer_ctype_from_type_id(*ty))
                         .unwrap_or(CType::Int);
-                    layout.local_types.entry(name.clone()).or_insert(ty);
+                    layout.local_types.insert(name.clone(), ty);
                     ty
                 }
                 Op::GetField { object, .. } => value_type(&layout, *object),
@@ -207,15 +281,19 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
 }
 
 fn infer_ctype_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<CType> {
-    match builtin_type_by_id(type_id)? {
-        Type::Bool => Some(CType::Bool),
-        Type::Str => Some(CType::Str),
-        Type::Float(FloatSize::F32 | FloatSize::F64) => Some(CType::Float),
-        Type::Int(_) | Type::UInt(_) => Some(CType::Int),
-        Type::Ref { .. } | Type::Ptr { .. } | Type::Slice(_) | Type::Array { .. } => {
-            Some(CType::OpaquePtr)
+    if let Some(builtin) = builtin_type_by_id(type_id) {
+        match builtin {
+            Type::Bool => Some(CType::Bool),
+            Type::Str => Some(CType::Str),
+            Type::Float(FloatSize::F32 | FloatSize::F64) => Some(CType::Float),
+            Type::Int(_) | Type::UInt(_) => Some(CType::Int),
+            Type::Ref { .. } | Type::Ptr { .. } | Type::Slice(_) | Type::Array { .. } => {
+                Some(CType::OpaquePtr)
+            }
+            _ => None,
         }
-        _ => None,
+    } else {
+        None
     }
 }
 
@@ -468,6 +546,43 @@ fn emit_runtime_prelude(out: &mut String, module: &MirModule) {
     out.push('\n');
 }
 
+fn module_max_enum_payload(module: &MirModule) -> usize {
+    let mut max_payload = 8usize;
+    for func in &module.functions {
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                match &instr.op {
+                    Op::EnumConstruct { payload, .. } => {
+                        max_payload = max_payload.max(payload.len());
+                    }
+                    Op::EnumPayload { field_index, .. } => {
+                        max_payload = max_payload.max((*field_index as usize) + 1);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    max_payload
+}
+
+fn module_max_struct_fields(module: &MirModule) -> usize {
+    let mut max_fields = 8usize;
+    for layout in module.struct_layouts.values() {
+        max_fields = max_fields.max(layout.fields.len());
+    }
+    for func in &module.functions {
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                if let Op::StructConstruct { fields, .. } = &instr.op {
+                    max_fields = max_fields.max(fields.len());
+                }
+            }
+        }
+    }
+    max_fields
+}
+
 /// Emit a complete MIR module as C source code.
 pub fn emit_c(module: &MirModule) -> String {
     let layouts = analyze_module(module);
@@ -484,6 +599,8 @@ pub fn emit_c(module: &MirModule) -> String {
     writeln!(output).unwrap();
 
     // Type aliases
+    let max_enum_payload = module_max_enum_payload(module);
+    let max_struct_fields = module_max_struct_fields(module);
     writeln!(output, "typedef int64_t agam_int;").unwrap();
     writeln!(output, "typedef double agam_float;").unwrap();
     writeln!(output, "typedef int agam_bool;").unwrap();
@@ -497,10 +614,10 @@ pub fn emit_c(module: &MirModule) -> String {
     writeln!(output, "}} AgamEnumPayload;").unwrap();
     writeln!(output, "typedef struct {{").unwrap();
     writeln!(output, "  int32_t tag;").unwrap();
-    writeln!(output, "  AgamEnumPayload payload[8];").unwrap();
+    writeln!(output, "  AgamEnumPayload payload[{}];", max_enum_payload).unwrap();
     writeln!(output, "}} AgamEnum;").unwrap();
     writeln!(output, "typedef struct {{").unwrap();
-    writeln!(output, "  AgamEnumPayload fields[8];").unwrap();
+    writeln!(output, "  AgamEnumPayload fields[{}];", max_struct_fields).unwrap();
     writeln!(output, "}} AgamStruct;").unwrap();
     writeln!(output).unwrap();
 
@@ -789,7 +906,7 @@ fn emit_instruction(
         } => {
             writeln!(
                 out,
-                "  /* __v{}[__v{}] = __v{} */",
+                "  ((agam_int*)__v{})[__v{}] = (agam_int)__v{};",
                 object.0, index.0, value.0
             )
             .unwrap();
@@ -836,9 +953,10 @@ fn emit_instruction(
         Op::GetIndex { object, index } => {
             writeln!(
                 out,
-                "  {} {} = __v{}; /* [__v{}] */",
+                "  {} {} = ({})(((agam_int*)__v{})[__v{}]);",
                 result_ty.name(),
                 v,
+                result_ty.name(),
                 object.0,
                 index.0
             )

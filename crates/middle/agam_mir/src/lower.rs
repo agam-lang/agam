@@ -459,7 +459,29 @@ impl MirLowering {
                 }
             }
 
-            HirExprKind::Array(elems) | HirExprKind::Tuple(elems) => {
+            HirExprKind::Array(elems) => {
+                let arr_alloca = self.emit(
+                    ty,
+                    Op::Alloca {
+                        name: format!("__array_literal_{}", self.next_value),
+                        ty,
+                    },
+                );
+                for (idx, elem) in elems.iter().enumerate() {
+                    let elem_val = self.lower_expr(elem);
+                    let idx_val = self.emit(self.types.i64(), Op::ConstInt(idx as i64));
+                    self.emit(
+                        ty,
+                        Op::StoreIndex {
+                            object: arr_alloca,
+                            index: idx_val,
+                            value: elem_val,
+                        },
+                    );
+                }
+                arr_alloca
+            }
+            HirExprKind::Tuple(elems) => {
                 for e in elems {
                     self.lower_expr(e);
                 }

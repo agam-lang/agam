@@ -1,52 +1,62 @@
-# Agam
+# Agam (v0.1.0-alpha.1)
 
 [![CI](https://github.com/agam-lang/agam/actions/workflows/ci.yml/badge.svg)](https://github.com/agam-lang/agam/actions/workflows/ci.yml)
 [![SDK Dist](https://github.com/agam-lang/agam/actions/workflows/sdk-dist.yml/badge.svg)](https://github.com/agam-lang/agam/actions/workflows/sdk-dist.yml)
 [![agam-ffi Python](https://github.com/agam-lang/agam/actions/workflows/agam-ffi-python.yml/badge.svg)](https://github.com/agam-lang/agam/actions/workflows/agam-ffi-python.yml)
 ![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)
 
-Agam is a compiled language and toolchain implemented in Rust. The project goal is straightforward:
+> **⚠️ Project Status: Pre-Alpha / Active Research (`v0.1.0-alpha.1`)**  
+> Agam is an early-stage experimental compiled language implemented in Rust. It is actively evolving and exploring dual-syntax frontend compilation, Static Single Assignment (SSA) intermediate representation, in-memory Cranelift JIT execution, and direct LLVM 18+ ahead-of-time (AOT) machine code generation.
 
-- keep Python-level readability for everyday code
-- keep Rust-like safety and traceable compiler diagnostics
-- reach clang++-class native performance on Agam's proven native workloads
-- make AI, numerical, tensor, and data workflows language-native rather than wrapper-heavy library stories
+The project goal:
+- **Developer Ergonomics**: Python-style readability for everyday scripting (`@lang.base`)
+- **Systems Precision**: Explicit type direction and low-level control (`@lang.advance`)
+- **Native Throughput**: Competitive performance with optimized native backends via LLVM and Cranelift
+- **Unified SSA Pipeline**: Both syntax profiles lower to the exact same intermediate representation (MIR)
 
-Agam is its own language. It is not Python with different punctuation, and it is not a Rust macro layer.
+---
 
-## What Exists Today
+## What Exists Today (The Proven Subset)
 
-Agam is a complete, production-grade compiler toolchain spanning 27 workspace crates with 100% test pass rate and zero linter warnings under strict continuous integration:
+Agam's core compiler pipeline is implemented across a 27-crate modular Rust workspace:
 
-- **Frontend & Analysis**: `agam_lexer`, `agam_parser`, `agam_ast`, `agam_sema`, `agam_hir`, `agam_mir` with bidirectional type inference, Sandhi rule verification, and Pāṇinian structural composition.
+- **Frontend & Analysis**: `agam_lexer`, `agam_parser`, `agam_ast`, `agam_sema`, `agam_hir`, `agam_mir` with bidirectional type inference and Pratt parsing.
 - **Dual Compilation Backends**:
-  - **Cranelift Native JIT (`agam_jit`)**: In-memory execution with sub-15ms compilation latency and OSR dynamic profiling.
+  - **Cranelift Native JIT (`agam_jit`)**: In-memory execution with sub-15ms compilation latency for rapid iteration loops.
   - **LLVM 18+ AOT (`agam_codegen`)**: Direct SSA-to-LLVM IR lowering emitting standalone native binaries with `-O3` optimizations.
-- **AI & Hardware Acceleration**: Reverse-mode automatic differentiation (Baur-Strassen), shape-aware tensors (`agam_std::tensor`), SPIR-V 1.5 cooperative matrix Tensor Core acceleration, 2D `Tile<T, M, N>`, and NVIDIA Hopper TMA copy descriptors.
-- **Systems & Security**: Chāṇakya Durdharṣa capability-based sandboxing, NIST FIPS 203 ML-KEM / FIPS 204 ML-DSA post-quantum cryptography, and in-kernel eBPF program verification.
-- **First-Party Tooling**: Complete `agamc` CLI suite (`new`, `dev`, `build`, `run`, `test`, `bench`, `lint`, `fmt`, `doctor`, `audit`, `sbom`, `vendor`, `plugin`, `registry`).
+- **Memory Management Architecture**:
+  - **Default Mode (`@lang.base`)**: Automatic Reference Counting (ARC) with copy-on-write semantics for maximum high-level developer ergonomics.
+  - **Systems Mode (`strict { ... }`)**: Opt-in lexical affine ownership and move semantics for zero-cost resource management.
+- **First-Party Tooling**: `agamc` CLI suite (`new`, `dev`, `build`, `run`, `test`, `bench`, `lint`, `fmt`, `doctor`, `audit`, `sbom`, `registry`).
 
-## Current Status
+## Current Status by Subsystem
 
-| Area / Crate Group | Status | Capabilities & Verified Features |
+| Area / Crate Group | Current Status | Capabilities & Verified Features |
 | :--- | :--- | :--- |
-| **Core Frontend** (`agam_lexer`, `agam_parser`, `agam_ast`) | **Production** | UTF-8 span tracking, Pratt parser, dual `@lang.base` & `@lang.advance` profiles. |
-| **Middle-End SEMA & MIR** (`agam_sema`, `agam_hir`, `agam_mir`) | **Production** | Dominance frontiers, SSA transformation, GVN, SCCP, Baur-Strassen AD, E-graph rewrites. |
-| **Cranelift JIT Backend** (`agam_jit`) | **Production** | In-memory machine code execution, statistical benchmark harness, instant dev loop. |
-| **LLVM AOT Backend** (`agam_codegen`) | **Production** | LLVM 18+ IR emitter, C ABI exports, vectorization, cross-module link-time optimization (LTO). |
-| **Hardware & GPU** (`agam_std::gpu`, `agam_codegen::gpu_tuner`) | **Production** | SPIR-V 1.5 cooperative matrix tiles, genetic auto-tuner, TMA async memory pipeline. |
-| **Standard Library** (`agam_std`, `agam_runtime`) | **Production** | Tensors, ML primitives, async HTTP/1.1, lock-free IPC, ML-KEM-768 / ML-DSA-65 PQC, eBPF. |
-| **Developer Tooling** (`agam_driver`, `agam_pkg`, `agam_lint`, `agam_debug`) | **Production** | `agamc` unified build system, PubGrub SAT package resolver, DAP/DWARF debug bridge. |
-| **Interactive Scientific Suite** (`agamlab`) | **Production** | 8 modular crates for REPL, matrix algebra, signal processing, and native notebooks. |
+| **Core Frontend** (`agam_lexer`, `agam_parser`, `agam_ast`) | **Alpha (Actively Developed)** | UTF-8 span tracking, Pratt parser, dual `@lang.base` & `@lang.advance` profiles. |
+| **Middle-End SEMA & MIR** (`agam_sema`, `agam_hir`, `agam_mir`) | **Alpha (Actively Developed)** | Dominance frontiers, SSA transformation, GVN, SCCP constant propagation, E-graph rewrites. |
+| **Cranelift JIT Backend** (`agam_jit`) | **Alpha (Functional)** | In-memory machine code execution, statistical benchmark harness, instant dev loop. |
+| **LLVM AOT Backend** (`agam_codegen`) | **Alpha (Functional)** | LLVM 18+ IR emitter, C ABI exports, cross-module optimization. |
+| **Hardware & GPU** (`agam_std::gpu`, `agam_codegen::gpu_tuner`) | **Experimental Prototype** | Prototype SPIR-V shader emitter, experimental cooperative matrix tile descriptors. |
+| **Standard Library** (`agam_std`, `agam_runtime`) | **Experimental / Evolving** | Tensors, math primitives, basic async sockets, reference cryptographic algorithms. |
+| **Developer Tooling** (`agam_driver`, `agam_pkg`, `agam_lint`, `agam_debug`) | **Alpha (CLI Suite)** | `agamc` unified build system, local SAT package resolver, DWARF debug metadata bridge. |
+| **Interactive Scientific Suite** (`agamlab`) | **Experimental** | Modular crates for REPL, matrix algebra, and interactive notebooks. |
 
-## Language Direction
+---
 
-Agam unifies one coherent language across:
+## Language Scope
 
-- **Systems programming and bare-metal performance**
-- **AI, shape-aware tensors, autodiff, and numerical computing**
-- **Hardware-accelerated graphics, ray tracing, and GPU/NPU kernels**
-- **Capability-secure, sandboxed agent workflows and automated pipelines**
+Agam's currently proven and runnable language surface includes:
+- Functions (`fn`), recursion, and lexical scoping
+- Immutable and mutable bindings (`let`, `let mut`)
+- Control flow (`if`/`else`, `while`, `for` ranges)
+- Native primitive scalar types (`i8`..`i64`, `u8`..`u64`, `f32`, `f64`, `bool`, `str`)
+- Fixed-size arrays and slice indexing
+- Lexical closures and lambda expressions
+- Automatic Reference Counting (ARC) runtime memory management
+- Opt-in `strict { ... }` blocks for lexical affine single-ownership
+
+*(Note: Advanced features such as algebraic effects, fiber concurrency schedulers, and distributed package registries are in the RFC research phase and are not yet part of the stable compiler surface.)*
 
 ---
 
@@ -234,8 +244,8 @@ cargo run -p agam_driver -- dev
 Work directly with a single source file:
 
 ```bash
-cargo run -p agam_driver -- build examples/llvm_native_smoke.agam --fast
-cargo run -p agam_driver -- run examples/llvm_native_smoke.agam --backend jit
+cargo run -p agam_driver -- build examples/01_basics/01_hello_world_advance.agam --fast
+cargo run -p agam_driver -- run examples/01_basics/01_hello_world_base.agam --backend jit
 ```
 
 ## Development Environment Contract
@@ -286,7 +296,7 @@ agamc repl
 # Dedicated agent-facing execution tool
 printf 'fn main() -> i32 { println("hi"); return 0; }' | agamc exec
 printf '{"source":"fn main() -> i32 { println(\"hi\"); return 0; }","backend":"jit"}' | agamc exec --json
-agamc exec --file examples/hello.agam --pretty
+agamc exec --file examples/01_basics/01_hello_world_base.agam --pretty
 
 # Toolchain readiness
 agamc doctor
@@ -299,7 +309,7 @@ agamc cache status
 agamc env list
 agamc env inspect
 agamc env inspect release
-agamc build examples/hello.agam --env release
+agamc build examples/01_basics/01_hello_world_advance.agam --env release
 agamc run . --env dev
 
 # Validate or publish a source package into a local registry index
@@ -548,9 +558,9 @@ Agam currently supports three source styles:
 
 | Mode | When To Use It | Example |
 | --- | --- | --- |
-| `@lang.base` | indentation-significant, readable application code | [`examples/hello_base.agam`](./examples/hello_base.agam) |
-| `@lang.base.dynamic` | scripting-oriented workflows with lighter binding syntax | [`examples/hello_base_dynamic.agam`](./examples/hello_base_dynamic.agam) |
-| `@lang.advance` | brace-delimited, explicit native-style code | [`examples/hello_advance.agam`](./examples/hello_advance.agam) |
+| `@lang.base` | indentation-significant, readable application code | [`examples/01_basics/01_hello_world_base.agam`](../examples/01_basics/01_hello_world_base.agam) |
+| `@lang.base.dynamic` | scripting-oriented workflows with lighter binding syntax | [`examples/01_basics/fibonacci_base.agam`](../examples/01_basics/fibonacci_base.agam) |
+| `@lang.advance` | brace-delimited, explicit native-style code | [`examples/01_basics/01_hello_world_advance.agam`](../examples/01_basics/01_hello_world_advance.agam) |
 
 If you are unsure, start with `@lang.base` for readability or `@lang.advance` when you want the same explicit style used by most backend, benchmark, and LLVM-native examples.
 

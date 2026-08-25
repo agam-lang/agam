@@ -4,10 +4,12 @@
 
 pub mod async_concurrency;
 pub mod bench;
+pub mod buffer_indexing;
 pub mod c_output;
 pub mod compiler_fuzz;
 pub mod coverage;
 pub mod doctest;
+pub mod dynamic_structs;
 pub mod error_reporting;
 pub mod fuzz;
 pub mod gpu_output;

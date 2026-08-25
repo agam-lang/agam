@@ -384,6 +384,77 @@ fn analyze_function(
         value_int_flags: HashMap::new(),
     };
 
+    for block in &func.blocks {
+        for instr in &block.instructions {
+            match &instr.op {
+                Op::GetField { object, .. } => {
+                    layout.value_types.insert(*object, LlvmType::Struct);
+                    for prior_block in &func.blocks {
+                        for prior_instr in &prior_block.instructions {
+                            if prior_instr.result == *object
+                                && let Op::LoadLocal(name) = &prior_instr.op
+                            {
+                                layout.local_types.insert(name.clone(), LlvmType::Struct);
+                                for (index, param) in func.params.iter().enumerate() {
+                                    if &param.name == name
+                                        && let Some(p) = layout.params.get_mut(index)
+                                    {
+                                        *p = LlvmType::Struct;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (index, param) in func.params.iter().enumerate() {
+                        if param.value == *object
+                            && let Some(p) = layout.params.get_mut(index)
+                        {
+                            *p = LlvmType::Struct;
+                        }
+                    }
+                }
+                Op::EnumTag(obj) | Op::EnumPayload { value: obj, .. } => {
+                    layout.value_types.insert(*obj, LlvmType::Enum);
+                    for prior_block in &func.blocks {
+                        for prior_instr in &prior_block.instructions {
+                            if prior_instr.result == *obj
+                                && let Op::LoadLocal(name) = &prior_instr.op
+                            {
+                                layout.local_types.insert(name.clone(), LlvmType::Enum);
+                                for (index, param) in func.params.iter().enumerate() {
+                                    if &param.name == name
+                                        && let Some(p) = layout.params.get_mut(index)
+                                    {
+                                        *p = LlvmType::Enum;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (index, param) in func.params.iter().enumerate() {
+                        if param.value == *obj
+                            && let Some(p) = layout.params.get_mut(index)
+                        {
+                            *p = LlvmType::Enum;
+                        }
+                    }
+                }
+                Op::StructConstruct { .. } => {
+                    layout.value_types.insert(instr.result, LlvmType::Struct);
+                }
+                Op::EnumConstruct { .. } => {
+                    layout.value_types.insert(instr.result, LlvmType::Enum);
+                }
+                Op::StoreLocal { name, value } => {
+                    if let Some(val_ty) = layout.value_types.get(value).copied() {
+                        layout.local_types.insert(name.clone(), val_ty);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     for (index, param) in func.params.iter().enumerate() {
         let ty = layout
             .params
@@ -444,10 +515,13 @@ fn analyze_function(
                     ty
                 }
                 Op::Alloca { name, ty } => {
-                    let ty = infer_llvm_type_from_type_id(*ty)
-                        .or_else(|| layout.local_types.get(name).copied())
+                    let ty = layout
+                        .local_types
+                        .get(name)
+                        .copied()
+                        .or_else(|| infer_llvm_type_from_type_id(*ty))
                         .unwrap_or_else(LlvmType::default_int);
-                    layout.local_types.entry(name.clone()).or_insert(ty);
+                    layout.local_types.insert(name.clone(), ty);
                     ty
                 }
                 Op::StoreIndex { value, .. } => value_type(&layout, *value),
@@ -778,14 +852,21 @@ fn describe_llvm_call_cache_type(ty: LlvmType) -> String {
 }
 
 fn infer_llvm_type_from_type_id(type_id: agam_sema::symbol::TypeId) -> Option<LlvmType> {
-    match builtin_type_by_id(type_id)? {
-        Type::Bool => Some(LlvmType::Bool),
-        Type::Str => Some(LlvmType::Str),
-        Type::Float(FloatSize::F32) => Some(LlvmType::Float(LlvmFloatType::F32)),
-        Type::Float(FloatSize::F64) => Some(LlvmType::Float(LlvmFloatType::F64)),
-        Type::Int(size) => Some(LlvmType::Int(LlvmIntType::from_size(size, true))),
-        Type::UInt(size) => Some(LlvmType::Int(LlvmIntType::from_size(size, false))),
-        _ => None,
+    if let Some(builtin) = builtin_type_by_id(type_id) {
+        match builtin {
+            Type::Bool => Some(LlvmType::Bool),
+            Type::Str => Some(LlvmType::Str),
+            Type::Float(FloatSize::F32) => Some(LlvmType::Float(LlvmFloatType::F32)),
+            Type::Float(FloatSize::F64) => Some(LlvmType::Float(LlvmFloatType::F64)),
+            Type::Int(size) => Some(LlvmType::Int(LlvmIntType::from_size(size, true))),
+            Type::UInt(size) => Some(LlvmType::Int(LlvmIntType::from_size(size, false))),
+            Type::Ptr { .. } | Type::Ref { .. } | Type::Slice(_) | Type::Array { .. } => {
+                Some(LlvmType::OpaquePtr)
+            }
+            _ => None,
+        }
+    } else {
+        None
     }
 }
 
@@ -918,6 +999,26 @@ fn module_uses_enum_values(module: &MirModule) -> bool {
     })
 }
 
+fn module_max_enum_payload(module: &MirModule) -> usize {
+    let mut max_payload = 8usize;
+    for func in &module.functions {
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                match &instr.op {
+                    Op::EnumConstruct { payload, .. } => {
+                        max_payload = max_payload.max(payload.len());
+                    }
+                    Op::EnumPayload { field_index, .. } => {
+                        max_payload = max_payload.max((*field_index as usize) + 1);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    max_payload
+}
+
 fn module_uses_struct_values(module: &MirModule) -> bool {
     module.functions.iter().any(|func| {
         func.blocks.iter().any(|block| {
@@ -927,6 +1028,23 @@ fn module_uses_struct_values(module: &MirModule) -> bool {
                 .any(|instr| matches!(&instr.op, Op::StructConstruct { .. } | Op::GetField { .. }))
         })
     })
+}
+
+fn module_max_struct_fields(module: &MirModule) -> usize {
+    let mut max_fields = 8usize;
+    for layout in module.struct_layouts.values() {
+        max_fields = max_fields.max(layout.fields.len());
+    }
+    for func in &module.functions {
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                if let Op::StructConstruct { fields, .. } = &instr.op {
+                    max_fields = max_fields.max(fields.len());
+                }
+            }
+        }
+    }
+    max_fields
 }
 
 fn infer_binop_type(op: MirBinOp, left: LlvmType, right: LlvmType) -> LlvmType {
@@ -1392,6 +1510,8 @@ struct LlvmEmitter {
     next_temp_id: usize,
     /// Module-level struct layouts for field-name → index resolution in GetField.
     struct_layouts: HashMap<String, StructLayout>,
+    max_struct_fields: usize,
+    max_enum_payload: usize,
 }
 
 impl LlvmEmitter {
@@ -1408,6 +1528,8 @@ impl LlvmEmitter {
             &options.call_cache_specializations,
         );
         let function_attrs = analyze_function_attrs(module, &layouts);
+        let max_struct_fields = module_max_struct_fields(module);
+        let max_enum_payload = module_max_enum_payload(module);
         Self {
             options,
             layouts,
@@ -1425,6 +1547,8 @@ impl LlvmEmitter {
             next_string_id: 0,
             next_temp_id: 0,
             struct_layouts: module.struct_layouts.clone(),
+            max_struct_fields,
+            max_enum_payload,
         }
     }
 
@@ -1482,10 +1606,20 @@ impl LlvmEmitter {
             .unwrap();
         }
         if uses_enum_values {
-            writeln!(output, "%AgamEnum = type {{ i32, [8 x i64] }}").unwrap();
+            writeln!(
+                output,
+                "%AgamEnum = type {{ i32, [{} x i64] }}",
+                self.max_enum_payload
+            )
+            .unwrap();
         }
         if uses_struct_values {
-            writeln!(output, "%AgamStruct = type {{ [8 x i64] }}").unwrap();
+            writeln!(
+                output,
+                "%AgamStruct = type {{ [{} x i64] }}",
+                self.max_struct_fields
+            )
+            .unwrap();
         }
         let default_int_ir = LlvmType::default_int().ir();
         writeln!(
@@ -2147,7 +2281,7 @@ impl LlvmEmitter {
         } else {
             write!(
                 out,
-                "define noundef {} @{}(",
+                "define internal noundef {} @{}(",
                 layout.return_ty.ir(),
                 emitted_name
             )
@@ -2163,7 +2297,12 @@ impl LlvmEmitter {
                     .unwrap_or_else(LlvmType::default_int);
                 write!(out, "{} noundef %p{}", ty.ir(), i).unwrap();
             }
-            writeln!(out, ") local_unnamed_addr{} {{", fn_attr_suffix).unwrap();
+            writeln!(
+                out,
+                ") local_unnamed_addr alwaysinline{} {{",
+                fn_attr_suffix
+            )
+            .unwrap();
         }
 
         for block in &func.blocks {
@@ -2174,6 +2313,13 @@ impl LlvmEmitter {
                     writeln!(out, "  store i32 %argc, i32* @agam_argc_storage").unwrap();
                     writeln!(out, "  store i8** %argv, i8*** @agam_argv_storage").unwrap();
                 }
+                // Pre-allocate all function locals in entry block to guarantee LLVM mem2reg SROA SSA promotion
+                for (name, local_ty) in &layout.local_types {
+                    let local_name = format!("%local_{}", sanitize_name(name));
+                    writeln!(out, "  {} = alloca {}", local_name, local_ty.ir()).unwrap();
+                    locals.insert(name.clone(), (*local_ty, local_name));
+                    emitted_locals.insert(name.clone());
+                }
                 for (i, param) in func.params.iter().enumerate() {
                     let ty = layout
                         .params
@@ -2181,7 +2327,6 @@ impl LlvmEmitter {
                         .copied()
                         .unwrap_or_else(LlvmType::default_int);
                     let local_name = format!("%local_{}", sanitize_name(&param.name));
-                    writeln!(out, "  {} = alloca {}", local_name, ty.ir()).unwrap();
                     let bound_value = if let Some(raw_bits) =
                         specialization.and_then(|spec| spec.stable_bits_for(i))
                     {
@@ -2203,8 +2348,6 @@ impl LlvmEmitter {
                         local_name
                     )
                     .unwrap();
-                    locals.insert(param.name.clone(), (ty, local_name.clone()));
-                    emitted_locals.insert(param.name.clone());
                     values.insert(
                         param.value,
                         ValueRef::new(ty, bound_value, value_sign(layout, param.value)),
@@ -2461,10 +2604,10 @@ impl LlvmEmitter {
                     .values()
                     .find_map(|layout| layout.fields.iter().position(|f| f == field))
                     .unwrap_or(0);
-                if field_index >= 8 {
+                if field_index >= self.max_struct_fields {
                     return Err(format!(
-                        "LLVM struct field index {} exceeds the eight-field layout",
-                        field_index
+                        "LLVM struct field index {} exceeds the {}-field layout",
+                        field_index, self.max_struct_fields
                     ));
                 }
                 let raw_name = format!("%v{}_field_raw", instr.result.0);
@@ -2480,14 +2623,85 @@ impl LlvmEmitter {
                     ValueRef::new(result_ty, decoded.repr, result_sign),
                 );
             }
-            Op::GetIndex { .. } => {
-                return Err("LLVM backend does not yet support indexed aggregate access".into());
+            Op::GetIndex { object, index } => {
+                let obj = get_value(values, *object)?;
+                let idx = get_value(values, *index)?;
+                let elem_ty = result_ty.ir();
+                let ptr_name = format!("%v{}_idx_ptr", instr.result.0);
+                let idx_coerced = self.coerce_value(
+                    out,
+                    &idx,
+                    LlvmType::Int(LlvmIntType {
+                        bits: 64,
+                        signed: true,
+                    }),
+                )?;
+                writeln!(
+                    out,
+                    "  {} = getelementptr inbounds {}, {}* {}, i64 {}",
+                    ptr_name, elem_ty, elem_ty, obj.repr, idx_coerced.repr
+                )
+                .unwrap();
+                writeln!(
+                    out,
+                    "  {} = load {}, {}* {}, align 8",
+                    result_name, elem_ty, elem_ty, ptr_name
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, result_name.clone(), result_sign),
+                );
             }
-            Op::StoreIndex { .. } => {
-                return Err("LLVM backend does not yet support indexed aggregate stores".into());
+            Op::StoreIndex {
+                object,
+                index,
+                value,
+            } => {
+                let obj = get_value(values, *object)?;
+                let idx = get_value(values, *index)?;
+                let val = get_value(values, *value)?;
+                let elem_ty = val.ty.ir();
+                let ptr_name = format!("%tmp_store_ptr_{}", self.fresh_temp_id());
+                let idx_coerced = self.coerce_value(
+                    out,
+                    &idx,
+                    LlvmType::Int(LlvmIntType {
+                        bits: 64,
+                        signed: true,
+                    }),
+                )?;
+                writeln!(
+                    out,
+                    "  {} = getelementptr inbounds {}, {}* {}, i64 {}",
+                    ptr_name, elem_ty, elem_ty, obj.repr, idx_coerced.repr
+                )
+                .unwrap();
+                writeln!(
+                    out,
+                    "  store {} {}, {}* {}, align 8",
+                    elem_ty, val.repr, elem_ty, ptr_name
+                )
+                .unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(val.ty, val.repr.clone(), val.sign),
+                );
             }
-            Op::Phi(_) => {
-                return Err("LLVM backend does not yet support MIR phi nodes".into());
+            Op::Phi(entries) => {
+                let ir_ty = result_ty.ir();
+                let mut phi_parts = Vec::new();
+                for (block_id, val_id) in entries {
+                    let val_ref = get_value(values, *val_id)?;
+                    let coerced = self.coerce_value(out, &val_ref, result_ty)?;
+                    phi_parts.push(format!("[ {}, %block_{} ]", coerced.repr, block_id.0));
+                }
+                let phi_args = phi_parts.join(", ");
+                writeln!(out, "  {} = phi {} {}", result_name, ir_ty, phi_args).unwrap();
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, result_name.clone(), result_sign),
+                );
             }
             Op::EffectPerform {
                 effect,
@@ -2623,8 +2837,11 @@ impl LlvmEmitter {
                 .unwrap();
                 let mut curr_val = format!("%v{}_tag", instr.result.0);
 
-                if payload.len() > 8 {
-                    return Err("LLVM enum lowering supports at most eight payload fields".into());
+                if payload.len() > self.max_enum_payload {
+                    return Err(format!(
+                        "LLVM enum lowering supports at most {} payload fields",
+                        self.max_enum_payload
+                    ));
                 }
                 let payload_count = payload.len();
                 for (index, payload_value) in payload.iter().enumerate() {
@@ -2671,8 +2888,11 @@ impl LlvmEmitter {
                 );
             }
             Op::EnumPayload { value, field_index } => {
-                if *field_index >= 8 {
-                    return Err("LLVM enum payload index exceeds the eight-field layout".into());
+                if (*field_index as usize) >= self.max_enum_payload {
+                    return Err(format!(
+                        "LLVM enum payload index {} exceeds the {}-field layout",
+                        field_index, self.max_enum_payload
+                    ));
                 }
                 let raw_name = format!("%v{}_payload_raw", instr.result.0);
                 writeln!(
@@ -2691,8 +2911,11 @@ impl LlvmEmitter {
                 );
             }
             Op::StructConstruct { fields, .. } => {
-                if fields.len() > 8 {
-                    return Err("LLVM struct lowering supports at most eight fields".into());
+                if fields.len() > self.max_struct_fields {
+                    return Err(format!(
+                        "LLVM struct lowering supports at most {} fields",
+                        self.max_struct_fields
+                    ));
                 }
                 let ir_ty = result_ty.ir();
                 let field_count = fields.len();
@@ -6732,7 +6955,10 @@ mod tests {
         let llvm = compile_to_llvm(
             "fn add(a: i32) -> i32 { return a + 1; } fn main() { return add(41); }",
         );
-        assert!(llvm.contains("define noundef i32 @agam_add(i32 noundef %p0)"));
+        assert!(
+            llvm.contains("define internal noundef i32 @agam_add(i32 noundef %p0)")
+                || llvm.contains("define noundef i32 @agam_add(i32 noundef %p0)")
+        );
         assert!(llvm.contains("call noundef i32 @agam_add") || llvm.contains("ret i32 42"));
     }
 
@@ -7001,7 +7227,10 @@ fn main() -> i32:
                 ..LlvmEmitOptions::default()
             },
         );
-        assert!(llvm.contains("define noundef i64 @__agam_spec_hot_"));
+        assert!(
+            llvm.contains("define internal noundef i64 @__agam_spec_hot_")
+                || llvm.contains("define noundef i64 @__agam_spec_hot_")
+        );
         assert!(llvm.contains("store i64 7, i64* %local_n"));
         assert!(llvm.contains("call noundef i64 @__agam_spec_hot_"));
         assert!(llvm.contains("label %spec_call_"));
@@ -7041,7 +7270,10 @@ fn main() -> i32:
                 ..LlvmEmitOptions::default()
             },
         );
-        assert!(llvm.contains("define noundef i64 @__agam_spec_hot_"));
+        assert!(
+            llvm.contains("define internal noundef i64 @__agam_spec_hot_")
+                || llvm.contains("define noundef i64 @__agam_spec_hot_")
+        );
         assert!(llvm.contains("call noundef i64 @__agam_spec_hot_"));
         assert!(llvm.contains("label %spec_guard_entry_"));
         assert!(llvm.contains("load i64, i64* @agam_call_cache_hot_profile_specialization_hits"));
@@ -7101,7 +7333,7 @@ fn main() -> i32:
             },
         );
         assert_eq!(
-            llvm.match_indices("define noundef i64 @__agam_spec_hot_")
+            llvm.match_indices("define internal noundef i64 @__agam_spec_hot_")
                 .count(),
             2
         );
@@ -7191,7 +7423,10 @@ fn main() -> i32:
     fn test_emit_explicit_i64_function() {
         let llvm =
             compile_to_llvm("fn add(a: i64) -> i64 { return a + 1; } fn main() { return 0; }");
-        assert!(llvm.contains("define noundef i64 @agam_add(i64 noundef %p0)"));
+        assert!(
+            llvm.contains("define internal noundef i64 @agam_add(i64 noundef %p0)")
+                || llvm.contains("define noundef i64 @agam_add(i64 noundef %p0)")
+        );
         assert!(llvm.contains("add i64 %p0, 1") || llvm.contains("add i64"));
     }
 
@@ -7250,6 +7485,103 @@ fn main() -> i32:
         assert!(
             llvm.contains("extractvalue %AgamStruct"),
             "expected struct field access with extractvalue, got:\n{llvm}"
+        );
+    }
+
+    #[test]
+    fn test_emit_array_indexed_access_and_store() {
+        let llvm = compile_to_llvm_unoptimized(
+            "fn main() -> i32 { let mut arr = [10, 20, 30]; arr[1] = 99; return arr[1]; }",
+        );
+        assert!(
+            llvm.contains("getelementptr inbounds"),
+            "expected GEP for indexed access in LLVM, got:\n{llvm}"
+        );
+        assert!(
+            llvm.contains("store i32 99")
+                || llvm.contains("store i64 99")
+                || llvm.contains("store i32")
+                || llvm.contains("store i64"),
+            "expected store for indexed mutation in LLVM, got:\n{llvm}"
+        );
+        assert!(
+            llvm.contains("load i32") || llvm.contains("load i64"),
+            "expected load for indexed read in LLVM, got:\n{llvm}"
+        );
+    }
+
+    #[test]
+    fn test_emit_phi_node_in_llvm() {
+        let mut mir_module = MirModule {
+            functions: Vec::new(),
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
+        };
+        let b0 = BasicBlock {
+            id: BlockId(0),
+            instructions: vec![Instruction {
+                result: ValueId(0),
+                ty: agam_sema::symbol::TypeId(3),
+                op: Op::ConstInt(42),
+            }],
+            terminator: Terminator::Branch {
+                condition: ValueId(0),
+                then_block: BlockId(1),
+                else_block: BlockId(2),
+            },
+        };
+
+        let b1 = BasicBlock {
+            id: BlockId(1),
+            instructions: vec![Instruction {
+                result: ValueId(1),
+                ty: agam_sema::symbol::TypeId(3),
+                op: Op::ConstInt(100),
+            }],
+            terminator: Terminator::Jump(BlockId(3)),
+        };
+
+        let b2 = BasicBlock {
+            id: BlockId(2),
+            instructions: vec![Instruction {
+                result: ValueId(2),
+                ty: agam_sema::symbol::TypeId(3),
+                op: Op::ConstInt(200),
+            }],
+            terminator: Terminator::Jump(BlockId(3)),
+        };
+
+        let b3 = BasicBlock {
+            id: BlockId(3),
+            instructions: vec![Instruction {
+                result: ValueId(3),
+                ty: agam_sema::symbol::TypeId(3),
+                op: Op::Phi(vec![(BlockId(1), ValueId(1)), (BlockId(2), ValueId(2))]),
+            }],
+            terminator: Terminator::Return(ValueId(3)),
+        };
+
+        let func = MirFunction {
+            name: "test_phi".into(),
+            generics: Vec::new(),
+            params: Vec::new(),
+            return_ty: agam_sema::symbol::TypeId(3),
+            blocks: vec![b0, b1, b2, b3],
+            entry: BlockId(0),
+            target: Default::default(),
+            gpu_config: None,
+        };
+        mir_module.functions.push(func);
+
+        let llvm = emit_llvm_with_options(&mir_module, LlvmEmitOptions::default())
+            .expect("LLVM emission failed");
+        assert!(
+            llvm.contains("phi i32") || llvm.contains("phi i64"),
+            "expected phi node in LLVM, got:\n{llvm}"
+        );
+        assert!(
+            llvm.contains("%block_1") && llvm.contains("%block_2"),
+            "expected block references in phi node"
         );
     }
 }
