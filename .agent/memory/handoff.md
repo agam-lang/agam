@@ -25,10 +25,10 @@ c:\Users\ksvik\Projects\Agam-Lang\          # Organization root
 ├── .agent/                                  # Organization-level agent config
 │   ├── specs/active/current.md              # Active workstream tracker
 │   ├── specs/active/next.md                 # Recommended next phases
-│   ├── specs/active/details/                # 77 phase spec files
+│   ├── specs/active/details/                # Spec files
 │   ├── specs/active/catalog.md              # Full tier breakdown
 │   ├── specs/archive/                       # Completed specs + INDEX.md
-│   ├── skills/                              # Agent skills (caveman, cargo-lens, etc.)
+│   ├── skills/                              # Agent skills (caveman, compiler-harden, etc.)
 │   ├── rules/                               # Coding rules
 │   └── memory/execution.log                 # Root execution history
 ├── AGENTS.md, GEMINI.md, CLAUDE.md          # Agent briefing files
@@ -46,70 +46,48 @@ Source → Lexer → Parser → AST → HIR (typed) → MIR (SSA) → Backend (C
 
 ### Current Test Stats
 - **27 crates** in workspace
-- **All tests pass** (verified 2026-08-16, exit code 0)
+- **100% tests pass** across all 27 crates (verified 2026-08-16, exit code 0)
+- **Zero compiler warnings** on `cargo clippy --all-targets -- -D warnings`
 - **Zero `todo!()` or `unimplemented!()`** remaining in core/middle/backends
 
 ---
 
-## 2. Completed Phases (Recent)
+## 2. Completed Phases & Capabilities (Current Status)
 
-| Phase | What Was Built |
-|---|---|
-| T0-type-system A–F | Option/Result, enums, match, struct fields, destructuring, generics, try operator |
-| T0-object-model | `impl` blocks, `self` receiver, method dispatch |
-| T0-module-system | Selective/wildcard imports, scope resolution |
-| T0-stdlib-io | Network, Environment, Process native modules + 28 effect handlers |
-| T0-effects-depth | F-string expression interpolation (`f"hello {name}"`) |
-| Code hygiene | `cargo fmt --all`, CRLF normalization |
+| Phase / Stream | What Was Built | Status |
+|---|---|---|
+| **T0-type-system (A–F)** | Option/Result, enums, match guards/or-patterns/destructuring, struct fields, generics, try `?` operator | **Complete** |
+| **T0-object-model** | Struct `impl` blocks, `self` receiver, method call dispatch (`Type::method`) | **Complete** |
+| **T0-module-system** | Selective imports (`import path::{A, B as C}`), wildcard imports (`import path::*`), scope resolution | **Complete** |
+| **T0-stdlib-io** | Native Network, Environment, Process modules + 28 effect handlers in `agam_std` & `agam_sema` | **Complete** |
+| **T0-effects-depth** | F-strings (`f"hello {name}"`), ranges (`..`, `..=`), counting `for` loops, closures & lambda lowering | **Complete** |
+| **T0-type-sandhi-graph** | `TraitLattice`, `SandhiGraph` harmonic lattice, `MonomorphGraph` cycle detection & topological sorting | **Complete** |
+| **T1-compiler-agent-tool** | Native MCP server (`agamc mcp serve`), tools (check, format, explain_error, ast_inspect, sarif_diagnostics, run) | **Complete** |
+| **T1-error-messages** | Nyāya 4-part proofs (*Pratijñā, Hetu, Udāharaṇa, Nigamana*), Hankel moment matrix root solvers, SARIF export | **Complete** |
+| **Compiler Hardening & Fixes** | 5 hardening sweeps: if-else expressions, trait impl syntax, JIT indirect calling (`func_addr`/`call_indirect`), qualified enum matching, 26 end-to-end integration test suites in `agam_test` | **Complete** |
 
----
-
-## 3. Recommended Next Phases (Priority Order)
-
-### Phase A: T0-type-system — Remaining Gaps
-**Status:** `current.md` says "open" for generic inference & const generics.
-**What's done:** Phases A–F complete (enums, match, structs, generics param resolution, try operator).
-**What's NOT done:**
-- [ ] **Full type inference** — currently types must be annotated; infer from context
-- [ ] **Const generics** — `[T; N]` where N is a compile-time constant
-- [ ] **Generic constraint checking** — `where T: Add + Clone` enforcement in sema
-- [ ] **Monomorphization completeness** — `agam_mir/src/monomorphize.rs` exists but needs edge cases
-
-**Crates:** `agam_sema` (type checker), `agam_hir` (lower), `agam_mir` (monomorphize)
+**All 9 foundational phases of Tier 0 are 100% complete.**
 
 ---
 
-### Phase B: T0-effects-depth — Remaining Syntax Features
-**Status:** F-string interpolation done. Many items remain from the original spec.
-**What's NOT done:**
-- [ ] **Closures/Lambdas** — `|x, y| x + y` syntax (AST node `ExprKind::Lambda` exists but parser/HIR/MIR incomplete)
-- [ ] **Range expressions in for loops** — `for i in 0..n` (AST `ExprKind::Range` exists, needs HIR/MIR)
-- [ ] **Named arguments** — `connect(host: "localhost", port: 8080)`
-- [ ] **Default parameter values** — `fn connect(host: String, port: i32 = 80)`
-- [ ] **Operator overloading** — via trait `impl Add for Vector { ... }`
-- [ ] **Expression-oriented blocks** — last expression = return value
+## 3. Recommended Next Phases for Tomorrow (Priority Order)
 
-**Crates:** `agam_parser`, `agam_hir/lower.rs`, `agam_mir/lower.rs`
+### Phase 1: T3-gpu-target-adapter — Universal GPU Target Adapter Interface
+**Spec:** `.agent/specs/active/details/T3-gpu-target-adapter.md`
+- Abstract `GpuTargetAdapter` trait in `agam_codegen` to decouple target-agnostic GPU MIR lowering from target assembly generation.
+- Enable AMDGPU (ROCm/HIP), SPIR-V (Vulkan/oneAPI), and Metal adapters alongside existing NVPTX backend.
 
----
+### Phase 2: T1-lsp-production — Production LSP Quality
+**Spec:** `.agent/specs/active/details/T1-lsp-production.md`
+- Implement go-to-definition, hover documentation, completion, and workspace diagnostics in `agam_lsp`.
 
-### Phase C: T1-error-messages — Diagnostic Quality
-**Spec:** `.agent/specs/active/details/T1-error-messages.md`
-- [ ] Multi-span error rendering with color
-- [ ] Nyāya 4-part proof schema (Fact, Reason, Fix, Law)
-- [ ] Single-pass multi-error recovery in parser
+### Phase 3: T1-sdk-distribution — Hosted SDK Release Packaging
+**Spec:** `.agent/specs/active/details/T1-sdk-distribution.md`
+- Verify Windows, Linux, and Android SDK distribution bundles on GitHub Actions.
 
-**Crates:** `agam_errors`, `agam_parser`
-
----
-
-### Phase D: T1-compiler-agent-tool — MCP Server
-**Spec:** `.agent/specs/active/details/T1-compiler-agent-tool.md`
-- [ ] `agamc mcp serve` — Model Context Protocol server
-- [ ] Structured `--json` diagnostics on all commands
-- [ ] SARIF output format
-
-**Crates:** `agam_driver`, `agam_errors`
+### Phase 4: T1-doc-generation — Searchable HTML Documentation
+**Spec:** `.agent/specs/active/details/T1-doc-generation.md`
+- Implement `agamc doc` producing searchable, cross-linked HTML documentation for Agam projects and stdlib.
 
 ---
 
@@ -121,13 +99,13 @@ Source → Lexer → Parser → AST → HIR (typed) → MIR (SSA) → Backend (C
 cargo check --manifest-path agam\Cargo.toml
 
 # Run all tests
-cargo test --manifest-path agam\Cargo.toml --message-format=short
+cargo test --manifest-path agam\Cargo.toml
 
-# Test specific crates
-cargo test --manifest-path agam\Cargo.toml -p agam_parser -p agam_hir --message-format=short
+# Run linter
+cargo clippy --all-targets --manifest-path agam\Cargo.toml -- -D warnings
 
 # Format
-cargo fmt --all --manifest-path agam\Cargo.toml
+cargo fmt --all --manifest-path agam\Cargo.toml -- --check
 ```
 
 ### Git Workflow
@@ -140,128 +118,27 @@ git add . && git commit -m "feat(scope): description"
 python ..\push_repos.py
 ```
 
-### Commit Message Prefixes
-- `feat(parser):` — new language features
-- `feat(std):` — stdlib additions
-- `feat(syntax):` — parser/lexer changes
-- `fix(sema):` — bug fixes in semantic analysis
-- `style:` — formatting only
-- `docs(spec):` — spec updates, archival
-
 ### Post-Completion Checklist
 After completing any phase:
 1. ✅ `cargo check` passes
 2. ✅ `cargo test` passes (all 27 crates)
-3. ✅ `cargo fmt --all` applied
-4. ✅ Update `agam/.agent/memory/execution.log` with `[FEATURE]` entry
-5. ✅ Update `.agent/memory/execution.log` (root copy)
-6. ✅ Archive spec: move from `details/` → `archive/`, update `archive/INDEX.md`
-7. ✅ Update `current.md` status from `open` → `complete`
-8. ✅ Git commit + push
+3. ✅ `cargo clippy --all-targets -- -D warnings` (0 warnings)
+4. ✅ `cargo fmt --all -- --check`
+5. ✅ Update `agam/.agent/memory/execution.log` & `.agent/memory/execution.log` with `[FEATURE]` / `[HARDEN]` entries
+6. ✅ Update `catalog.md` and `current.md` status from `open` → `complete`
+7. ✅ Git commit + push via `python push_repos.py`
 
 ---
 
 ## 5. Skills System
 
-Skills auto-load from `.agent/skills/`. **Do NOT add `@` directives to GEMINI.md** (causes duplicate token expansion).
+Skills auto-load from `.agent/skills/`.
 
-| Skill | When | What |
+| Skill | Purpose | Trigger |
 |---|---|---|
-| `caveman` | Always active | Terse output, ~75% token savings |
-| `cargo-lens` | On build errors | Filter cargo output to errors/warnings only |
-| `language-guard` | On syntax code | Prevent Python/Rust syntax assumptions in Agam code |
-| `benchmark-guard` | On optimization | Require before/after benchmarks |
-| `spec-archiver` | On phase completion | Archive specs to `.agent/specs/archive/` |
-
----
-
-## 6. Architecture Patterns to Follow
-
-### Adding a New Language Feature (end-to-end)
-1. **Lexer** (`agam_lexer/src/lexer.rs`): Add `TokenKind` if new keyword
-2. **Parser** (`agam_parser/src/parser.rs`): Parse into `ExprKind`/`StmtKind`/`DeclKind`
-3. **AST** (`agam_ast/src/`): Add AST node types if needed
-4. **HIR Lower** (`agam_hir/src/lower.rs`): `lower_expr` / `lower_stmt` match arm
-5. **HIR Types** (`agam_hir/src/lib.rs`): Add `HirExprKind` variant
-6. **Sema** (`agam_sema/src/`): Type checking, resolver entries
-7. **MIR Lower** (`agam_mir/src/lower.rs`): Generate MIR `Op` instructions
-8. **MIR Types** (`agam_mir/src/lib.rs`): Add `Op` variant if needed
-9. **Backends**: Update C emitter, LLVM emitter, JIT (if applicable)
-10. **Tests**: Parser test + HIR test + (optionally) MIR test
-
-### Adding a New Effect
-1. **`agam_sema/src/effects.rs`**: Define `std_xxx_effect() -> EffectDef`
-2. **`agam_sema/src/effects.rs`**: Register in `EffectRegistry::register_std_effects()`
-3. **`agam_std/src/xxx.rs`**: Implement native module
-4. **`agam_std/src/effects.rs`**: Add handler functions + register in `register_all_builtin_handlers()`
-5. **`agam_std/src/lib.rs`**: Export `pub mod xxx;`
-
-### Key Type Structures
-- `agam_ast::expr::ExprKind` — all expression variants
-- `agam_hir::HirExprKind` — typed expression variants
-- `agam_mir::Op` — SSA instruction opcodes
-- `agam_runtime::effects::EffectValue` — runtime effect argument types (Unit, Bool, Int, Float, String, List)
-- `agam_sema::effects::EffectDef` — semantic effect definitions
-- `agam_sema::effects::EffectRegistry` — effect registration and lookup
-
----
-
-## 7. Known Gotchas
-
-1. **Path delimiters**: Agam supports both `.` and `::` as path separators. Parser must handle both.
-2. **`parse_path` peek-ahead**: When parsing selective imports `import a.b::{c, d}`, `parse_path` must NOT consume `::` or `.` when followed by `{` or `*`.
-3. **`process::exit() -> !`**: The effect handler wrapper has signature `-> Result<EffectValue, EffectError>` but `!` coerces. This is intentional.
-4. **`env::set_var` / `env::remove_var`**: Require `unsafe {}` blocks since Rust 1.66.
-5. **Duplicate skill loading**: Never put `@./.agent/skills/...` in `GEMINI.md` — Antigravity auto-discovers skills and `@` causes double loading.
-6. **Windows line endings**: Git on Windows may introduce CRLF. Run `cargo fmt --all` after edits.
-7. **`push_repos.py`**: Pushes all org repos. Non-`agam` repos may reject (fetch first). Only `agam` repo matters.
-
----
-
-## 8. File Quick Reference
-
-| Need | File |
-|---|---|
-| Parser entry | `agam/crates/core/agam_parser/src/parser.rs` |
-| Lexer/tokens | `agam/crates/core/agam_lexer/src/lexer.rs` + `token.rs` |
-| AST expressions | `agam/crates/core/agam_ast/src/expr.rs` |
-| AST patterns | `agam/crates/core/agam_ast/src/pattern.rs` |
-| HIR lowering | `agam/crates/middle/agam_hir/src/lower.rs` |
-| MIR lowering | `agam/crates/middle/agam_mir/src/lower.rs` |
-| Type checker | `agam/crates/middle/agam_sema/src/checker.rs` |
-| Resolver | `agam/crates/middle/agam_sema/src/resolver.rs` |
-| Effects (sema) | `agam/crates/middle/agam_sema/src/effects.rs` |
-| Effects (runtime) | `agam/crates/runtime/agam_std/src/effects.rs` |
-| Monomorphization | `agam/crates/middle/agam_mir/src/monomorphize.rs` |
-| C backend | `agam/crates/backends/agam_codegen/src/c_emitter.rs` |
-| LLVM backend | `agam/crates/backends/agam_codegen/src/llvm_emitter.rs` |
-| JIT backend | `agam/crates/backends/agam_jit/src/lib.rs` |
-| Execution log | `agam/.agent/memory/execution.log` |
-| Phase specs | `.agent/specs/active/details/*.md` |
-| Next priorities | `.agent/specs/active/next.md` |
-| Current status | `.agent/specs/active/current.md` |
-
----
-
-## 9. Execution Pattern Template
-
-When you start a phase, follow this exact pattern:
-
-```
-1. Read the spec: .agent/specs/active/details/T<tier>-<name>.md
-2. Read relevant source files for the feature area
-3. Implement changes (parser → AST → HIR → MIR → backend)
-4. Add unit tests in the modified files
-5. cargo check --manifest-path agam\Cargo.toml
-6. cargo test --manifest-path agam\Cargo.toml -p <changed_crates>
-7. cargo test --manifest-path agam\Cargo.toml (full suite)
-8. cargo fmt --all --manifest-path agam\Cargo.toml
-9. git add . && git commit -m "feat(scope): description"
-10. Update execution.log (both copies)
-11. Archive spec if phase complete
-12. python ..\push_repos.py
-```
-
----
-
-> **Start with `.agent/specs/active/next.md` to pick your phase. Read the spec. Build it. Test it. Ship it.**
+| `compiler-harden` | 5-step workspace audit, bug fix & test expansion | `/harden` / `/audit-sweep` / `harden` |
+| `caveman` | ~75% token cut via terse output | Auto |
+| `cargo-lens` | Compress build logs | Auto on build |
+| `language-guard` | Prevent Python/Rust syntax drift | Auto on syntax |
+| `benchmark-guard` | Validate performance claims | Auto on optimization |
+| `spec-archiver` | Archive completed specs | Auto on phase close |

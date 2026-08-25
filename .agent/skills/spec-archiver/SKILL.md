@@ -1,6 +1,6 @@
 ---
 name: spec-archiver
-description: Safely archives completed specifications to prevent context bloat.
+description: Move completed specifications from active to archive to prevent context bloat.
 ---
 
 # spec-archiver

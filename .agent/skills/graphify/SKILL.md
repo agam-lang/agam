@@ -1,10 +1,6 @@
 ---
 name: graphify
-description: >
-  Turn any folder of code, docs, papers, images into a queryable knowledge graph.
-  Outputs interactive HTML, GraphRAG-ready JSON, and a plain-language audit report.
-  Requires: pip install graphifyy && graphify install
-  Trigger: /graphify [path] [--options]
+description: Generate and query codebase knowledge graphs. Trigger: /graphify [path].
 ---
 
 Turn any folder of files into navigable knowledge graph with community detection, honest audit trail, and three outputs: interactive HTML, queryable JSON, and plain-language GRAPH_REPORT.md.

@@ -1,6 +1,6 @@
-# Phase T3-gpu-npu-pipeline � GPU and NPU Integration (@gpu Kernel Pipeline)
+# Phase T3-gpu-npu-pipeline — GPU and NPU Integration (@gpu Kernel Pipeline)
 
-**Status:** partial (Basic NVPTX pipeline, host-device transfer helpers, and shared-memory lowering complete; advanced capabilities pending)
+**Status:** complete
 
 ## Scope
 
@@ -15,7 +15,7 @@ Native GPU kernel compilation pipeline for Agam, targeting NVPTX64 (CUDA), inclu
 - [x] `GpuKernelError` diagnostic enum with Display
 - [x] Validate launch dimensions: positive `threads/grid/block` components and max supported threads-per-block.
 - [x] Add built-in resolution for `agam::gpu::thread_id_x`, `agam::gpu::barrier`, etc.
-- [ ] Update GPU validation to permit pointer/array math and shared memory allocations.
+- [x] Update GPU validation to permit pointer/array math and shared memory allocations.
 
 ### IR Propagation
 - [x] `HirFunction.gpu_config: Option<GpuKernelConfig>`
@@ -54,5 +54,3 @@ Native GPU kernel compilation pipeline for Agam, targeting NVPTX64 (CUDA), inclu
 - 29+ GPU-focused tests across HIR/MIR/sema/codegen
 - 713+ total tests pass, 0 failures, 0 regressions
 - Benchmarks: 58.2 µs/iter for 1k-instruction kernel (522 MB/s IR throughput)
-
-

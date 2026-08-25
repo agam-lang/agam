@@ -1,6 +1,6 @@
 ---
 name: cargo-lens
-description: Compresses cargo build/check output to show only errors and warnings, saving context tokens.
+description: Compress cargo build/check output to errors and warnings only, saving tokens.
 ---
 
 # cargo-lens

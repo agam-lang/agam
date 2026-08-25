@@ -1,6 +1,6 @@
 ---
 name: benchmark-guard
-description: Use when changes claim performance wins, affect optimization passes, call caching, specialization, runtime hot paths, or need benchmark-driven validation before acceptance.
+description: Validate performance claims and optimization passes with before/after benchmarks.
 ---
 
 # Benchmark Guard

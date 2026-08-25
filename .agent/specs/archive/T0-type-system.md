@@ -1,8 +1,8 @@
-# Phase T0-type-system � Type System Completion
+# Phase T0-type-system  Type System Completion
 
-**Status:** open
+**Status:** partial
 **Tier:** 0 (Foundation Completion)
-**Priority:** Critical path — most Tier 1+ work depends on a complete type system
+**Priority:** Critical path â most Tier 1+ work depends on a complete type system
 
 ## Scope
 
@@ -48,8 +48,8 @@ Implement generics, sum types, pattern matching, type inference, and foundationa
 - [ ] Generic type argument inference at call sites
 
 ### Built-in Utility Types
-- [ ] `Option<T>` with `Some(T)` and `None` — first-class in the stdlib
-- [ ] `Result<T, E>` with `Ok(T)` and `Err(E)` — first-class in the stdlib
+- [ ] `Option<T>` with `Some(T)` and `None` â first-class in the stdlib
+- [ ] `Result<T, E>` with `Ok(T)` and `Err(E)` â first-class in the stdlib
 - [ ] `?` operator for early return on `None`/`Err` (or equivalent sugar)
 
 ### Type Aliases
@@ -62,18 +62,18 @@ Implement generics, sum types, pattern matching, type inference, and foundationa
 
 ## Responsible Crates
 
-- `agam_parser` — syntax for generics, enums, match, type aliases
-- `agam_ast` — AST nodes for all new constructs
-- `agam_sema` — type checking, inference, exhaustiveness checking
-- `agam_hir` — typed representation of generics and enums
-- `agam_mir` — monomorphized representation after generic expansion
-- `agam_codegen` — emit code for monomorphized types and match dispatch
-- `agam_jit` — JIT support for new constructs
+- `agam_parser` â syntax for generics, enums, match, type aliases
+- `agam_ast` â AST nodes for all new constructs
+- `agam_sema` â type checking, inference, exhaustiveness checking
+- `agam_hir` â typed representation of generics and enums
+- `agam_mir` â monomorphized representation after generic expansion
+- `agam_codegen` â emit code for monomorphized types and match dispatch
+- `agam_jit` â JIT support for new constructs
 
 ## Dependencies
 
 - Phase T0-grammar-spec (grammar spec) should ideally be written first or in parallel
-- Phase T0-object-model (object model) depends on this — trait bounds need generics
+- Phase T0-object-model (object model) depends on this â trait bounds need generics
 
 ## Test Strategy
 

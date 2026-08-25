@@ -1,6 +1,6 @@
 ---
 name: language-guard
-description: Use when a task touches Agam source syntax, parser behavior, examples, benchmarks, or when there is risk of treating `.agam` like Python or Rust instead of Agam's own language.
+description: Prevent Python/Rust syntax assumptions; ground code in real Agam syntax.
 ---
 
 # Language Guard
