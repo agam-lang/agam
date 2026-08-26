@@ -1,0 +1,8 @@
+@lang.base
+
+# Agam Base Profile: Hello World
+# Clean, readable, Python-style syntax without boilerplate
+
+fn main() -> i32:
+    print_int(42)
+    return 0

@@ -1,0 +1,11 @@
+// Agam Example: 01_hello_world.agm
+// Basic output and string formatting
+
+fn main() {
+    println("Namaste, World from Agam!");
+    
+    let language: String = "Agam";
+    let version: String = "0.1.0-alpha";
+    
+    println("Language: ${language} (v${version})");
+}

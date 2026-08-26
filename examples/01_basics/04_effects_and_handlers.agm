@@ -1,0 +1,25 @@
+// Agam Example: 04_effects_and_handlers.agm
+// Algebraic effects, continuation passing, and custom effect handlers
+
+effect Logger {
+    fn log(msg: String) -> void;
+}
+
+fn compute_and_log(x: i32, y: i32) -> i32 {
+    perform Logger::log("Starting computation...");
+    let result = x * y + 42;
+    perform Logger::log("Computation completed with result: ${result}");
+    result
+}
+
+fn main() {
+    handle {
+        let answer = compute_and_log(10, 20);
+        println("Final Answer: ${answer}");
+    } with Logger {
+        fn log(msg: String) {
+            println("[EFFECT_LOG] ${msg}");
+            resume;
+        }
+    }
+}

@@ -1,0 +1,17 @@
+@lang.advance
+
+// Agam Advance Profile: Full type-directed explicit syntax
+// Supports algebraic effect handlers, shape-aware tensors, and @gpu acceleration.
+
+fn fib(n: i32) -> i32 {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+fn main() -> i32 {
+    let result = fib(32);
+    print_int(result);
+    return 0;
+}

@@ -1,0 +1,9 @@
+@lang.advance
+
+// Agam Advance Profile: Hello World
+// Explicit typed syntax with full compiler introspection
+
+fn main() -> i32 {
+    print_int(42);
+    return 0;
+}

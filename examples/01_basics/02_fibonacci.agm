@@ -1,0 +1,30 @@
+// Agam Example: 02_fibonacci.agm
+// Recursive and iterative Fibonacci sequences
+
+fn fib_recursive(n: i64) -> i64 {
+    if n <= 1 {
+        n
+    } else {
+        fib_recursive(n - 1) + fib_recursive(n - 2)
+    }
+}
+
+fn fib_iterative(n: i64) -> i64 {
+    let mut a: i64 = 0;
+    let mut b: i64 = 1;
+    let mut i: i64 = 0;
+    
+    while i < n {
+        let temp: i64 = a + b;
+        a = b;
+        b = temp;
+        i = i + 1;
+    }
+    a
+}
+
+fn main() {
+    let n: i64 = 10;
+    println("Fibonacci(${n}) [Recursive]: ${fib_recursive(n)}");
+    println("Fibonacci(${n}) [Iterative]: ${fib_iterative(n)}");
+}

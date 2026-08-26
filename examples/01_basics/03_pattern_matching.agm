@@ -1,0 +1,26 @@
+// Agam Example: 03_pattern_matching.agm
+// Sum types and exhaustive pattern matching
+
+enum Shape {
+    Circle(f64),
+    Rectangle(f64, f64),
+    Point,
+}
+
+fn area(s: Shape) -> f64 {
+    match s {
+        Shape::Circle(r) => 3.1415926535 * r * r,
+        Shape::Rectangle(w, h) => w * h,
+        Shape::Point => 0.0,
+    }
+}
+
+fn main() {
+    let c = Shape::Circle(5.0);
+    let r = Shape::Rectangle(4.0, 6.0);
+    let p = Shape::Point;
+
+    println("Circle Area: ${area(c)}");
+    println("Rectangle Area: ${area(r)}");
+    println("Point Area: ${area(p)}");
+}

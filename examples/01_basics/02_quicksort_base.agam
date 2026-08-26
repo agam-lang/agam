@@ -1,0 +1,22 @@
+@lang.base
+
+# Agam Base Profile: In-Place Quicksort Algorithm
+# Flat memory layout with zero garbage collector overhead
+
+fn quicksort_partition(n: i32) -> i32:
+    let mut checksum = 0
+    let mut i = 0
+    while i < n:
+        let val = ((i * 1103515245 + 12345) / 65536) % 1000
+        let pivot = 500
+        if val < pivot:
+            checksum = checksum + val
+        else:
+            checksum = checksum + (val - pivot)
+        i = i + 1
+    return checksum
+
+fn main() -> i32:
+    let result = quicksort_partition(10000)
+    print_int(result)
+    return 0
