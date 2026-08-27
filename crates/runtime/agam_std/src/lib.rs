@@ -27,22 +27,34 @@ pub mod ndarray;
 pub mod net;
 pub mod numerical;
 pub mod packing;
+pub mod json;
 pub mod precision;
 pub mod probabilistic;
 pub mod process;
 pub mod quantum;
+pub mod random;
 pub mod serial;
 pub mod sparse;
 pub mod stats;
 pub mod string;
 pub mod tensor;
+pub mod time;
 pub mod units;
 
 pub use collections::{
     CompactGraph, Counter, FastHashMap, FastHashSet, FastRingBuffer, FastVec, OrderedMap,
 };
 pub use io::{AgamPath, FastBufReader, FastBufWriter, IoError};
+pub use json::{
+    JsonError, JsonValue, parse as parse_json, stringify as stringify_json,
+    stringify_pretty as stringify_json_pretty,
+};
+pub use random::{
+    Rng, choice as random_choice, float as random_float, int_range as random_int_range,
+    shuffle as random_shuffle,
+};
 pub use string::{StringBuilder, Utf8Scanner, case_fold_eq};
+pub use time::{DateTime, Instant, TimeError, sleep_micros, sleep_ms};
 pub use combinatorics::{MatrixCover, ramsey_multi_color_lower_bound, saturated_matrix_cover};
 pub use complex::Complex;
 pub use ebpf::{

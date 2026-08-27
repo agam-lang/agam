@@ -319,48 +319,6 @@ pub fn glynn_permanent(data: &[f64], n: usize) -> f64 {
     total_sum / (2.0_f64.powi((n - 1) as i32))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_identity() {
-        let i = Matrix::identity(3);
-        assert_eq!(i.get(0, 0), 1.0);
-        assert_eq!(i.get(0, 1), 0.0);
-        assert_eq!(i.get(1, 1), 1.0);
-    }
-
-    #[test]
-    fn test_det_2x2() {
-        // |1 2| = 1*4 - 2*3 = -2
-        // |3 4|
-        let m = Matrix::new(2, 2, vec![1.0, 2.0, 3.0, 4.0]);
-        assert!((m.det() - (-2.0)).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_det_3x3() {
-        let m = Matrix::new(3, 3, vec![6.0, 1.0, 1.0, 4.0, -2.0, 5.0, 2.0, 8.0, 7.0]);
-        assert!((m.det() - (-306.0)).abs() < 1e-8);
-    }
-
-    #[test]
-    fn test_permanent_2x2_and_3x3() {
-        // |1 2| permanent = 1*4 + 2*3 = 4 + 6 = 10
-        // |3 4|
-        let m2 = Matrix::new(2, 2, vec![1.0, 2.0, 3.0, 4.0]);
-        assert!((m2.permanent() - 10.0).abs() < 1e-10);
-        assert!((ryser_permanent(&m2.data, 2) - 10.0).abs() < 1e-10);
-
-        // |1 1 1|
-        // |1 1 1| permanent = 3! = 6
-        // |1 1 1|
-        let ones = Matrix::new(3, 3, vec![1.0; 9]);
-        assert!((ones.permanent() - 6.0).abs() < 1e-10);
-        assert!((ryser_permanent(&ones.data, 3) - 6.0).abs() < 1e-10);
-    }
-
 /// Compute vector dot product: sum(a_i * b_i).
 pub fn dot(a: &[f64], b: &[f64]) -> Option<f64> {
     if a.len() != b.len() {
@@ -395,6 +353,8 @@ mod tests {
             assert_eq!(c.get(0, 1), 19.0); // 1*8 + 2*1 + 3*3 = 19
         }
     }
+
+
 
     #[test]
     fn test_inverse_2x2() {
