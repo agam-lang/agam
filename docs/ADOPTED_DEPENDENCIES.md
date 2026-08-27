@@ -9,7 +9,7 @@
 
 Agam strictly distinguishes between **core compiler innovations** (which we build natively) and **mature, peer-reviewed computer science infrastructure** (which we adopt as battle-tested dependencies).
 
-Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhedral affine schedulers, cryptographic primitives, or foundational hash table probing algorithms from scratch introduces severe reliability and security risks. We therefore formalize the following **Adopt vs. Build Boundary**:
+Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhedral affine schedulers, cryptographic primitives, raw JSON parsers, statistical PRNGs, or foundational hash table probing algorithms from scratch introduces severe reliability and security risks. We therefore formalize the following **Adopt vs. Build Boundary**:
 
 ---
 
@@ -24,6 +24,9 @@ Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhed
 | **Hash Table & SwissTable Probing** | **ADOPT** | **`std::collections::HashMap` / `hashbrown`** | Hand-rolling hash tables risks HashDoS vulnerabilities, quadratic collision degradation, and subtle probing bugs. We wrap battle-tested SwissTable storage. |
 | **Deterministic B-Tree Map** | **ADOPT** | **`std::collections::BTreeMap`** | B-tree node layout, cache-line alignment, and rebalancing are mature CS infrastructure. We wrap std BTreeMap for deterministic ordered iteration. |
 | **UTF-8 Validation & Boundary Safety** | **ADOPT** | **`core::str` / `std::char`** | UTF-8 multibyte boundary validation is guaranteed by Rust `str`. Hand-rolling UTF-8 state machines causes off-by-one indexing panics. |
+| **JSON Parsing & Serialization** | **ADOPT** | **`serde_json`** | Hand-rolling RFC 8259 JSON parsers introduces numeric precision loss, escape injection, and malformed UTF-8 bugs. We wrap `serde_json` behind Agam dynamic APIs. |
+| **Statistical PRNG Engines** | **ADOPT** | **`rand` / `rand_pcg` / `rand_xoshiro`** | PRNGs require statistically verified uniform distribution and entropy seeding. Hand-rolling leads to statistical bias and correlation artifacts. |
+| **Monotonic Hardware Timers** | **BUILD** | First-Party Native (`std::time::Instant`) | Zero-overhead wrapping of OS high-resolution monotonic clocks (`clock_gettime` / `QueryPerformanceCounter`) and UTC calendar formatting. |
 | **JIT Machine Codegen** | **ADOPT** | **`cranelift-codegen`** (Bytecode Alliance) | Provides safe, sub-millisecond in-process native machine code generation for dev loops. |
 | **AOT Machine Codegen** | **ADOPT** | **LLVM 18+ (C-API / in-process bindings)** | Leverages LLVM's global scalar optimizations, ThinLTO, and cross-target hardware backends. |
 | **Pāṇinian Frontend & Pratt Parser** | **BUILD** | First-Party Native (`agam_parser`, `agam_lexer`) | Core language identity: dual `@lang.base` / `@lang.advance` profiles, span tracking, and panic-mode synchronization. |

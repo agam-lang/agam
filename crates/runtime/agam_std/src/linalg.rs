@@ -155,6 +155,24 @@ impl Matrix {
         t
     }
 
+    /// Matrix-matrix multiply (C = A * B).
+    pub fn matmul(&self, other: &Matrix) -> Option<Matrix> {
+        if self.cols != other.rows {
+            return None;
+        }
+        let mut out = Matrix::zeros(self.rows, other.cols);
+        for i in 0..self.rows {
+            for k in 0..self.cols {
+                let a_ik = self.get(i, k);
+                for j in 0..other.cols {
+                    let current = out.get(i, j);
+                    out.set(i, j, current + a_ik * other.get(k, j));
+                }
+            }
+        }
+        Some(out)
+    }
+
     /// Matrix-vector multiply (Ax = b). Returns vector b.
     pub fn matvec(&self, x: &[f64]) -> Vec<f64> {
         assert_eq!(self.cols, x.len());
@@ -343,15 +361,54 @@ mod tests {
         assert!((ryser_permanent(&ones.data, 3) - 6.0).abs() < 1e-10);
     }
 
+/// Compute vector dot product: sum(a_i * b_i).
+pub fn dot(a: &[f64], b: &[f64]) -> Option<f64> {
+    if a.len() != b.len() {
+        return None;
+    }
+    Some(a.iter().zip(b).map(|(x, y)| x * y).sum())
+}
+
+/// Compute matrix multiplication: C = A * B.
+pub fn matmul(a: &Matrix, b: &Matrix) -> Option<Matrix> {
+    a.matmul(b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dot_and_matmul() {
+        let a = vec![1.0, 2.0, 3.0];
+        let b = vec![4.0, 5.0, 6.0];
+        assert_eq!(dot(&a, &b), Some(32.0)); // 1*4 + 2*5 + 3*6 = 32
+
+        let m1 = Matrix::new(2, 3, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let m2 = Matrix::new(3, 2, vec![7.0, 8.0, 9.0, 1.0, 2.0, 3.0]);
+        let res = matmul(&m1, &m2);
+        assert!(res.is_some());
+        if let Some(c) = res {
+            assert_eq!(c.rows, 2);
+            assert_eq!(c.cols, 2);
+            assert_eq!(c.get(0, 0), 31.0); // 1*7 + 2*9 + 3*2 = 31
+            assert_eq!(c.get(0, 1), 19.0); // 1*8 + 2*1 + 3*3 = 19
+        }
+    }
+
     #[test]
     fn test_inverse_2x2() {
         let m = Matrix::new(2, 2, vec![4.0, 7.0, 2.0, 6.0]);
-        let inv = m.inverse().unwrap();
-        // M * M⁻¹ should be identity
-        let prod = crate::tensor::Tensor::from_data(&[2, 2], m.data.clone())
-            .matmul(&crate::tensor::Tensor::from_data(&[2, 2], inv.data.clone()));
-        assert!((prod.data[0] - 1.0).abs() < 1e-10);
-        assert!((prod.data[3] - 1.0).abs() < 1e-10);
+        let inv_opt = m.inverse();
+        assert!(inv_opt.is_some());
+        if let Some(inv) = inv_opt {
+            let prod = matmul(&m, &inv);
+            assert!(prod.is_some());
+            if let Some(p) = prod {
+                assert!((p.get(0, 0) - 1.0).abs() < 1e-10);
+                assert!((p.get(1, 1) - 1.0).abs() < 1e-10);
+            }
+        }
     }
 
     #[test]

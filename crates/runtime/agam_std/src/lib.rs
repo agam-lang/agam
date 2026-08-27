@@ -59,7 +59,7 @@ pub use gpu::{AsyncPipelineStage, Extent, GpuBuffer, GpuError, PartitionView, Ti
 pub use group_theory::{LeavittAlgebraElement, kazhdan_constant_property_t};
 pub use hankel::{HankelError, HankelMatrix, solve_hankel_system};
 pub use ipc::{IpcError, SharedMemoryRegion, SpscRingBuffer};
-pub use linalg::{Matrix, glynn_permanent, ryser_permanent};
+pub use linalg::{Matrix, dot, glynn_permanent, matmul, ryser_permanent};
 pub use net::{HttpHeaders, HttpMethod, HttpRequest, HttpResponse, NetError, NetworkManager, Url};
 pub use packing::{cohn_elkies_bound, fourier_sign_uncertainty_radius, mellin_hankel_transform};
 pub use probabilistic::{BayesianInference, Distribution, ModelTrace};
