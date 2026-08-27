@@ -27,16 +27,22 @@ pub mod ndarray;
 pub mod net;
 pub mod numerical;
 pub mod packing;
+pub mod cli;
+pub mod csv;
+pub mod iter;
 pub mod json;
+pub mod log;
 pub mod precision;
 pub mod probabilistic;
 pub mod process;
 pub mod quantum;
 pub mod random;
+pub mod re;
 pub mod serial;
 pub mod sparse;
 pub mod stats;
 pub mod string;
+pub mod sync;
 pub mod tensor;
 pub mod time;
 pub mod units;
@@ -55,6 +61,27 @@ pub use random::{
 };
 pub use string::{StringBuilder, Utf8Scanner, case_fold_eq};
 pub use time::{DateTime, Instant, TimeError, sleep_micros, sleep_ms};
+pub use cli::{App, CliError, CliErrorKind, ParsedArgs};
+pub use csv::{
+    CsvError, parse_csv_string, read_records as read_csv_records,
+    read_records_with_headers as read_csv_with_headers, write_records as write_csv_records,
+};
+pub use iter::{
+    chunks as iter_chunks, combinations as iter_combinations, cycle_take as iter_cycle_take,
+    permutations as iter_permutations, zip as iter_zip,
+};
+pub use log::{
+    LogLevel, debug as log_debug, error as log_error, get_level as log_get_level,
+    info as log_info, log, set_level as log_set_level, warn as log_warn,
+};
+pub use re::{
+    Regex, RegexError, RegexMatch, find_all as regex_find_all, is_match as regex_is_match,
+    replace as regex_replace, search as regex_search, split as regex_split,
+};
+pub use sync::{
+    Mutex, Receiver, Sender, SyncError, channel as sync_channel,
+    parallel_for as sync_parallel_for, spawn as sync_spawn,
+};
 pub use combinatorics::{MatrixCover, ramsey_multi_color_lower_bound, saturated_matrix_cover};
 pub use complex::Complex;
 pub use ebpf::{
