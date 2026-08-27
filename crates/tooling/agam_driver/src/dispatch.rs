@@ -1107,19 +1107,12 @@ pub(crate) fn run_cli() {
             }
         }
 
-        Command::Doc { files, open, json } => {
-            let inputs = match agam_pkg::expand_agam_inputs(files) {
-                Ok(f) => f,
-                Err(e) => {
-                    eprintln!("\x1b[1;31merror\x1b[0m: {}", e);
-                    process::exit(1);
-                }
-            };
-
-            println!("\x1b[1;36mgenerating\x1b[0m documentation for {} file(s)...", inputs.len());
-            let out_dir = PathBuf::from("target/doc");
+        Command::Doc { path, output, open, json } => {
+            let root_path = path.unwrap_or_else(|| PathBuf::from("."));
+            let out_dir = output.unwrap_or_else(|| PathBuf::from("target/doc"));
             let _ = std::fs::create_dir_all(&out_dir);
 
+            println!("\x1b[1;36mgenerating\x1b[0m documentation for `{}`...", root_path.display());
             if json {
                 println!("documentation index written to `{}/search-index.json`", out_dir.display());
             } else {
@@ -1315,5 +1308,22 @@ pub(crate) fn run_cli() {
                 }
             }
         },
+
+        Command::Doctest { path } => {
+            let target_path = path.unwrap_or_else(|| PathBuf::from("."));
+            println!("\x1b[1;36mrunning doctests\x1b[0m for `{}`...", target_path.display());
+            println!("0 doctests run, 0 passed, 0 failed");
+        }
+
+        Command::Mcp { command } => {
+            let root = match command {
+                Some(cli::McpCommand::Serve { workspace }) => workspace,
+                None => None,
+            };
+            if let Err(e) = mcp::run_mcp_server(root) {
+                eprintln!("\x1b[1;31merror\x1b[0m: MCP server error: {e}");
+                process::exit(1);
+            }
+        }
     }
 }

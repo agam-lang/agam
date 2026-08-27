@@ -16,10 +16,10 @@ import sys
 from pathlib import Path
 
 # Baseline Measured Line Caps (Ratchet must strictly decrease from here)
-CAP_UNWRAPS = 1084
-CAP_EXPECTS = 1318
-CAP_PANICS = 87
-CAP_TOTAL = 2489
+CAP_UNWRAPS = 1080
+CAP_EXPECTS = 993
+CAP_PANICS = 81
+CAP_TOTAL = 2154
 
 # Locate crates directory flexibly
 SCRIPT_DIR = Path(__file__).resolve().parent

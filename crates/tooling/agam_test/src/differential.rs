@@ -4,7 +4,6 @@
 //! the LLVM AOT emitter across core arithmetic, control flow, functions, recursion,
 //! and buffer operations.
 
-use agam_codegen::llvm_emitter::emit_llvm;
 use agam_errors::span::SourceId;
 use agam_hir::lower::HirLowering;
 use agam_lexer::tokenize;
@@ -29,6 +28,7 @@ pub fn compile_to_mir(src: &str) -> Result<agam_mir::ir::MirModule, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agam_codegen::llvm_emitter::emit_llvm;
     use crate::run_source;
 
     #[test]

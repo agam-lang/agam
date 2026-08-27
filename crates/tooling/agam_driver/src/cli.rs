@@ -692,6 +692,20 @@ pub(crate) enum RegistryCommand {
 
     /// Print the official first-party package governance contract
     Governance,
+
+    /// List federated package registry endpoints
+    List,
+
+    /// Start a local development package registry server
+    Serve {
+        /// Port for the local registry server
+        #[arg(long, default_value_t = 8080)]
+        port: u16,
+
+        /// Registry root directory
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -772,3 +786,4 @@ pub(crate) enum DaemonCommand {
     /// Signal a running background daemon to shut down gracefully
     Stop,
 }
+

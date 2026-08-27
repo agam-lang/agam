@@ -3800,7 +3800,7 @@ fn test_inspect_workspace_environment_uses_selection_rules() {
 #[test]
 fn test_self_hosting_stage0_modules_exist_and_validate() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest_dir.join("../..");
+    let root = manifest_dir.join("../../..");
 
     let lexer_agm = root.join("crates/core/agam_lexer/self_host/lexer.agm");
     let parser_agm = root.join("crates/core/agam_parser/self_host/parser.agm");
