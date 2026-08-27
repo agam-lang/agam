@@ -28,7 +28,8 @@ pub mod simd;
 
 pub use pal::{
     AllocationFlags, Event, EventDemuxer, EventInterest, MemoryProtection, PageAllocation,
-    PalEventError, PalMemoryError, PollTimeout, Token, align_to_page_size, system_page_size,
+    PalEventError, PalMemoryError, PalNetError, PalTcpListener, PalTcpStream, PalUdpSocket,
+    PollTimeout, ShutdownKind, Token, align_to_page_size, system_page_size,
 };
 pub use capability::{
     Capability, CapabilitySet, IsolationTier, PermissionDeniedError, global_capabilities,
