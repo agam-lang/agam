@@ -40,6 +40,11 @@ pub enum MirVerificationError {
         block: BlockId,
         phi_block: BlockId,
     },
+    EscapingStackAllocation {
+        value: ValueId,
+        in_block: BlockId,
+        reason: String,
+    },
 }
 
 impl fmt::Display for MirVerificationError {
@@ -95,6 +100,17 @@ impl fmt::Display for MirVerificationError {
                     f,
                     "Phi node in block B{} references predecessor B{} which is not in CFG",
                     block.0, phi_block.0
+                )
+            }
+            MirVerificationError::EscapingStackAllocation {
+                value,
+                in_block,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "escape safety violation: stack allocation %{} in block B{} escapes: {}",
+                    value.0, in_block.0, reason
                 )
             }
         }
@@ -264,6 +280,29 @@ impl MirVerifier {
                             in_block: block.id,
                         });
                     }
+                }
+            }
+        }
+
+        // 6. Check Stack Frame Escape Safety Invariant
+        // Value defined by Op::Alloca must NEVER escape through return terminator
+        let mut stack_allocations: HashSet<ValueId> = HashSet::new();
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                if matches!(instr.op, Op::Alloca { .. }) {
+                    stack_allocations.insert(instr.result);
+                }
+            }
+        }
+
+        for block in &func.blocks {
+            if let Terminator::Return(ret_val) = &block.terminator {
+                if stack_allocations.contains(ret_val) {
+                    errors.push(MirVerificationError::EscapingStackAllocation {
+                        value: *ret_val,
+                        in_block: block.id,
+                        reason: "returned directly from function".into(),
+                    });
                 }
             }
         }
@@ -449,6 +488,42 @@ mod tests {
         assert!(
             errs.iter()
                 .any(|e| matches!(e, MirVerificationError::UseNotDominatedByDef { .. }))
+        );
+    }
+
+    #[test]
+    fn test_verifier_detects_escaping_stack_allocation() {
+        let b0 = BlockId(0);
+        let v_stack = ValueId(0);
+
+        let func = MirFunction {
+            name: "escaping_stack".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(1),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![Instruction {
+                    result: v_stack,
+                    ty: TypeId(1),
+                    op: Op::Alloca {
+                        name: "x".into(),
+                        ty: TypeId(1),
+                    },
+                }],
+                terminator: Terminator::Return(v_stack), // VIOLATION: Stack allocation returned
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_err());
+        let errs = res.unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, MirVerificationError::EscapingStackAllocation { .. }))
         );
     }
 }

@@ -10,6 +10,7 @@ agam_sema = { workspace = true }
 agam_hir = { workspace = true }
 agam_errors = { workspace = true }
 serde = { workspace = true }
+egg = { workspace = true }
 
 [dev-dependencies]
 agam_ast = { workspace = true }

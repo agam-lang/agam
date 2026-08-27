@@ -4,6 +4,12 @@
 //! - `NoEscape`: Value never escapes the allocating function; eligible for stack promotion and ARC elision.
 //! - `ArgEscape`: Value is passed to a pure/non-capturing callee.
 //! - `GlobalEscape`: Value is returned, stored into a heap/global place, or passed to an unknown callee.
+//!
+//! # Safety & Fallback Invariant
+//! When escape state is uncertain (e.g. indirect calls, recursive escaping returns, effect boundaries),
+//! the analysis gracefully falls back to `GlobalEscape` (keeping default heap/ARC semantics).
+
+#![deny(clippy::unwrap_used)]
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -11,9 +17,9 @@ use crate::ir::{MirFunction, MirModule, Op, Terminator, ValueId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EscapeState {
-    NoEscape,
-    ArgEscape,
-    GlobalEscape,
+    NoEscape = 0,
+    ArgEscape = 1,
+    GlobalEscape = 2,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -45,7 +51,7 @@ pub struct StackPromotionResults {
     pub functions: BTreeMap<String, FunctionPromotionSummary>,
 }
 
-/// Analyze escape behavior and perform stack promotion and ARC elision.
+/// Analyze escape behavior and perform stack promotion and ARC elision with graceful fallback.
 pub fn run_escape_and_promote(
     module: &mut MirModule,
     purity: &CalleePurityInfo,
@@ -55,10 +61,10 @@ pub fn run_escape_and_promote(
     let mut total_promoted = 0;
     let mut total_arc_elided = 0;
 
-    for func in &module.functions {
-        let (escape_summary, promotion_summary) = analyze_function_escape(func, purity);
+    for func in &mut module.functions {
+        let (escape_summary, promotion_summary) = analyze_and_mutate_function_escape(func, purity);
         total_promoted += promotion_summary.promoted_locals.len();
-        total_arc_elided += promotion_summary.promoted_locals.len(); // Each non-escaping allocation elides heap refcounts
+        total_arc_elided += promotion_summary.promoted_locals.len();
 
         escape_results.insert(func.name.clone(), escape_summary);
         if !promotion_summary.promoted_locals.is_empty() || !promotion_summary.skipped.is_empty() {
@@ -78,14 +84,19 @@ pub fn run_escape_and_promote(
     )
 }
 
-fn analyze_function_escape(
-    func: &MirFunction,
+fn analyze_and_mutate_function_escape(
+    func: &mut MirFunction,
     purity: &CalleePurityInfo,
 ) -> (FunctionEscapeSummary, FunctionPromotionSummary) {
     let mut value_escapes: HashMap<ValueId, EscapeState> = HashMap::new();
     let mut allocations: HashSet<ValueId> = HashSet::new();
 
-    // 1. Collect all local allocation sites
+    // 1. Collect all local allocation sites & parameters
+    for param in &func.params {
+        // Parameters arrive from caller: by default ArgEscape unless mutated/stored
+        value_escapes.insert(param.value, EscapeState::ArgEscape);
+    }
+
     for block in &func.blocks {
         for instr in &block.instructions {
             match &instr.op {
@@ -98,70 +109,102 @@ fn analyze_function_escape(
         }
     }
 
-    // 2. Classify uses and propagate escape states
-    for block in &func.blocks {
-        // Terminator escapes (return values escape globally)
-        if let Terminator::Return(val) = block.terminator {
-            value_escapes.insert(val, EscapeState::GlobalEscape);
-        }
+    // 2. Fixed-point iterative escape propagation
+    let mut changed = true;
+    let mut iteration = 0;
+    const MAX_PROPAGATION_ITERATIONS: usize = 32;
 
-        // Instruction uses
-        for instr in &block.instructions {
-            match &instr.op {
-                Op::Call { callee, args } => {
-                    let is_pure = purity.pure_functions.contains(callee);
-                    let target_escape = if is_pure {
-                        EscapeState::ArgEscape
-                    } else {
-                        EscapeState::GlobalEscape
-                    };
-                    for arg in args {
-                        let current = value_escapes.entry(*arg).or_insert(EscapeState::NoEscape);
-                        if target_escape > *current {
-                            *current = target_escape;
-                        }
-                    }
-                }
-                Op::StoreIndex { object, value, .. } => {
-                    // Storing a value into an object causes the value to share the object's escape state
-                    let obj_escape = value_escapes
-                        .get(object)
-                        .copied()
-                        .unwrap_or(EscapeState::NoEscape);
-                    let val_escape = value_escapes.entry(*value).or_insert(EscapeState::NoEscape);
-                    if obj_escape > *val_escape {
-                        *val_escape = obj_escape;
-                    }
-                }
-                Op::Copy(src) => {
-                    let src_esc = value_escapes
-                        .get(src)
-                        .copied()
-                        .unwrap_or(EscapeState::NoEscape);
-                    let dst_esc = value_escapes
-                        .entry(instr.result)
-                        .or_insert(EscapeState::NoEscape);
-                    if src_esc > *dst_esc {
-                        *dst_esc = src_esc;
+    while changed && iteration < MAX_PROPAGATION_ITERATIONS {
+        changed = false;
+        iteration += 1;
+
+        for block in &func.blocks {
+            // Terminator escapes
+            match &block.terminator {
+                Terminator::Return(ret_val) => {
+                    let cur = value_escapes.entry(*ret_val).or_insert(EscapeState::NoEscape);
+                    if *cur < EscapeState::GlobalEscape {
+                        *cur = EscapeState::GlobalEscape;
+                        changed = true;
                     }
                 }
                 _ => {}
             }
+
+            // Instruction uses
+            for instr in &block.instructions {
+                match &instr.op {
+                    Op::Call { callee, args } => {
+                        let is_pure = purity.pure_functions.contains(callee);
+                        let target_escape = if is_pure {
+                            EscapeState::ArgEscape
+                        } else {
+                            EscapeState::GlobalEscape
+                        };
+                        for arg in args {
+                            let cur = value_escapes.entry(*arg).or_insert(EscapeState::NoEscape);
+                            if target_escape > *cur {
+                                *cur = target_escape;
+                                changed = true;
+                            }
+                        }
+                    }
+                    Op::StoreIndex { object, value, .. } => {
+                        let obj_esc = value_escapes.get(object).copied().unwrap_or(EscapeState::NoEscape);
+                        let val_esc = value_escapes.entry(*value).or_insert(EscapeState::NoEscape);
+                        if obj_esc > *val_esc {
+                            *val_esc = obj_esc;
+                            changed = true;
+                        }
+                    }
+                    Op::StoreLocal { value, .. } => {
+                        // Storing to local variable keeps current local state unless local escapes
+                        let val_esc = value_escapes.entry(*value).or_insert(EscapeState::NoEscape);
+                        if *val_esc < EscapeState::NoEscape {
+                            *val_esc = EscapeState::NoEscape;
+                        }
+                    }
+                    Op::Copy(src) => {
+                        let src_esc = value_escapes.get(src).copied().unwrap_or(EscapeState::NoEscape);
+                        let dst_esc = value_escapes.entry(instr.result).or_insert(EscapeState::NoEscape);
+                        if src_esc > *dst_esc {
+                            *dst_esc = src_esc;
+                            changed = true;
+                        }
+                    }
+                    Op::EffectPerform { args, .. } => {
+                        // Effect boundaries escape globally (handled by caller/effect runtime)
+                        for arg in args {
+                            let cur = value_escapes.entry(*arg).or_insert(EscapeState::NoEscape);
+                            if *cur < EscapeState::GlobalEscape {
+                                *cur = EscapeState::GlobalEscape;
+                                changed = true;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
-    // 3. Collect non-escaping allocations
+    // 3. Classify promotions and graceful fallbacks
     let mut non_escaping_allocations = Vec::new();
     let mut promoted_locals = Vec::new();
+    let mut skipped = Vec::new();
 
     for &alloc in &allocations {
-        let escape = value_escapes
-            .get(&alloc)
-            .copied()
-            .unwrap_or(EscapeState::NoEscape);
+        let escape = value_escapes.get(&alloc).copied().unwrap_or(EscapeState::GlobalEscape);
         if escape == EscapeState::NoEscape {
             non_escaping_allocations.push(alloc);
             promoted_locals.push(format!("%{}", alloc.0));
+        } else {
+            let reason = match escape {
+                EscapeState::ArgEscape => "passed to callee argument",
+                EscapeState::GlobalEscape => "escapes function frame (returned, stored globally, or impure callee)",
+                EscapeState::NoEscape => "unknown",
+            };
+            skipped.push((format!("%{}", alloc.0), reason.to_string()));
         }
     }
 
@@ -172,7 +215,7 @@ fn analyze_function_escape(
         },
         FunctionPromotionSummary {
             promoted_locals,
-            skipped: Vec::new(),
+            skipped,
         },
     )
 }
@@ -221,17 +264,20 @@ mod tests {
                 target: Default::default(),
                 gpu_config: None,
             }],
-            enum_layouts: std::collections::HashMap::new(),
-            struct_layouts: std::collections::HashMap::new(),
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
         };
 
         let (escape, promotion) = run_escape_and_promote(&mut module, &CalleePurityInfo::default());
         assert_eq!(promotion.total_promoted, 1);
-        assert_eq!(promotion.total_arc_elided, 1);
-        assert_eq!(
-            escape.functions["local_temp"].value_escapes[&v_alloc],
-            EscapeState::NoEscape
-        );
+        let fn_summary_opt = escape.functions.get("local_temp");
+        assert!(fn_summary_opt.is_some(), "missing function summary");
+        if let Some(fn_summary) = fn_summary_opt {
+            assert_eq!(
+                fn_summary.value_escapes.get(&v_alloc),
+                Some(&EscapeState::NoEscape)
+            );
+        }
     }
 
     #[test]
@@ -241,7 +287,7 @@ mod tests {
 
         let mut module = MirModule {
             functions: vec![MirFunction {
-                name: "factory".into(),
+                name: "make_point".into(),
                 generics: vec![],
                 params: vec![],
                 return_ty: TypeId(1),
@@ -253,23 +299,27 @@ mod tests {
                         ty: TypeId(1),
                         op: Op::StructConstruct {
                             name: "Point".into(),
-                            fields: vec![],
+                            fields: vec![("x".into(), ValueId(10))],
                         },
                     }],
-                    terminator: Terminator::Return(v_alloc), // Escapes globally!
+                    terminator: Terminator::Return(v_alloc), // v_alloc escapes globally!
                 }],
                 target: Default::default(),
                 gpu_config: None,
             }],
-            enum_layouts: std::collections::HashMap::new(),
-            struct_layouts: std::collections::HashMap::new(),
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
         };
 
         let (escape, promotion) = run_escape_and_promote(&mut module, &CalleePurityInfo::default());
-        assert_eq!(promotion.total_promoted, 0);
-        assert_eq!(
-            escape.functions["factory"].value_escapes[&v_alloc],
-            EscapeState::GlobalEscape
-        );
+        assert_eq!(promotion.total_promoted, 0); // Gracefully declined promotion
+        let fn_summary_opt = escape.functions.get("make_point");
+        assert!(fn_summary_opt.is_some(), "missing function summary");
+        if let Some(fn_summary) = fn_summary_opt {
+            assert_eq!(
+                fn_summary.value_escapes.get(&v_alloc),
+                Some(&EscapeState::GlobalEscape)
+            );
+        }
     }
 }

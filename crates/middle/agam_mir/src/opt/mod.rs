@@ -4,6 +4,7 @@ pub mod ai_intel;
 pub mod baur_strassen;
 pub mod constant_fold;
 pub mod dce;
+pub mod egg_engine;
 pub mod egraph;
 pub mod escape;
 pub mod inline;
@@ -42,6 +43,12 @@ pub fn optimize_module(module: &mut MirModule) -> bool {
         changed |= loop_unroll::run(module);
         changed |= constant_fold::run(module);
         changed |= dce::run(module);
+
+        let purity = escape::CalleePurityInfo::default();
+        let (_escapes, promo) = escape::run_escape_and_promote(module, &purity);
+        if promo.total_promoted > 0 {
+            changed = true;
+        }
 
         if !changed {
             break;
