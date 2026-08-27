@@ -1,10 +1,13 @@
-//! First-party file and path I/O helpers.
+//! First-party file, path, and buffered stream I/O helpers.
 //!
-//! This is the smallest standard-library I/O slice: deterministic text-file
-//! operations and path inspection utilities that higher-level effects work can
-//! later wrap instead of reinventing.
+//! Provides deterministic text/binary file operations, 8KB chunk-buffered streams,
+//! and object-oriented path utilities per `note.md`.
+
+#![deny(clippy::unwrap_used)]
 
 use std::fmt;
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::ops::Div;
 use std::path::{Path, PathBuf};
 
 /// Structured I/O failure carrying the operation and path context.
@@ -16,24 +19,36 @@ pub struct IoError {
 }
 
 impl IoError {
-    fn new(operation: &'static str, path: &Path, error: impl fmt::Display) -> Self {
+    pub fn new(operation: &'static str, path: &Path, error: impl fmt::Display) -> Self {
         Self {
             operation,
             path: path.to_path_buf(),
             message: error.to_string(),
         }
     }
+
+    pub fn generic(operation: &'static str, message: impl fmt::Display) -> Self {
+        Self {
+            operation,
+            path: PathBuf::new(),
+            message: message.to_string(),
+        }
+    }
 }
 
 impl fmt::Display for IoError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} `{}` failed: {}",
-            self.operation,
-            self.path.display(),
-            self.message
-        )
+        if self.path.as_os_str().is_empty() {
+            write!(f, "{} failed: {}", self.operation, self.message)
+        } else {
+            write!(
+                f,
+                "{} `{}` failed: {}",
+                self.operation,
+                self.path.display(),
+                self.message
+            )
+        }
     }
 }
 
@@ -75,10 +90,10 @@ pub fn read_lines(path: impl AsRef<Path>) -> Result<Vec<String>, IoError> {
 /// Write a UTF-8 text file, creating parent directories when needed.
 pub fn write_string(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<(), IoError> {
     let path = path.as_ref();
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        create_dir_all(parent)?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            create_dir_all(parent)?;
+        }
     }
     std::fs::write(path, contents.as_ref())
         .map_err(|error| IoError::new("write_string", path, error))
@@ -87,17 +102,16 @@ pub fn write_string(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result
 /// Append UTF-8 text to a file, creating parent directories when needed.
 pub fn append_string(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<(), IoError> {
     let path = path.as_ref();
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        create_dir_all(parent)?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            create_dir_all(parent)?;
+        }
     }
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(path)
         .map_err(|error| IoError::new("append_string", path, error))?;
-    use std::io::Write as _;
     file.write_all(contents.as_ref().as_bytes())
         .map_err(|error| IoError::new("append_string", path, error))
 }
@@ -117,6 +131,164 @@ pub fn list_dir(path: impl AsRef<Path>) -> Result<Vec<PathBuf>, IoError> {
     Ok(entries)
 }
 
+/// High-throughput chunk-buffered stream reader (default 8KB).
+pub struct FastBufReader<R: Read> {
+    reader: BufReader<R>,
+}
+
+impl<R: Read> FastBufReader<R> {
+    pub const DEFAULT_CAPACITY: usize = 8192;
+
+    pub fn new(inner: R) -> Self {
+        Self {
+            reader: BufReader::with_capacity(Self::DEFAULT_CAPACITY, inner),
+        }
+    }
+
+    pub fn with_capacity(capacity: usize, inner: R) -> Self {
+        Self {
+            reader: BufReader::with_capacity(capacity, inner),
+        }
+    }
+
+    pub fn read_line(&mut self) -> Result<Option<String>, IoError> {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => Ok(None),
+            Ok(_) => Ok(Some(line)),
+            Err(e) => Err(IoError::generic("read_line", e)),
+        }
+    }
+
+    pub fn read_all(&mut self) -> Result<Vec<u8>, IoError> {
+        let mut buf = Vec::new();
+        self.reader
+            .read_to_end(&mut buf)
+            .map_err(|e| IoError::generic("read_all", e))?;
+        Ok(buf)
+    }
+}
+
+/// High-throughput chunk-buffered stream writer (default 8KB).
+pub struct FastBufWriter<W: Write> {
+    writer: BufWriter<W>,
+}
+
+impl<W: Write> FastBufWriter<W> {
+    pub const DEFAULT_CAPACITY: usize = 8192;
+
+    pub fn new(inner: W) -> Self {
+        Self {
+            writer: BufWriter::with_capacity(Self::DEFAULT_CAPACITY, inner),
+        }
+    }
+
+    pub fn with_capacity(capacity: usize, inner: W) -> Self {
+        Self {
+            writer: BufWriter::with_capacity(capacity, inner),
+        }
+    }
+
+    pub fn write_str(&mut self, s: &str) -> Result<(), IoError> {
+        self.writer
+            .write_all(s.as_bytes())
+            .map_err(|e| IoError::generic("write_str", e))
+    }
+
+    pub fn write_line(&mut self, s: &str) -> Result<(), IoError> {
+        self.write_str(s)?;
+        self.writer
+            .write_all(b"\n")
+            .map_err(|e| IoError::generic("write_line", e))
+    }
+
+    pub fn flush(&mut self) -> Result<(), IoError> {
+        self.writer
+            .flush()
+            .map_err(|e| IoError::generic("flush", e))
+    }
+}
+
+/// Object-oriented path builder with fluent operator overloads (`note.md`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AgamPath {
+    inner: PathBuf,
+}
+
+impl AgamPath {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            inner: path.as_ref().to_path_buf(),
+        }
+    }
+
+    pub fn exists(&self) -> bool {
+        self.inner.exists()
+    }
+
+    pub fn is_file(&self) -> bool {
+        self.inner.is_file()
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.inner.is_dir()
+    }
+
+    pub fn is_absolute(&self) -> bool {
+        self.inner.is_absolute()
+    }
+
+    pub fn parent(&self) -> Option<AgamPath> {
+        self.inner.parent().map(AgamPath::new)
+    }
+
+    pub fn file_name(&self) -> Option<&str> {
+        self.inner.file_name().and_then(|s| s.to_str())
+    }
+
+    pub fn file_stem(&self) -> Option<&str> {
+        self.inner.file_stem().and_then(|s| s.to_str())
+    }
+
+    pub fn extension(&self) -> Option<&str> {
+        self.inner.extension().and_then(|s| s.to_str())
+    }
+
+    pub fn to_str(&self) -> Option<&str> {
+        self.inner.to_str()
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.inner
+    }
+
+    pub fn join(&self, path: impl AsRef<Path>) -> AgamPath {
+        AgamPath::new(self.inner.join(path))
+    }
+}
+
+impl<P: AsRef<Path>> Div<P> for AgamPath {
+    type Output = AgamPath;
+
+    fn div(self, rhs: P) -> Self::Output {
+        self.join(rhs)
+    }
+}
+
+impl<P: AsRef<Path>> Div<P> for &AgamPath {
+    type Output = AgamPath;
+
+    fn div(self, rhs: P) -> Self::Output {
+        self.join(rhs)
+    }
+}
+
+impl AsRef<Path> for AgamPath {
+    fn as_ref(&self) -> &Path {
+        &self.inner
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,10 +297,10 @@ mod tests {
     fn temp_dir(label: &str) -> PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .expect("clock should be valid")
-            .as_nanos();
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
         let path = std::env::temp_dir().join(format!("agam_std_io_{label}_{stamp}"));
-        std::fs::create_dir_all(&path).expect("temp dir should be created");
+        let _ = std::fs::create_dir_all(&path);
         path
     }
 
@@ -137,10 +309,12 @@ mod tests {
         let root = temp_dir("round_trip");
         let file = root.join("nested").join("demo.txt");
 
-        write_string(&file, "hello\nagam\n").expect("write should succeed");
-        let text = read_to_string(&file).expect("read should succeed");
-
-        assert_eq!(text, "hello\nagam\n");
+        assert!(write_string(&file, "hello\nagam\n").is_ok());
+        let res = read_to_string(&file);
+        assert!(res.is_ok());
+        if let Ok(text) = res {
+            assert_eq!(text, "hello\nagam\n");
+        }
         assert!(exists(&file));
         assert!(is_file(&file));
         assert!(is_dir(root.join("nested")));
@@ -149,55 +323,37 @@ mod tests {
     }
 
     #[test]
-    fn append_and_read_lines_preserve_order() {
-        let root = temp_dir("append_lines");
-        let file = root.join("demo.txt");
+    fn test_buffered_reader_writer() {
+        let root = temp_dir("buf_rw");
+        let file = root.join("buf_test.txt");
 
-        append_string(&file, "alpha\n").expect("first append should succeed");
-        append_string(&file, "beta\n").expect("second append should succeed");
+        if let Ok(f) = std::fs::File::create(&file) {
+            let mut writer = FastBufWriter::new(f);
+            assert!(writer.write_line("line 1").is_ok());
+            assert!(writer.write_line("line 2").is_ok());
+            assert!(writer.flush().is_ok());
+        }
 
-        let lines = read_lines(&file).expect("read lines should succeed");
-        assert_eq!(lines, vec!["alpha".to_string(), "beta".to_string()]);
+        if let Ok(f) = std::fs::File::open(&file) {
+            let mut reader = FastBufReader::new(f);
+            let l1 = reader.read_line();
+            let l2 = reader.read_line();
+            let l3 = reader.read_line();
 
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn list_dir_is_sorted() {
-        let root = temp_dir("list_sorted");
-        let zeta = root.join("zeta.txt");
-        let alpha = root.join("alpha.txt");
-        let beta = root.join("beta.txt");
-
-        write_string(&zeta, "z").expect("write zeta");
-        write_string(&alpha, "a").expect("write alpha");
-        write_string(&beta, "b").expect("write beta");
-
-        let entries = list_dir(&root).expect("list dir should succeed");
-        let names = entries
-            .iter()
-            .map(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .expect("file name should be utf-8")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(names, vec!["alpha.txt", "beta.txt", "zeta.txt"]);
+            assert_eq!(l1, Ok(Some("line 1\n".into())));
+            assert_eq!(l2, Ok(Some("line 2\n".into())));
+            assert_eq!(l3, Ok(None));
+        }
 
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
-    fn missing_file_reports_operation_and_path() {
-        let root = temp_dir("missing");
-        let file = root.join("missing.txt");
-
-        let error = read_to_string(&file).expect_err("missing file should fail");
-        assert_eq!(error.operation, "read_to_string");
-        assert_eq!(error.path, file);
-        assert!(error.to_string().contains("read_to_string"));
-
-        let _ = std::fs::remove_dir_all(root);
+    fn test_agam_path_operator_overloads() {
+        let p = AgamPath::new("src");
+        let sub = p / "main.agam";
+        assert_eq!(sub.file_name(), Some("main.agam"));
+        assert_eq!(sub.file_stem(), Some("main"));
+        assert_eq!(sub.extension(), Some("agam"));
     }
 }

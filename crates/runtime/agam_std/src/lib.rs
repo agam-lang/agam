@@ -34,10 +34,15 @@ pub mod quantum;
 pub mod serial;
 pub mod sparse;
 pub mod stats;
+pub mod string;
 pub mod tensor;
 pub mod units;
 
-pub use collections::{CompactGraph, FastRingBuffer};
+pub use collections::{
+    CompactGraph, Counter, FastHashMap, FastHashSet, FastRingBuffer, FastVec, OrderedMap,
+};
+pub use io::{AgamPath, FastBufReader, FastBufWriter, IoError};
+pub use string::{StringBuilder, Utf8Scanner, case_fold_eq};
 pub use combinatorics::{MatrixCover, ramsey_multi_color_lower_bound, saturated_matrix_cover};
 pub use complex::Complex;
 pub use ebpf::{
