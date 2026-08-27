@@ -5,6 +5,7 @@ pub mod baur_strassen;
 pub mod constant_fold;
 pub mod dce;
 pub mod egg_engine;
+#[deprecated(note = "Superseded by opt::egg_engine")]
 pub mod egraph;
 pub mod escape;
 pub mod inline;
@@ -39,7 +40,7 @@ pub fn optimize_module(module: &mut MirModule) -> bool {
         let mut changed = false;
         changed |= inline::run(module);
         changed |= constant_fold::run(module);
-        changed |= egraph::run(module);
+        changed |= egg_engine::run(module);
         changed |= loop_unroll::run(module);
         changed |= constant_fold::run(module);
         changed |= dce::run(module);

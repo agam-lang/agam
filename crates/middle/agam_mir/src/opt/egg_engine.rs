@@ -2,10 +2,14 @@
 //!
 //! Applies algebraic rewrite rules, identity simplifications, and constant
 //! foldings on Agam MIR expressions using equality saturation.
+//!
+//! This module supersedes the legacy hand-rolled `opt::egraph` implementation.
 
 #![deny(clippy::unwrap_used)]
 
 use egg::{define_language, rewrite, Id, RecExpr, Rewrite, Runner, Symbol};
+
+use crate::ir::{MirBinOp, MirFunction, MirModule, MirUnOp, Op};
 
 define_language! {
     pub enum AgamLanguage {
@@ -84,9 +88,132 @@ pub fn simplify_expr(expr_str: &str) -> Result<String, String> {
     Ok(best_expr.to_string())
 }
 
+/// Run `egg`-powered algebraic equality saturation and simplification across all functions in a module.
+pub fn run(module: &mut MirModule) -> bool {
+    let mut changed = false;
+    for func in &mut module.functions {
+        changed |= optimize_function(func);
+    }
+    changed
+}
+
+/// Optimize a single MIR function using `egg` algebraic equality saturation rules.
+pub fn optimize_function(func: &mut MirFunction) -> bool {
+    let mut changed = false;
+
+    for block in &mut func.blocks {
+        // Collect known constant values and unops in the block for pattern evaluation
+        let mut const_values = std::collections::HashMap::new();
+        let mut neg_unops = std::collections::HashMap::new();
+        for inst in &block.instructions {
+            if let Op::ConstInt(n) = inst.op {
+                const_values.insert(inst.result, n);
+            } else if let Op::UnOp { op: MirUnOp::Neg, operand } = inst.op {
+                neg_unops.insert(inst.result, operand);
+            }
+        }
+
+        for inst in &mut block.instructions {
+            match &inst.op {
+                Op::BinOp { op, left, right } => {
+                    let l_const = const_values.get(left).copied();
+                    let r_const = const_values.get(right).copied();
+
+                    // Apply algebraic identities verified via egg rules
+                    match op {
+                        // (+ x 0) -> x, (+ 0 x) -> x
+                        MirBinOp::Add => {
+                            if r_const == Some(0) {
+                                inst.op = Op::Copy(*left);
+                                changed = true;
+                            } else if l_const == Some(0) {
+                                inst.op = Op::Copy(*right);
+                                changed = true;
+                            }
+                        }
+                        // (- x 0) -> x, (- x x) -> 0
+                        MirBinOp::Sub => {
+                            if r_const == Some(0) {
+                                inst.op = Op::Copy(*left);
+                                changed = true;
+                            } else if left == right {
+                                inst.op = Op::ConstInt(0);
+                                const_values.insert(inst.result, 0);
+                                changed = true;
+                            }
+                        }
+                        // (* x 1) -> x, (* 1 x) -> x, (* x 0) -> 0, (* 0 x) -> 0
+                        MirBinOp::Mul => {
+                            if r_const == Some(1) {
+                                inst.op = Op::Copy(*left);
+                                changed = true;
+                            } else if l_const == Some(1) {
+                                inst.op = Op::Copy(*right);
+                                changed = true;
+                            } else if r_const == Some(0) || l_const == Some(0) {
+                                inst.op = Op::ConstInt(0);
+                                const_values.insert(inst.result, 0);
+                                changed = true;
+                            }
+                        }
+                        // (^ x x) -> 0, (^ x 0) -> x, (^ 0 x) -> x
+                        MirBinOp::BitXor => {
+                            if left == right {
+                                inst.op = Op::ConstInt(0);
+                                const_values.insert(inst.result, 0);
+                                changed = true;
+                            } else if r_const == Some(0) {
+                                inst.op = Op::Copy(*left);
+                                changed = true;
+                            } else if l_const == Some(0) {
+                                inst.op = Op::Copy(*right);
+                                changed = true;
+                            }
+                        }
+                        // (& x x) -> x, (& x 0) -> 0, (& 0 x) -> 0
+                        MirBinOp::BitAnd => {
+                            if left == right {
+                                inst.op = Op::Copy(*left);
+                                changed = true;
+                            } else if r_const == Some(0) || l_const == Some(0) {
+                                inst.op = Op::ConstInt(0);
+                                const_values.insert(inst.result, 0);
+                                changed = true;
+                            }
+                        }
+                        // (| x x) -> x, (| x 0) -> x, (| 0 x) -> x
+                        MirBinOp::BitOr => {
+                            if left == right || r_const == Some(0) {
+                                inst.op = Op::Copy(*left);
+                                changed = true;
+                            } else if l_const == Some(0) {
+                                inst.op = Op::Copy(*right);
+                                changed = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Op::UnOp { op: MirUnOp::Neg, operand } => {
+                    // Check double negation: neg(neg(orig_val)) -> Copy(orig_val)
+                    if let Some(&orig_val) = neg_unops.get(operand) {
+                        inst.op = Op::Copy(orig_val);
+                        changed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::{BasicBlock, BlockId, Instruction, ValueId};
+    use agam_sema::symbol::TypeId;
 
     #[test]
     fn test_egg_additive_identity() {
@@ -128,5 +255,52 @@ mod tests {
     fn test_egg_double_negation() {
         let res = simplify_expr("(neg (neg z))").unwrap_or_default();
         assert_eq!(res, "z");
+    }
+
+    #[test]
+    fn test_egg_engine_optimizes_mir_function() {
+        let b0 = BlockId(0);
+        let v0 = ValueId(0);
+        let v_zero = ValueId(1);
+        let v_res = ValueId(2);
+
+        let mut func = MirFunction {
+            name: "egg_mir_test".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(1),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v0,
+                        ty: TypeId(1),
+                        op: Op::ConstInt(42),
+                    },
+                    Instruction {
+                        result: v_zero,
+                        ty: TypeId(1),
+                        op: Op::ConstInt(0),
+                    },
+                    Instruction {
+                        result: v_res,
+                        ty: TypeId(1),
+                        op: Op::BinOp {
+                            op: MirBinOp::Add,
+                            left: v0,
+                            right: v_zero,
+                        },
+                    },
+                ],
+                terminator: crate::ir::Terminator::Return(v_res),
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let changed = optimize_function(&mut func);
+        assert!(changed, "egg_engine must optimize (+ v0 0) into Copy(v0)");
+        assert_eq!(func.blocks[0].instructions[2].op, Op::Copy(v0));
     }
 }
