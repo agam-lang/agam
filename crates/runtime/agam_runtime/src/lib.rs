@@ -20,11 +20,16 @@ pub mod crypto;
 pub mod effects;
 pub mod export;
 pub mod hwinfo;
+pub mod pal;
 pub mod pqc;
 pub mod sandbox;
 pub mod security;
 pub mod simd;
 
+pub use pal::{
+    AllocationFlags, MemoryProtection, PageAllocation, PalMemoryError, align_to_page_size,
+    system_page_size,
+};
 pub use capability::{
     Capability, CapabilitySet, IsolationTier, PermissionDeniedError, global_capabilities,
 };
