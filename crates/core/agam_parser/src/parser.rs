@@ -131,6 +131,62 @@ impl Parser {
         }
     }
 
+    /// Panic-mode synchronization to the next top-level declaration boundary.
+    fn synchronize_decl(&mut self) {
+        // Skip current faulty token first if not already at a sync token
+        if !self.at_end() {
+            self.advance();
+        }
+        while !self.at_end() {
+            match self.peek_kind() {
+                TokenKind::Fn
+                | TokenKind::Struct
+                | TokenKind::Enum
+                | TokenKind::Trait
+                | TokenKind::Impl
+                | TokenKind::Mod
+                | TokenKind::Use
+                | TokenKind::Import
+                | TokenKind::Type
+                | TokenKind::Const
+                | TokenKind::Pub
+                | TokenKind::At => return,
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
+    /// Panic-mode synchronization to the next statement boundary.
+    fn synchronize_stmt(&mut self) {
+        if !self.at_end() {
+            self.advance();
+        }
+        while !self.at_end() {
+            match self.peek_kind() {
+                TokenKind::Let
+                | TokenKind::Const
+                | TokenKind::If
+                | TokenKind::While
+                | TokenKind::For
+                | TokenKind::Return
+                | TokenKind::Match
+                | TokenKind::Break
+                | TokenKind::Continue
+                | TokenKind::RBrace
+                | TokenKind::Dedent => return,
+                TokenKind::Newline | TokenKind::Semicolon => {
+                    self.advance();
+                    return;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+    }
+
     // ── Module ──
 
     pub fn parse_module(&mut self, source_id: SourceId) -> Result<Module, Vec<ParseError>> {
@@ -162,7 +218,7 @@ impl Parser {
                 Ok(d) => decls.push(d),
                 Err(e) => {
                     self.errors.push(e);
-                    self.advance();
+                    self.synchronize_decl();
                 }
             }
             self.skip_newlines();
@@ -1094,8 +1150,7 @@ impl Parser {
                 Ok(s) => stmts.push(s),
                 Err(e) => {
                     self.errors.push(e);
-                    self.advance();
-                    break;
+                    self.synchronize_stmt();
                 }
             }
             self.skip_newlines();
@@ -2791,4 +2846,35 @@ struct Point { x: f64, y: f64 }
         assert_eq!(struct_decl.doc_comments.len(), 1);
         assert_eq!(struct_decl.doc_comments[0], "Represents a 2D point.");
     }
+
+    #[test]
+    fn test_panic_mode_token_recovery_multiple_errors() {
+        let src = r#"
+fn good_first() -> i32:
+    return 1
+
+fn bad_syntax_one(
+    // Missing closing paren and colon
+
+fn good_middle() -> i32:
+    return 2
+
+fn bad_syntax_two(!@#$) -> void:
+    return
+
+fn good_last() -> i32:
+    return 3
+"#;
+        let tokens = tokenize(src, SourceId(0));
+        let mut parser = Parser::new(tokens);
+        let res = parser.parse_module(SourceId(0));
+        assert!(res.is_err(), "Must report errors for malformed functions");
+        let errors = res.unwrap_err();
+        assert!(
+            errors.len() >= 2,
+            "Must collect multiple parse errors across independent functions, got {}",
+            errors.len()
+        );
+    }
 }
+
