@@ -125,7 +125,8 @@ pub fn run(module: &mut MirModule) -> bool {
                     | Op::GpuKernelLaunch { .. }
                     | Op::GpuSharedAlloc { .. }
                     | Op::GpuIntrinsic { .. }
-                    | Op::InlineAsm { .. } => {
+                    | Op::InlineAsm { .. }
+                    | Op::Syscall { .. } => {
                         value_consts.remove(&instr.result);
                     }
                     Op::EnumConstruct { .. }

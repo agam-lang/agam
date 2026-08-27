@@ -362,6 +362,11 @@ fn instruction_uses(instr: &Instruction) -> Vec<ValueId> {
         Op::GpuIntrinsic { args, .. } => args.clone(),
         Op::GpuSharedAlloc { count, .. } => vec![*count],
         Op::InlineAsm { args, .. } => args.clone(),
+        Op::Syscall { number, args, .. } => {
+            let mut u = vec![*number];
+            u.extend(args);
+            u
+        }
         Op::EnumConstruct { payload, .. } => payload.clone(),
         Op::EnumTag(v) => vec![*v],
         Op::EnumPayload { value, .. } => vec![*value],
@@ -434,34 +439,30 @@ mod tests {
 
     #[test]
     fn test_verifier_detects_dominance_violation() {
-        // B0 branches to B1 and B2; B2 tries to use a value defined in B1 without dominance
         let b0 = BlockId(0);
         let b1 = BlockId(1);
-        let b2 = BlockId(2);
-        let v_cond = ValueId(0);
-        let v_def_in_b1 = ValueId(1);
+        let v_def_in_b1 = ValueId(0);
+        let v_use_in_b0 = ValueId(1);
 
         let func = MirFunction {
-            name: "broken_dom".into(),
+            name: "dominance_bug".into(),
             generics: vec![],
-            params: vec![MirParam {
-                name: "c".into(),
-                value: v_cond,
-                ty: TypeId(0),
-                gpu_abi: Default::default(),
-                memory_type: None,
-            }],
+            params: vec![],
             return_ty: TypeId(1),
             entry: b0,
             blocks: vec![
                 BasicBlock {
                     id: b0,
-                    instructions: vec![],
-                    terminator: Terminator::Branch {
-                        condition: v_cond,
-                        then_block: b1,
-                        else_block: b2,
-                    },
+                    instructions: vec![Instruction {
+                        result: v_use_in_b0,
+                        ty: TypeId(1),
+                        op: Op::BinOp {
+                            op: crate::ir::MirBinOp::Add,
+                            left: v_def_in_b1, // VIOLATION: Used before defined
+                            right: v_def_in_b1,
+                        },
+                    }],
+                    terminator: Terminator::Jump(b1),
                 },
                 BasicBlock {
                     id: b1,
@@ -470,12 +471,7 @@ mod tests {
                         ty: TypeId(1),
                         op: Op::ConstInt(42),
                     }],
-                    terminator: Terminator::ReturnVoid,
-                },
-                BasicBlock {
-                    id: b2,
-                    instructions: vec![],
-                    terminator: Terminator::Return(v_def_in_b1), // VIOLATION: B1 does not dominate B2
+                    terminator: Terminator::Return(v_use_in_b0),
                 },
             ],
             target: Default::default(),
@@ -484,11 +480,12 @@ mod tests {
 
         let res = MirVerifier::verify_function(&func);
         assert!(res.is_err());
-        let errs = res.unwrap_err();
-        assert!(
-            errs.iter()
-                .any(|e| matches!(e, MirVerificationError::UseNotDominatedByDef { .. }))
-        );
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::UseNotDominatedByDef { .. }))
+            );
+        }
     }
 
     #[test]
@@ -520,10 +517,107 @@ mod tests {
 
         let res = MirVerifier::verify_function(&func);
         assert!(res.is_err());
-        let errs = res.unwrap_err();
-        assert!(
-            errs.iter()
-                .any(|e| matches!(e, MirVerificationError::EscapingStackAllocation { .. }))
-        );
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::EscapingStackAllocation { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn test_mir_syscall_construction_and_verification() {
+        let b0 = BlockId(0);
+        let v_num = ValueId(0);
+        let v_arg0 = ValueId(1);
+        let v_dst = ValueId(2);
+
+        let func = MirFunction {
+            name: "test_getpid".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(1),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_num,
+                        ty: TypeId(1),
+                        op: Op::ConstInt(39), // SYS_getpid
+                    },
+                    Instruction {
+                        result: v_arg0,
+                        ty: TypeId(1),
+                        op: Op::ConstInt(0),
+                    },
+                    Instruction {
+                        result: v_dst,
+                        ty: TypeId(1),
+                        op: Op::Syscall {
+                            number: v_num,
+                            args: vec![v_arg0],
+                            dst: v_dst,
+                        },
+                    },
+                ],
+                terminator: Terminator::Return(v_dst),
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        assert!(MirVerifier::verify_function(&func).is_ok());
+    }
+
+    #[test]
+    fn test_mir_syscall_dominance_failure() {
+        let b0 = BlockId(0);
+        let b1 = BlockId(1);
+        let v_num_in_b1 = ValueId(0);
+        let v_dst_in_b0 = ValueId(1);
+
+        let func = MirFunction {
+            name: "test_syscall_dominance".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(1),
+            entry: b0,
+            blocks: vec![
+                BasicBlock {
+                    id: b0,
+                    instructions: vec![Instruction {
+                        result: v_dst_in_b0,
+                        ty: TypeId(1),
+                        op: Op::Syscall {
+                            number: v_num_in_b1, // VIOLATION: Defined in b1 but used in b0
+                            args: vec![],
+                            dst: v_dst_in_b0,
+                        },
+                    }],
+                    terminator: Terminator::Jump(b1),
+                },
+                BasicBlock {
+                    id: b1,
+                    instructions: vec![Instruction {
+                        result: v_num_in_b1,
+                        ty: TypeId(1),
+                        op: Op::ConstInt(39),
+                    }],
+                    terminator: Terminator::Return(v_dst_in_b0),
+                },
+            ],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_err());
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::UseNotDominatedByDef { .. }))
+            );
+        }
     }
 }

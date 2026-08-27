@@ -1249,6 +1249,9 @@ impl AgamJit {
                     pointer_type,
                 )
             }
+            Op::Syscall { .. } => {
+                Ok(default_value(builder, JitType::Int { bits: 64, signed: true }, pointer_type))
+            }
         }
     }
 
@@ -2499,8 +2502,9 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                 | Op::GpuKernelLaunch { .. }
                 | Op::GpuSharedAlloc { .. }
                 | Op::GpuIntrinsic { .. }
-                | Op::InlineAsm { .. } => JitType::Int {
-                    bits: 32,
+                | Op::InlineAsm { .. }
+                | Op::Syscall { .. } => JitType::Int {
+                    bits: 64,
                     signed: true,
                 },
             };

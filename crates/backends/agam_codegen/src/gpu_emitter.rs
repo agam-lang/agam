@@ -899,8 +899,9 @@ fn emit_kernel_instruction(
         | Op::EnumConstruct { .. }
         | Op::EnumTag(_)
         | Op::EnumPayload { .. }
-        | Op::StructConstruct { .. } => {
-            write!(out, "  ; unhandled GPU op: {:?}\n", instr.op).unwrap();
+        | Op::StructConstruct { .. }
+        | Op::Syscall { .. } => {
+            let _ = write!(out, "  ; unhandled GPU op: {:?}\n", instr.op);
         }
     }
 }

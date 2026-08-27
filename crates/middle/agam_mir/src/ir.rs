@@ -173,6 +173,13 @@ pub enum Op {
         args: Vec<ValueId>,
     },
 
+    /// Direct OS system call invocation.
+    Syscall {
+        number: ValueId,
+        args: Vec<ValueId>,
+        dst: ValueId,
+    },
+
     // ── Tagged Union (Enum) Operations ──
     /// Construct an enum variant: tag + optional payload.
     /// `EnumConstruct { tag: 0, payload: [v1] }` → `Some(v1)`

@@ -544,6 +544,7 @@ fn analyze_function(
                 Op::GpuSharedAlloc { .. } => LlvmType::default_int(),
                 Op::GpuIntrinsic { .. } => LlvmType::default_int(),
                 Op::InlineAsm { .. } => LlvmType::default_int(),
+                Op::Syscall { .. } => LlvmType::default_int(),
                 Op::EnumConstruct { .. } => LlvmType::Enum,
                 Op::EnumPayload { .. } => {
                     infer_llvm_type_from_type_id(instr.ty).unwrap_or_else(LlvmType::default_int)
@@ -708,7 +709,8 @@ fn analyze_function(
                         | Op::EnumTag(_)
                         | Op::EnumPayload { .. }
                         | Op::StructConstruct { .. }
-                        | Op::InlineAsm { .. } => default_sign_for_type(result_ty),
+                        | Op::InlineAsm { .. }
+                        | Op::Syscall { .. } => default_sign_for_type(result_ty),
                     };
 
                 if value_signs.get(&instr.result).copied() != Some(inferred_sign) {
@@ -2825,6 +2827,118 @@ impl LlvmEmitter {
                 values.insert(
                     instr.result,
                     ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                );
+            }
+            Op::Syscall { number, args, .. } => {
+                let num_val = get_value(values, *number)?;
+                let num_coerced = self.coerce_value(
+                    out,
+                    &num_val,
+                    LlvmType::Int(LlvmIntType {
+                        bits: 64,
+                        signed: true,
+                    }),
+                )?;
+                let mut coerced_args = Vec::new();
+                for arg in args {
+                    let v = get_value(values, *arg)?;
+                    let c = self.coerce_value(
+                        out,
+                        &v,
+                        LlvmType::Int(LlvmIntType {
+                            bits: 64,
+                            signed: true,
+                        }),
+                    )?;
+                    coerced_args.push(c);
+                }
+
+                let is_aarch64 = self
+                    .options
+                    .target_triple
+                    .as_deref()
+                    .map(|t| t.contains("aarch64") || t.contains("arm64"))
+                    .unwrap_or(false);
+                let is_windows = self
+                    .options
+                    .target_triple
+                    .as_deref()
+                    .map(|t| t.contains("windows"))
+                    .unwrap_or(false);
+
+                if is_windows {
+                    let func_name = "__agam_pal_syscall_win64";
+                    let mut call_params = vec!["i64 noundef".to_string()];
+                    let mut call_args = vec![format!("i64 {}", num_coerced.repr)];
+                    for arg in &coerced_args {
+                        call_params.push("i64 noundef".to_string());
+                        call_args.push(format!("i64 {}", arg.repr));
+                    }
+                    let decl = format!(
+                        "declare noundef i64 @{}({})",
+                        func_name,
+                        call_params.join(", ")
+                    );
+                    self.register_external_decl(func_name, &decl);
+                    let _ = writeln!(
+                        out,
+                        "  {} = call noundef i64 @{}({})",
+                        result_name,
+                        func_name,
+                        call_args.join(", ")
+                    );
+                } else if is_aarch64 {
+                    let mut constraints = vec!["={x0}".to_string(), "{x8}".to_string()];
+                    let mut asm_args = vec![format!("i64 {}", num_coerced.repr)];
+                    let reg_names = ["{x0}", "{x1}", "{x2}", "{x3}", "{x4}", "{x5}"];
+                    for (i, arg) in coerced_args.iter().enumerate() {
+                        if i < reg_names.len() {
+                            constraints.push(reg_names[i].to_string());
+                            asm_args.push(format!("i64 {}", arg.repr));
+                        }
+                    }
+                    constraints.push("~{memory}".to_string());
+                    let constraint_str = constraints.join(",");
+                    let _ = writeln!(
+                        out,
+                        "  {} = call i64 asm sideeffect \"svc #0\", \"{}\"({})",
+                        result_name,
+                        constraint_str,
+                        asm_args.join(", ")
+                    );
+                } else {
+                    let mut constraints = vec!["={rax}".to_string(), "{rax}".to_string()];
+                    let mut asm_args = vec![format!("i64 {}", num_coerced.repr)];
+                    let reg_names = ["{rdi}", "{rsi}", "{rdx}", "{r10}", "{r8}", "{r9}"];
+                    for (i, arg) in coerced_args.iter().enumerate() {
+                        if i < reg_names.len() {
+                            constraints.push(reg_names[i].to_string());
+                            asm_args.push(format!("i64 {}", arg.repr));
+                        }
+                    }
+                    constraints.push("~{rcx}".to_string());
+                    constraints.push("~{r11}".to_string());
+                    constraints.push("~{memory}".to_string());
+                    let constraint_str = constraints.join(",");
+                    let _ = writeln!(
+                        out,
+                        "  {} = call i64 asm sideeffect \"syscall\", \"{}\"({})",
+                        result_name,
+                        constraint_str,
+                        asm_args.join(", ")
+                    );
+                }
+
+                values.insert(
+                    instr.result,
+                    ValueRef::new(
+                        LlvmType::Int(LlvmIntType {
+                            bits: 64,
+                            signed: true,
+                        }),
+                        result_name.clone(),
+                        result_sign,
+                    ),
                 );
             }
             Op::EnumConstruct { tag, payload } => {
@@ -7582,6 +7696,60 @@ fn main() -> i32:
         assert!(
             llvm.contains("%block_1") && llvm.contains("%block_2"),
             "expected block references in phi node"
+        );
+    }
+
+    #[test]
+    fn test_codegen_llvm_syscall_emission() {
+        let b0 = BlockId(0);
+        let v_num = ValueId(0);
+        let v_arg = ValueId(1);
+        let v_dst = ValueId(2);
+
+        let module = MirModule {
+            functions: vec![MirFunction {
+                name: "main".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: agam_sema::symbol::TypeId(1),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v_num,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ConstInt(39),
+                        },
+                        Instruction {
+                            result: v_arg,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ConstInt(0),
+                        },
+                        Instruction {
+                            result: v_dst,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::Syscall {
+                                number: v_num,
+                                args: vec![v_arg],
+                                dst: v_dst,
+                            },
+                        },
+                    ],
+                    terminator: Terminator::Return(v_dst),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
+        };
+
+        let llvm = emit_llvm_with_options(&module, LlvmEmitOptions::default())
+            .expect("LLVM emission failed");
+        assert!(
+            llvm.contains("asm sideeffect \"syscall\"") || llvm.contains("__agam_pal_syscall"),
+            "expected syscall emission in LLVM IR, got:\n{llvm}"
         );
     }
 }

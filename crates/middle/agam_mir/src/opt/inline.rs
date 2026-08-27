@@ -383,6 +383,14 @@ fn remap_op(
                 .map(|arg| remap_value(*arg, value_map))
                 .collect(),
         },
+        Op::Syscall { number, args, dst } => Op::Syscall {
+            number: remap_value(*number, value_map),
+            args: args
+                .iter()
+                .map(|arg| remap_value(*arg, value_map))
+                .collect(),
+            dst: remap_value(*dst, value_map),
+        },
         Op::EnumConstruct { tag, payload } => Op::EnumConstruct {
             tag: *tag,
             payload: payload.iter().map(|v| remap_value(*v, value_map)).collect(),

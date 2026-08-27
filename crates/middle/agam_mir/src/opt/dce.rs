@@ -141,6 +141,7 @@ fn is_side_effectful(instr: &Instruction, live_locals: &HashSet<String>) -> bool
         Op::StoreLocal { name, .. } | Op::Alloca { name, .. } => live_locals.contains(name),
         Op::GpuIntrinsic { .. } => true, // Conservatively mark as having side effects (like barriers)
         Op::InlineAsm { .. } => true,    // Inline ASM might have side effects
+        Op::Syscall { .. } => true,      // Direct OS syscalls have arbitrary external side effects
         _ => false,
     }
 }
@@ -203,6 +204,10 @@ fn mark_used_values(instr: &Instruction, used_values: &mut HashSet<ValueId>) {
             used_values.extend(args.iter().copied());
         }
         Op::InlineAsm { args, .. } => {
+            used_values.extend(args.iter().copied());
+        }
+        Op::Syscall { number, args, .. } => {
+            used_values.insert(*number);
             used_values.extend(args.iter().copied());
         }
         Op::ConstInt(_)

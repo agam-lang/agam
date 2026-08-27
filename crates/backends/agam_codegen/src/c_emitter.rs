@@ -254,6 +254,7 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                 Op::GpuSharedAlloc { .. } => CType::Int,
                 Op::GpuIntrinsic { .. } => CType::Int,
                 Op::InlineAsm { .. } => CType::Int,
+                Op::Syscall { .. } => CType::Int,
                 Op::EnumConstruct { .. } => CType::Enum,
                 Op::EnumPayload { .. } => infer_ctype_from_type_id(instr.ty).unwrap_or(CType::Int),
                 Op::EnumTag(_) => CType::Int,
@@ -595,8 +596,12 @@ pub fn emit_c(module: &MirModule) -> String {
     writeln!(output, "#include <string.h>").unwrap();
     writeln!(output, "#include <stdint.h>").unwrap();
     writeln!(output, "#include <math.h>").unwrap();
-    writeln!(output, "#include <time.h>").unwrap();
-    writeln!(output).unwrap();
+    let _ = writeln!(output, "#include <time.h>");
+    let _ = writeln!(
+        output,
+        "#if defined(__unix__) || defined(__APPLE__)\n#include <unistd.h>\n#include <sys/syscall.h>\n#endif"
+    );
+    let _ = writeln!(output);
 
     // Type aliases
     let max_enum_payload = module_max_enum_payload(module);
@@ -1081,6 +1086,21 @@ fn emit_instruction(
             .unwrap();
             writeln!(out, "  {} {} = 0; /* asm result */", result_ty.name(), v).unwrap();
         }
+        Op::Syscall { number, args, .. } => {
+            let mut call_args = vec![format!("__v{}", number.0)];
+            for arg in args {
+                call_args.push(format!("__v{}", arg.0));
+            }
+            let _ = writeln!(
+                out,
+                "#if defined(__unix__) || defined(__APPLE__)\n  {} {} = (agam_int)syscall({});\n#else\n  {} {} = (agam_int)0; /* Windows direct syscall fallback */\n#endif",
+                result_ty.name(),
+                v,
+                call_args.join(", "),
+                result_ty.name(),
+                v,
+            );
+        }
         Op::EnumConstruct { tag, payload } => {
             writeln!(out, "  {} {} = {{ .tag = {} }};", result_ty.name(), v, tag).unwrap();
             for (field_index, value) in payload.iter().enumerate() {
@@ -1512,6 +1532,59 @@ mod tests {
         assert!(
             c.contains(".fields[0].int_value"),
             "expected field access to use .fields[0].int_value, got:\n{c}"
+        );
+    }
+
+    #[test]
+    fn test_codegen_c_syscall_emission() {
+        let b0 = BlockId(0);
+        let v_num = ValueId(0);
+        let v_arg = ValueId(1);
+        let v_dst = ValueId(2);
+
+        let module = MirModule {
+            functions: vec![MirFunction {
+                name: "main".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: agam_sema::symbol::TypeId(1),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v_num,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ConstInt(39),
+                        },
+                        Instruction {
+                            result: v_arg,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ConstInt(0),
+                        },
+                        Instruction {
+                            result: v_dst,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::Syscall {
+                                number: v_num,
+                                args: vec![v_arg],
+                                dst: v_dst,
+                            },
+                        },
+                    ],
+                    terminator: Terminator::Return(v_dst),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
+        };
+
+        let c_code = emit_c(&module);
+        assert!(
+            c_code.contains("syscall(__v0, __v1)"),
+            "expected C code to contain syscall(__v0, __v1), got:\n{c_code}"
         );
     }
 }
