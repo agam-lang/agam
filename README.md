@@ -56,7 +56,7 @@ Agam's currently proven and runnable language surface includes:
 - Automatic Reference Counting (ARC) runtime memory management
 - Opt-in `strict { ... }` blocks for lexical affine single-ownership
 
-*(Note: Advanced features such as algebraic effects, fiber concurrency schedulers, and distributed package registries are in the RFC research phase and are not yet part of the stable compiler surface.)*
+*(Note: Advanced features such as algebraic effects, fiber concurrency schedulers, and distributed package registries are in the RFC research phase and are not yet part of the stable compiler surface. For the long-term architectural target—including the 7-layer IR pipeline, planned native datatypes, and GPU/heterogeneous backend strategy—see [doc/FUTURE_ARCHITECTURE.md](doc/FUTURE_ARCHITECTURE.md).)*
 
 ---
 
