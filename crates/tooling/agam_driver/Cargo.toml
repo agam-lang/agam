@@ -29,6 +29,8 @@ agam_doc = { workspace = true }
 agam_lint = { workspace = true }
 agam_notebook = { workspace = true }
 agam_test = { workspace = true }
+agam_target = { workspace = true }
+agam_session = { workspace = true }
 clap = { workspace = true }
 miette = { workspace = true }
 serde = { workspace = true }

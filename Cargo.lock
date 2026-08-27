@@ -82,6 +82,8 @@ dependencies = [
  "agam_profile",
  "agam_runtime",
  "agam_sema",
+ "agam_session",
+ "agam_target",
  "agam_test",
  "clap",
  "libc",
@@ -285,6 +287,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "agam_session"
+version = "0.1.0"
+dependencies = [
+ "agam_ast",
+ "agam_errors",
+ "agam_hir",
+ "agam_lexer",
+ "agam_mir",
+ "agam_parser",
+ "agam_sema",
+ "agam_target",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "agam_smt"
 version = "0.1.0"
 dependencies = [
@@ -298,6 +316,15 @@ version = "0.1.0"
 dependencies = [
  "agam_runtime",
  "serde",
+]
+
+[[package]]
+name = "agam_target"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

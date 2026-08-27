@@ -8,6 +8,7 @@ pub mod buffer_indexing;
 pub mod c_output;
 pub mod compiler_fuzz;
 pub mod coverage;
+pub mod differential;
 pub mod doctest;
 pub mod dynamic_structs;
 pub mod error_reporting;

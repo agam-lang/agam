@@ -21,6 +21,8 @@ members = [
     "crates/tooling/agam_debug",
     "crates/tooling/agam_profile",
     "crates/tooling/agam_test",
+    "crates/tooling/agam_target",
+    "crates/tooling/agam_session",
     "crates/tooling/agam_driver",
     "crates/experiments/agam_ffi",
     "crates/experiments/agam_notebook",
@@ -72,6 +74,8 @@ agam_doc = { path = "crates/tooling/agam_doc" }
 agam_debug = { path = "crates/tooling/agam_debug" }
 agam_profile = { path = "crates/tooling/agam_profile" }
 agam_test = { path = "crates/tooling/agam_test" }
+agam_target = { path = "crates/tooling/agam_target" }
+agam_session = { path = "crates/tooling/agam_session" }
 agam_macro = { path = "crates/experiments/agam_macro" }
 agam_smt = { path = "crates/experiments/agam_smt" }
 agam_driver = { path = "crates/tooling/agam_driver" }
