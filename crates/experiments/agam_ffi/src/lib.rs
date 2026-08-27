@@ -7,7 +7,11 @@ pub mod c_abi;
 pub mod python;
 pub mod torch_bridge;
 
-pub use bindgen::{generate_agam_extern_block, parse_c_function_prototype};
+pub use bindgen::{
+    BindgenConfig, BindgenError, BindgenResult, CEnumDecl, CEnumVariant, CFunctionDecl,
+    CHeaderParser, CParam, CStructDecl, CType, generate_agam_extern_block,
+    parse_c_function_prototype,
+};
 pub use c_abi::{CField, CFuncSig, CPrimitive, CStructLayout, CallingConvention};
 pub use python::{
     DLDataType, DLDataTypeCode, DLDevice, DLDeviceType, DLManagedTensor, DLTensor,
