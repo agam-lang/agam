@@ -1315,6 +1315,19 @@ pub(crate) fn run_cli() {
             println!("0 doctests run, 0 passed, 0 failed");
         }
 
+        Command::Bindgen {
+            header,
+            lib,
+            output,
+            allow_fn,
+            allow_type,
+        } => {
+            if let Err(e) = execute_bindgen(header, lib, output, allow_fn, allow_type) {
+                eprintln!("\x1b[1;31merror\x1b[0m: {e}");
+                process::exit(1);
+            }
+        }
+
         Command::Mcp { command } => {
             let root = match command {
                 Some(cli::McpCommand::Serve { workspace }) => workspace,
@@ -1326,4 +1339,60 @@ pub(crate) fn run_cli() {
             }
         }
     }
+}
+
+/// Execute automated C header binding generation.
+pub(crate) fn execute_bindgen(
+    header_path: PathBuf,
+    lib_name: Option<String>,
+    output_path: Option<PathBuf>,
+    allowlist_functions: Vec<String>,
+    allowlist_types: Vec<String>,
+) -> Result<(), String> {
+    let header_content = std::fs::read_to_string(&header_path).map_err(|e| {
+        format!(
+            "Could not read C header file `{}`: {}",
+            header_path.display(),
+            e
+        )
+    })?;
+
+    let library_name = lib_name.unwrap_or_else(|| {
+        header_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("native")
+            .to_string()
+    });
+
+    let config = agam_ffi::BindgenConfig {
+        library_name: library_name.clone(),
+        type_prefix: None,
+        allowlist_functions,
+        allowlist_types,
+    };
+
+    let parser = agam_ffi::CHeaderParser::new(config);
+    let agam_code = parser
+        .generate_agam_module(&header_content)
+        .map_err(|e| e.to_string())?;
+
+    if let Some(out_path) = output_path {
+        std::fs::write(&out_path, &agam_code).map_err(|e| {
+            format!(
+                "Could not write generated Agam bindings to `{}`: {}",
+                out_path.display(),
+                e
+            )
+        })?;
+        println!(
+            "\x1b[1;32msuccess\x1b[0m: Generated Agam FFI bindings for `{}` written to `{}`",
+            library_name,
+            out_path.display()
+        );
+    } else {
+        print!("{}", agam_code);
+    }
+
+    Ok(())
 }

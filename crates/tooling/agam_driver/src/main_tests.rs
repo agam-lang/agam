@@ -3818,3 +3818,42 @@ fn test_self_hosting_stage0_modules_exist_and_validate() {
     assert!(parser_src.contains("struct Parser"));
     assert!(sema_src.contains("struct TypeChecker"));
 }
+
+#[test]
+fn test_cli_bindgen_subcommand_generates_agam_file() {
+    let root = temp_dir("cli_bindgen_test");
+    let header_file = root.join("math_api.h");
+    let output_file = root.join("math_api.agam");
+
+    let header_content = r#"
+        int calculate_dot(int x1, int y1, int x2, int y2);
+        double calculate_norm(double x, double y);
+        typedef struct { int code; const char* msg; } MathError;
+    "#;
+
+    if fs::write(&header_file, header_content).is_err() {
+        return;
+    }
+
+    let res = crate::dispatch::execute_bindgen(
+        header_file,
+        Some("libmath".to_string()),
+        Some(output_file.clone()),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert!(res.is_ok());
+    assert!(output_file.exists());
+
+    if let Ok(generated) = fs::read_to_string(&output_file) {
+        assert!(generated.contains("foreign \"C\" from \"libmath\" {"));
+        assert!(generated.contains("fn calculate_dot(x1: i32, y1: i32, x2: i32, y2: i32) -> i32"));
+        assert!(generated.contains("fn calculate_norm(x: f64, y: f64) -> f64"));
+        assert!(generated.contains("type MathError = struct {"));
+        assert!(generated.contains("code: i32,"));
+        assert!(generated.contains("msg: c_string,"));
+    }
+
+    let _ = fs::remove_dir_all(root);
+}

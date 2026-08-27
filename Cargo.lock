@@ -68,6 +68,7 @@ dependencies = [
  "agam_codegen",
  "agam_doc",
  "agam_errors",
+ "agam_ffi",
  "agam_fmt",
  "agam_hir",
  "agam_interface",
@@ -110,8 +111,10 @@ name = "agam_ffi"
 version = "0.1.0"
 dependencies = [
  "agam_notebook",
+ "libc",
  "serde",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

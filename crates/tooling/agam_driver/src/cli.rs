@@ -254,6 +254,29 @@ pub(crate) enum Command {
         path: Option<PathBuf>,
     },
 
+    /// Parse C header file and synthesize Agam foreign "C" interface module
+    Bindgen {
+        /// C Header file path to parse (<header.h>)
+        #[arg(required = true)]
+        header: PathBuf,
+
+        /// Native library name to link (e.g. sqlite3, libpq)
+        #[arg(short = 'l', long = "lib")]
+        lib: Option<String>,
+
+        /// Output file path (defaults to stdout or <lib>.agam)
+        #[arg(short = 'o', long = "output")]
+        output: Option<PathBuf>,
+
+        /// Comma-separated list of functions to allowlist
+        #[arg(long = "allow-fn", value_delimiter = ',')]
+        allow_fn: Vec<String>,
+
+        /// Comma-separated list of types (structs/enums) to allowlist
+        #[arg(long = "allow-type", value_delimiter = ',')]
+        allow_type: Vec<String>,
+    },
+
     /// Type-check without generating code (fast feedback)
     Check {
         /// Source file(s) to check
