@@ -49,3 +49,13 @@ Every third-party crate brought into `agam/Cargo.toml` must:
 1. Be written in pure Rust (or supply hermetic C bindings with deterministic builds).
 2. Pass `cargo audit` with **zero known security vulnerabilities**.
 3. Be explicitly listed in this document with its associated architectural layer.
+
+---
+
+## 4. The Facade-Completeness & Zero-Identity-Leak Invariant
+
+Whenever an external crate is adopted (e.g. `clap`, `regex`, `csv`, `serde_json`, `chrono`, `rand`), the Agam wrapper layer in `agam_std` must **fully own the user-facing voice and error semantics**:
+
+1. **Zero Third-Party Error Passthrough**: Under no circumstances may raw third-party error text, formatting styles (e.g. clap's terminal color escape sequences or default usage phrases), or internal error types leak directly to script authors. All errors must map into structured Agam diagnostic types (`CliError`, `RegexError`, `CsvError`, `JsonError`, `TimeError`) adhering to the compiler's established Nyāya diagnostic voice (Cause, Source Context, Remedy).
+2. **Panic-Immune Configuration**: Third-party APIs that can panic on invalid developer input (e.g., clap builder duplicate flags, regex invalid byte flags) must be guarded via validation checks so misconfigurations return structured `Result<T, E>` and never surface raw Rust panic backtraces to users.
+3. **Hermetic Identity & Banners**: Banners, `--help` text, and `--version` strings must never default to Cargo package metadata or toolchain versions; all versioning and identity strings must be explicitly supplied by the script author or Agam runtime.
