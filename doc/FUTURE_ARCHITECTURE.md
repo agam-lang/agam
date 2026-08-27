@@ -38,7 +38,7 @@ This document defines the long-term architectural target for the Agam compiler, 
 
 | Pipeline Layer | Architectural Role | Current Status | Existing Codebase Reality |
 |:---|:---|:---:|:---|
-| **Layer 1: AST & SEMA** | Pratt parsing, dual `@lang.base`/`@lang.advance` profiles, type checking | 🟡 `[Partially Implemented]` | Working lexer, Pratt parser, and SEMA in `crates/frontend/agam_parser/` and `agam_sema/`. Error recovery synchronization is not yet implemented (Stage 0). |
+| **Layer 1: AST & SEMA** | Pratt parsing, dual `@lang.base`/`@lang.advance` profiles, type checking | 🟡 `[Partially Implemented]` | Working lexer, Pratt parser, and SEMA in `crates/core/agam_parser/` and `crates/core/agam_sema/`. Error recovery synchronization is not yet implemented (Stage 0). |
 | **Layer 2: High-Level IR (HIR)** | Desugaring, pattern lowering, algebraic effects, autodiff | 🟡 `[Partially Implemented]` | Structural AST-to-HIR lowering exists in `crates/middle/agam_hir/`. Effect handlers and reverse-mode autodiff are experimental/unwired stubs. |
 | **Layer 3: Tensor Polyhedral IR (T-IR)** | $N$-dimensional iteration spaces, loop tiling, affine kernel fusion | 🟡 `[Partially Implemented]` | Basic polyhedral pass scaffold exists in `crates/middle/agam_mir/src/opt/polyhedral.rs` (13.4KB), but affine scheduling and loop tiling are not active in default pipelines. |
 | **Layer 4: Mid-Level SSA (MIR)** | Target-independent SSA CFG, GVN, SCCP, escape analysis | 🟢 `[Implemented]` | Full SSA CFG lowering in `crates/middle/agam_mir/` with GVN, constant fold, and inliner. Escape analysis exists in `src/opt/escape.rs` but is not wired into the main fixed-point loop. |
