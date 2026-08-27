@@ -9,7 +9,7 @@
 
 Agam strictly distinguishes between **core compiler innovations** (which we build natively) and **mature, peer-reviewed computer science infrastructure** (which we adopt as battle-tested dependencies).
 
-Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhedral affine schedulers, cryptographic primitives, regular expression DFA/NFA engines, RFC 4180 CSV parsers, raw JSON parsers, statistical PRNGs, calendar date/time math, or foundational hash table probing algorithms from scratch introduces severe reliability and security risks. We therefore formalize the following **Adopt vs. Build Boundary**:
+Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhedral affine schedulers, cryptographic primitives, regular expression DFA/NFA engines, RFC 4180 CSV parsers, CLI argument parsers, raw JSON parsers, statistical PRNGs, calendar date/time math, or foundational hash table probing algorithms from scratch introduces severe reliability and security risks. We therefore formalize the following **Adopt vs. Build Boundary**:
 
 ---
 
@@ -27,12 +27,12 @@ Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhed
 | **Regular Expression Engine** | **ADOPT** | **`regex`** | DFA/NFA compilation and PikeVM execution guarantee $O(n)$ search time with zero catastrophic backtracking (ReDoS) crashes. |
 | **CSV Tabular Ingestion** | **ADOPT** | **`csv`** | RFC 4180 CSV parsing involves complex quote escaping and newline boundaries. We wrap `csv` for robust dataset ingestion into DataFrames. |
 | **JSON Parsing & Serialization** | **ADOPT** | **`serde_json`** | Hand-rolling RFC 8259 JSON parsers introduces numeric precision loss, escape injection, and malformed UTF-8 bugs. We wrap `serde_json` behind Agam dynamic APIs. |
+| **Declarative CLI Parsing Engine** | **ADOPT** | **`clap`** (Builder API) | Reuses existing workspace `clap` dependency for robust argument, flag, and auto `--help` generation rather than duplicating parser logic. |
 | **Statistical PRNG Engines** | **ADOPT** | **`rand` / `rand_pcg` / `rand_xoshiro`** | PRNGs require statistically verified uniform distribution and entropy seeding. Hand-rolling leads to statistical bias and correlation artifacts. |
 | **Calendar & ISO-8601 Formatting** | **ADOPT** | **`chrono`** | Gregorian calendar math, leap-year calculations (400-year rules), and RFC 3339 / ISO-8601 formatting are mature CS infrastructure. We wrap `chrono` for date/time parsing. |
 | **Monotonic Hardware Timers** | **BUILD** | First-Party Native (`std::time::Instant`) | Zero-overhead wrapping of OS high-resolution monotonic clocks (`clock_gettime` / `QueryPerformanceCounter`) for `Instant::now()`, `elapsed_ms()`, and `sleep_ms()`. |
-| **Zero-GIL Thread Concurrency** | **BUILD** | First-Party Native (`std::sync` / `std::thread`) | Native multi-core thread execution (`sync.spawn`, `sync.parallel_for`, `sync.Mutex`, `sync.Channel`) with zero GIL overhead per `note.md`. |
+| **Zero-GIL Thread Concurrency** | **BUILD** | First-Party Native (`std::sync` / `std::thread`) | Native multi-core thread execution (`sync.spawn`, `sync.parallel_for`, `sync.Mutex`, `sync.Channel`) with zero GIL overhead per `note.md`. Lightweight chunk partitioning is chosen over `rayon` to maintain zero-overhead standalone binary targets without runtime scheduler bloat. |
 | **Structured Leveled Logging** | **BUILD** | First-Party Native (`agam_std::log`) | Compile-time stripped leveled logger (`debug`, `info`, `warn`, `error`) with thread-safe timestamped formatting. |
-| **Declarative CLI Argument Parser** | **BUILD** | First-Party Native (`agam_std::cli`) | Lightweight declarative CLI argument and flag parser (`App`, `arg`, `flag`, auto `--help`) for dynamic scripting without macro dependencies. |
 | **Scripting Combinatorics & Iterators** | **BUILD** | First-Party Native (`agam_std::iter`) | Zero-allocation permutations, combinations, chunking, and zipping compiled directly to native loops. |
 | **JIT Machine Codegen** | **ADOPT** | **`cranelift-codegen`** (Bytecode Alliance) | Provides safe, sub-millisecond in-process native machine code generation for dev loops. |
 | **AOT Machine Codegen** | **ADOPT** | **LLVM 18+ (C-API / in-process bindings)** | Leverages LLVM's global scalar optimizations, ThinLTO, and cross-target hardware backends. |
