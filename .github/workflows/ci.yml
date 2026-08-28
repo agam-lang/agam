@@ -50,11 +50,15 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri, rust-src
-      - name: Run Miri on agam_runtime
-        run: cargo miri test -p agam_runtime --lib -- simd::tests actor::tests
+      - name: Run Miri on agam_runtime (SIMD)
+        run: cargo +nightly miri test -p agam_runtime --lib -- simd::tests
+        env:
+          MIRIFLAGS: "-Zmiri-disable-isolation"
+      - name: Run Miri on agam_runtime (Actors)
+        run: cargo +nightly miri test -p agam_runtime --lib -- actor::tests
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"
       - name: Run Miri on agam_ffi
-        run: cargo miri test -p agam_ffi --lib
+        run: cargo +nightly miri test -p agam_ffi --lib
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"

@@ -194,6 +194,7 @@ impl PageAllocation {
                 ));
             }
 
+            #[cfg(target_os = "linux")]
             if flags == AllocationFlags::HugePages {
                 unsafe {
                     libc::madvise(raw_ptr, layout_size, libc::MADV_HUGEPAGE);

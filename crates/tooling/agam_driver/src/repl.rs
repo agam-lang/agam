@@ -1619,8 +1619,8 @@ pub(crate) fn normalize_headless_request(
 }
 
 pub(crate) fn sanitize_headless_filename(filename: &str) -> String {
-    let filename = filename.trim();
-    let candidate = Path::new(filename)
+    let filename = filename.trim().replace('\\', "/");
+    let candidate = Path::new(&filename)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("snippet.agam");
