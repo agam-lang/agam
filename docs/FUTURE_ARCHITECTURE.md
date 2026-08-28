@@ -24,7 +24,7 @@ This document defines the long-term architectural target for the Agam compiler, 
 ├────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
 │ Layer 3: Tensor Polyhedral IR  │ N-Dimensional Contractions, 64-Byte Affine Loop Tiling, Kernel Fusion │
 ├────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
-│ Layer 4: Mid-Level SSA (MIR)   │ Lengauer–Tarjan Dominators, Interprocedural Static ARC Escape Elision │
+│ Layer 4: Mid-Level SSA (MIR)   │ Cooper–Harvey–Kennedy Dominators, Interprocedural Static ARC Elision  │
 ├────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
 │ Layer 5: E-Graph Saturation    │ Congruence Closure Equality Saturation via `egg`                      │
 ├────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤

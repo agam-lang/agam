@@ -38,7 +38,7 @@ Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhed
 | **AOT Machine Codegen** | **ADOPT** | **LLVM 18+ (C-API / in-process bindings)** | Leverages LLVM's global scalar optimizations, ThinLTO, and cross-target hardware backends. |
 | **Pāṇinian Frontend & Pratt Parser** | **BUILD** | First-Party Native (`agam_parser`, `agam_lexer`) | Core language identity: dual `@lang.base` / `@lang.advance` profiles, span tracking, and panic-mode synchronization. |
 | **Type Sandhi Matrix & SEMA** | **BUILD** | First-Party Native (`agam_sema`) | Unique Pāṇinian type-theoretic lattice and bidirectional constraint inference. |
-| **Mid-Level IR & Escape Analysis** | **BUILD** | First-Party Native (`agam_mir`) | Tailored SSA control flow, Lengauer–Tarjan dominators, and interprocedural static ARC elision. |
+| **Mid-Level IR & Escape Analysis** | **BUILD** | First-Party Native (`agam_mir`) | Tailored SSA control flow, Cooper–Harvey–Kennedy dominators, and interprocedural static ARC elision. |
 | **Standard Library Ergonomics (`note.md`)** | **BUILD** | First-Party Native (`agam_std`) | Thin, zero-panic wrappers integrating adopted storage with Agam's ARC memory model, `Counter`, `bisect`, `Path`, `StringBuilder`, and 64-byte aligned tensors. |
 
 ---
