@@ -319,7 +319,7 @@ mod tests {
         let path = root.join("mock_exec.sh");
         fs::write(
             &path,
-            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"success\":true,\"filename\":\"snippet.agam\",\"backend\":\"jit\",\"exit_code\":0,\"stdout\":\"mock\\\\n\",\"stderr\":\"\"}'\n",
+            "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"success\":true,\"filename\":\"snippet.agam\",\"backend\":\"jit\",\"exit_code\":0,\"stdout\":\"mock\\n\",\"stderr\":\"\"}'\n",
         )
         .expect("mock exec script should be written");
         let mut permissions = fs::metadata(&path)
