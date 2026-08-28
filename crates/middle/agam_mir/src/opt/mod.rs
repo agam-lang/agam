@@ -17,6 +17,7 @@ pub use ai_intel::{AiCompilerReport, AiOptimizationAdvisor, OptimizationRecommen
 pub use vectorize::{VectorizationPlan, vectorize_function};
 
 use crate::ir::MirModule;
+#[cfg(debug_assertions)]
 use crate::verifier::MirVerifier;
 
 /// Maximum fixed-point optimization passes permitted to prevent oscillation / infinite loops.
