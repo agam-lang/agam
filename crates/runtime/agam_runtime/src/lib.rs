@@ -11,6 +11,7 @@
 //! - **Scheduler** (future) — M:N green thread scheduler.
 //! - **Actors** (future) — message-passing actor system.
 
+pub mod actor;
 pub mod arc;
 pub mod cache;
 pub mod capability;
@@ -25,6 +26,11 @@ pub mod pqc;
 pub mod sandbox;
 pub mod security;
 pub mod simd;
+
+pub use actor::{
+    Actor, ActorContext, ActorError, ActorId, ActorRef, ActorResult, ActorSystem,
+    SupervisionStrategy, SupervisorDirective, SystemMessage,
+};
 
 pub use pal::{
     AllocationFlags, Event, EventDemuxer, EventInterest, MemoryProtection, PageAllocation,
