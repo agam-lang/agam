@@ -166,6 +166,19 @@ class BenchmarkWorkspace:
                     )
                     continue
 
+                if prepared.artifact_path and prepared.artifact_path.exists():
+                    try:
+                        prepared.artifact_path.chmod(0o755)
+                    except OSError:
+                        pass
+                if prepared.run_command and len(prepared.run_command) > 0:
+                    cmd_path = Path(prepared.run_command[0])
+                    if cmd_path.exists() and cmd_path.is_file():
+                        try:
+                            cmd_path.chmod(0o755)
+                        except OSError:
+                            pass
+
                 for _ in range(warmup_runs):
                     self._execute(prepared.run_command)
 
