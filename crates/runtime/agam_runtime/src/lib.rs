@@ -44,6 +44,11 @@ pub use pqc::{
     MlKemPublicKey, MlKemSecretKey,
 };
 pub use security::{Secret, SecureRandom, constant_time_eq, zeroize};
+pub use simd::{
+    AlignedBuffer, AlignmentHint, CpuFeatureDetector, DispatchTarget, SimdError, SimdOps,
+    simd_add_f32, simd_add_f64, simd_dot_f32, simd_dot_f64, simd_fma_f32, simd_fma_f64,
+    simd_mul_f32, simd_mul_f64,
+};
 
 pub use coroutine::{
     AsyncBarrier, AsyncCondvar, AsyncMutex, AsyncPipe, AsyncRead, AsyncRwLock, AsyncSemaphore,

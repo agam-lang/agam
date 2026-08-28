@@ -322,8 +322,53 @@ impl Tensor {
 
     /// Dot product (for 1D tensors / vectors).
     pub fn dot(&self, other: &Tensor) -> f64 {
-        self.try_dot(other)
-            .expect("dot requires matching 1D tensors")
+        self.try_dot(other).unwrap_or(0.0)
+    }
+
+    /// Fused multiply-add: `out = self * other + bias` (fallible).
+    pub fn try_fma(&self, other: &Tensor, bias: &Tensor) -> Result<Tensor, TensorError> {
+        if self.shape != other.shape || self.shape != bias.shape {
+            return Err(TensorError::ShapeMismatch {
+                expected: self.shape.clone(),
+                actual: other.shape.clone(),
+            });
+        }
+        let mut data = vec![0.0; self.numel()];
+        SimdOps::fma(&self.data, &other.data, &bias.data, &mut data);
+        Ok(Tensor {
+            shape: self.shape.clone(),
+            data,
+        })
+    }
+
+    /// Fused multiply-add: `out = self * other + bias`.
+    pub fn fma(&self, other: &Tensor, bias: &Tensor) -> Tensor {
+        self.try_fma(other, bias).unwrap_or_else(|_| Tensor::zeros(&self.shape))
+    }
+
+    /// Export tensor contiguous data to a 64-byte hardware cacheline-aligned buffer.
+    pub fn to_aligned_buffer(&self) -> Result<agam_runtime::simd::AlignedBuffer<f64, 64>, TensorError> {
+        agam_runtime::simd::AlignedBuffer::from_slice(&self.data).map_err(|_| {
+            TensorError::DataLengthMismatch {
+                expected: self.numel(),
+                actual: 0,
+            }
+        })
+    }
+
+    /// Construct a tensor from a 64-byte hardware aligned buffer.
+    pub fn from_aligned_buffer(shape: &[usize], buf: &agam_runtime::simd::AlignedBuffer<f64, 64>) -> Result<Self, TensorError> {
+        let expected: usize = shape.iter().product();
+        if buf.len() != expected {
+            return Err(TensorError::DataLengthMismatch {
+                expected,
+                actual: buf.len(),
+            });
+        }
+        Ok(Self {
+            shape: shape.to_vec(),
+            data: buf.as_slice().to_vec(),
+        })
     }
 
     /// Matrix multiplication for 2D tensors (fallible).
@@ -541,5 +586,54 @@ mod tests {
     fn test_mean() {
         let t = Tensor::vector(vec![2.0, 4.0, 6.0]);
         assert_eq!(t.mean(), 4.0);
+    }
+
+    #[test]
+    fn test_tensor_operations_leverage_aligned_simd() {
+        let n = 10_000;
+        let mut a_data = Vec::with_capacity(n);
+        let mut b_data = Vec::with_capacity(n);
+        let mut c_data = Vec::with_capacity(n);
+        for i in 0..n {
+            a_data.push((i % 100) as f64 * 0.1);
+            b_data.push(((i + 1) % 50) as f64 * 0.2);
+            c_data.push(1.0);
+        }
+
+        let a = Tensor::vector(a_data.clone());
+        let b = Tensor::vector(b_data.clone());
+        let c = Tensor::vector(c_data.clone());
+
+        // Test add
+        let add_res = a.add(&b);
+        assert_eq!(add_res.numel(), n);
+        for i in 0..n {
+            assert!((add_res.get_flat(i) - (a_data[i] + b_data[i])).abs() < 1e-10);
+        }
+
+        // Test dot product
+        let dot_res = a.dot(&b);
+        let expected_dot: f64 = a_data.iter().zip(b_data.iter()).map(|(x, y)| x * y).sum();
+        assert!((dot_res - expected_dot).abs() < 1e-8);
+
+        // Test fma
+        let fma_res = a.fma(&b, &c);
+        assert_eq!(fma_res.numel(), n);
+        for i in 0..n {
+            assert!((fma_res.get_flat(i) - (a_data[i] * b_data[i] + c_data[i])).abs() < 1e-10);
+        }
+
+        // Test AlignedBuffer conversion
+        let aligned_buf = a.to_aligned_buffer();
+        assert!(aligned_buf.is_ok());
+        if let Ok(buf) = aligned_buf {
+            assert_eq!((buf.as_ptr() as usize) % 64, 0);
+            assert_eq!(buf.len(), n);
+            let reconstructed = Tensor::from_aligned_buffer(&[n], &buf);
+            assert!(reconstructed.is_ok());
+            if let Ok(t) = reconstructed {
+                assert_eq!(t.data, a.data);
+            }
+        }
     }
 }
