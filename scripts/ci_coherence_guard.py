@@ -127,9 +127,54 @@ def verify_required_docs():
         sys.exit(1)
     print("[PASS]: All required specification artifacts present.")
 
+def verify_literature_citations():
+    """
+    Automated Literature & Algorithm Citation Verifier.
+    Cross-references claims in architectural docs against codebase reality.
+    """
+    print("\n--- Verifying Literature & Algorithm Citations ---")
+    doc_path = AGAM_ROOT / "docs" / "FUTURE_ARCHITECTURE.md"
+    if not doc_path.exists():
+        print("[FAIL]: FUTURE_ARCHITECTURE.md not found for citation check")
+        sys.exit(1)
+
+    with open(doc_path, 'r', encoding='utf-8', errors='ignore') as f:
+        doc_content = f.read()
+
+    # Banned unverified / fabricated phrases that must never re-appear
+    banned_claims = [
+        ("Tarjan SCC Monomorphization", "Monomorphization is worklist-based in monomorphize.rs, not Tarjan SCC"),
+        ("Lengauer–Tarjan Dominators", "Dominance computation uses Cooper-Harvey-Kennedy in analysis.rs"),
+    ]
+
+    for banned, reason in banned_claims:
+        if banned in doc_content:
+            print(f"[FAIL]: Disallowed unverified claim found in docs: '{banned}' ({reason})")
+            sys.exit(1)
+
+    # Required verified claims that must match real code
+    required_citations = [
+        ("Cooper–Harvey–Kennedy Dominators", AGAM_CRATES_DIR / "middle" / "agam_mir" / "src" / "analysis.rs", "Cooper-Harvey-Kennedy"),
+        ("`egg`", AGAM_CRATES_DIR / "middle" / "agam_mir" / "src" / "opt" / "egg_engine.rs", "egg"),
+    ]
+
+    for claim, code_path, code_keyword in required_citations:
+        if not code_path.exists():
+            print(f"[FAIL]: Implementation file for '{claim}' missing at {code_path}")
+            sys.exit(1)
+        with open(code_path, 'r', encoding='utf-8', errors='ignore') as f:
+            code_content = f.read()
+        if code_keyword not in code_content:
+            print(f"[FAIL]: Keyword '{code_keyword}' not found in {code_path} for claim '{claim}'")
+            sys.exit(1)
+        print(f"[PASS]: Verified citation '{claim}' -> {code_path.name}")
+
+    print("[PASS]: All literature and algorithm citations verified against code.")
+
 if __name__ == "__main__":
     count_panics()
     verify_required_docs()
+    verify_literature_citations()
     print("==================================================")
     print("[SUCCESS]: CI COHERENCE GUARD PASSED (0 REGRESSIONS)")
     print("==================================================")

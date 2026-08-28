@@ -1012,4 +1012,93 @@ mod tests {
         assert!((c[2] - 43.0).abs() < 1e-10);
         assert!((c[3] - 50.0).abs() < 1e-10);
     }
+
+    #[test]
+    fn test_simd_arbitrary_length_and_remainder_loop_correctness() {
+        // Test all sizes from 0 to 65 plus selected prime/odd sizes up to 257
+        let test_sizes: Vec<usize> = (0..=65)
+            .chain([71, 79, 83, 89, 97, 127, 128, 129, 255, 256, 257])
+            .collect();
+
+        for &n in &test_sizes {
+            let mut a_f32 = Vec::with_capacity(n);
+            let mut b_f32 = Vec::with_capacity(n);
+            let mut c_f32 = Vec::with_capacity(n);
+            let mut a_f64 = Vec::with_capacity(n);
+            let mut b_f64 = Vec::with_capacity(n);
+            let mut c_f64 = Vec::with_capacity(n);
+
+            for i in 0..n {
+                let v = ((i * 17 + 3) % 100) as f32 * 0.25;
+                let u = ((i * 31 + 7) % 50) as f32 * 0.5;
+                let w = ((i * 13 + 1) % 20) as f32 * 0.1;
+                a_f32.push(v);
+                b_f32.push(u);
+                c_f32.push(w);
+                a_f64.push(v as f64);
+                b_f64.push(u as f64);
+                c_f64.push(w as f64);
+            }
+
+            // Test f32 add
+            let mut dst_add_f32 = vec![0.0f32; n];
+            assert!(simd_add_f32(&a_f32, &b_f32, &mut dst_add_f32).is_ok());
+            for i in 0..n {
+                assert_eq!(dst_add_f32[i], a_f32[i] + b_f32[i]);
+            }
+
+            // Test f32 mul
+            let mut dst_mul_f32 = vec![0.0f32; n];
+            assert!(simd_mul_f32(&a_f32, &b_f32, &mut dst_mul_f32).is_ok());
+            for i in 0..n {
+                assert_eq!(dst_mul_f32[i], a_f32[i] * b_f32[i]);
+            }
+
+            // Test f32 fma
+            let mut dst_fma_f32 = vec![0.0f32; n];
+            assert!(simd_fma_f32(&a_f32, &b_f32, &c_f32, &mut dst_fma_f32).is_ok());
+            for i in 0..n {
+                let expected = a_f32[i] * b_f32[i] + c_f32[i];
+                assert!((dst_fma_f32[i] - expected).abs() < 1e-5);
+            }
+
+            // Test f32 dot
+            let dot_f32 = simd_dot_f32(&a_f32, &b_f32);
+            assert!(dot_f32.is_ok());
+            if let Ok(d) = dot_f32 {
+                let expected: f32 = a_f32.iter().zip(b_f32.iter()).map(|(x, y)| x * y).sum();
+                assert!((d - expected).abs() < 1e-4 * (n as f32 + 1.0));
+            }
+
+            // Test f64 add
+            let mut dst_add_f64 = vec![0.0f64; n];
+            assert!(simd_add_f64(&a_f64, &b_f64, &mut dst_add_f64).is_ok());
+            for i in 0..n {
+                assert_eq!(dst_add_f64[i], a_f64[i] + b_f64[i]);
+            }
+
+            // Test f64 mul
+            let mut dst_mul_f64 = vec![0.0f64; n];
+            assert!(simd_mul_f64(&a_f64, &b_f64, &mut dst_mul_f64).is_ok());
+            for i in 0..n {
+                assert_eq!(dst_mul_f64[i], a_f64[i] * b_f64[i]);
+            }
+
+            // Test f64 fma
+            let mut dst_fma_f64 = vec![0.0f64; n];
+            assert!(simd_fma_f64(&a_f64, &b_f64, &c_f64, &mut dst_fma_f64).is_ok());
+            for i in 0..n {
+                let expected = a_f64[i] * b_f64[i] + c_f64[i];
+                assert!((dst_fma_f64[i] - expected).abs() < 1e-9);
+            }
+
+            // Test f64 dot
+            let dot_f64 = simd_dot_f64(&a_f64, &b_f64);
+            assert!(dot_f64.is_ok());
+            if let Ok(d) = dot_f64 {
+                let expected: f64 = a_f64.iter().zip(b_f64.iter()).map(|(x, y)| x * y).sum();
+                assert!((d - expected).abs() < 1e-9 * (n as f64 + 1.0));
+            }
+        }
+    }
 }
