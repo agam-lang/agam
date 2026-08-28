@@ -89,6 +89,29 @@ impl LlvmFloatType {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LlvmVectorElem {
+    I8,
+    I16,
+    I32,
+    I64,
+    F32,
+    F64,
+}
+
+impl LlvmVectorElem {
+    pub fn ir(self) -> &'static str {
+        match self {
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::F32 => "float",
+            Self::F64 => "double",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LlvmType {
     Int(LlvmIntType),
     Float(LlvmFloatType),
@@ -97,6 +120,11 @@ enum LlvmType {
     OpaquePtr,
     Enum,
     Struct,
+    #[allow(dead_code)]
+    Vector {
+        elem: LlvmVectorElem,
+        width: usize,
+    },
     #[allow(dead_code)]
     StructField,
 }
@@ -110,6 +138,26 @@ impl LlvmType {
             LlvmType::Str | LlvmType::OpaquePtr => "i8*",
             LlvmType::Enum => "%AgamEnum",
             LlvmType::Struct | LlvmType::StructField => "%AgamStruct",
+            LlvmType::Vector { elem, width } => match (elem, width) {
+                (LlvmVectorElem::F32, 4) => "<4 x float>",
+                (LlvmVectorElem::F32, 8) => "<8 x float>",
+                (LlvmVectorElem::F32, 16) => "<16 x float>",
+                (LlvmVectorElem::F64, 2) => "<2 x double>",
+                (LlvmVectorElem::F64, 4) => "<4 x double>",
+                (LlvmVectorElem::F64, 8) => "<8 x double>",
+                (LlvmVectorElem::I64, 2) => "<2 x i64>",
+                (LlvmVectorElem::I64, 4) => "<4 x i64>",
+                (LlvmVectorElem::I64, 8) => "<8 x i64>",
+                (LlvmVectorElem::I32, 4) => "<4 x i32>",
+                (LlvmVectorElem::I32, 8) => "<8 x i32>",
+                (LlvmVectorElem::I32, 16) => "<16 x i32>",
+                (LlvmVectorElem::I16, 8) => "<8 x i16>",
+                (LlvmVectorElem::I16, 16) => "<16 x i16>",
+                (LlvmVectorElem::I8, 16) => "<16 x i8>",
+                (LlvmVectorElem::I8, 32) => "<32 x i8>",
+                (LlvmVectorElem::I8, 64) => "<64 x i8>",
+                _ => "<4 x float>",
+            },
         }
     }
 
@@ -121,6 +169,7 @@ impl LlvmType {
             LlvmType::Str | LlvmType::OpaquePtr => "null",
             LlvmType::Enum => "zeroinitializer",
             LlvmType::Struct | LlvmType::StructField => "zeroinitializer",
+            LlvmType::Vector { .. } => "zeroinitializer",
         }
     }
 
@@ -141,6 +190,14 @@ impl LlvmType {
     fn float_spec(self) -> Option<LlvmFloatType> {
         match self {
             LlvmType::Float(float_ty) => Some(float_ty),
+            _ => None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn vector_spec(self) -> Option<(LlvmVectorElem, usize)> {
+        match self {
+            LlvmType::Vector { elem, width } => Some((elem, width)),
             _ => None,
         }
     }
@@ -896,7 +953,8 @@ fn supports_call_cache_type(ty: LlvmType) -> bool {
         | LlvmType::OpaquePtr
         | LlvmType::Enum
         | LlvmType::Struct
-        | LlvmType::StructField => false,
+        | LlvmType::StructField
+        | LlvmType::Vector { .. } => false,
     }
 }
 
@@ -1543,7 +1601,46 @@ impl LlvmEmitter {
                 .iter()
                 .map(|func| func.name.clone())
                 .collect(),
-            external_decls: BTreeMap::new(),
+            external_decls: {
+                let mut decls = BTreeMap::new();
+                decls.insert(
+                    "llvm.fmuladd.v4f32".into(),
+                    "declare <4 x float> @llvm.fmuladd.v4f32(<4 x float>, <4 x float>, <4 x float>) #0".into(),
+                );
+                decls.insert(
+                    "llvm.fmuladd.v8f32".into(),
+                    "declare <8 x float> @llvm.fmuladd.v8f32(<8 x float>, <8 x float>, <8 x float>) #0".into(),
+                );
+                decls.insert(
+                    "llvm.fmuladd.v2f64".into(),
+                    "declare <2 x double> @llvm.fmuladd.v2f64(<2 x double>, <2 x double>, <2 x double>) #0".into(),
+                );
+                decls.insert(
+                    "llvm.fmuladd.v4f64".into(),
+                    "declare <4 x double> @llvm.fmuladd.v4f64(<4 x double>, <4 x double>, <4 x double>) #0".into(),
+                );
+                decls.insert(
+                    "llvm.vector.reduce.add.v4i64".into(),
+                    "declare i64 @llvm.vector.reduce.add.v4i64(<4 x i64>) #0".into(),
+                );
+                decls.insert(
+                    "llvm.vector.reduce.add.v8i32".into(),
+                    "declare i32 @llvm.vector.reduce.add.v8i32(<8 x i32>) #0".into(),
+                );
+                decls.insert(
+                    "llvm.vector.reduce.fadd.v4f32".into(),
+                    "declare float @llvm.vector.reduce.fadd.v4f32(float, <4 x float>) #0".into(),
+                );
+                decls.insert(
+                    "llvm.vector.reduce.fadd.v8f32".into(),
+                    "declare float @llvm.vector.reduce.fadd.v8f32(float, <8 x float>) #0".into(),
+                );
+                decls.insert(
+                    "llvm.vector.reduce.fadd.v4f64".into(),
+                    "declare double @llvm.vector.reduce.fadd.v4f64(double, <4 x double>) #0".into(),
+                );
+                decls
+            },
             globals: Vec::new(),
             string_pool: HashMap::new(),
             next_string_id: 0,
@@ -1744,6 +1841,16 @@ impl LlvmEmitter {
                 .unwrap();
             }
         }
+
+        // ── LLVM Scoped Alias Domain & Loop Vectorization Metadata ──
+        output.push('\n');
+        output.push_str("!0 = distinct !{!0, !\"agam.alias.domain\"}\n");
+        output.push_str("!1 = distinct !{!1, !0, !\"scope.A\"}\n");
+        output.push_str("!2 = distinct !{!2, !0, !\"scope.B\"}\n");
+        output.push_str("!3 = distinct !{!3, !0, !\"scope.C\"}\n");
+        output.push_str("!4 = !{!1, !2}\n");
+        output.push_str("!5 = distinct !{!5, !6}\n");
+        output.push_str("!6 = !{!\"llvm.loop.vectorize.enable\", i1 true}\n");
 
         Ok(output)
     }
@@ -3491,6 +3598,9 @@ impl LlvmEmitter {
                     LlvmType::Struct | LlvmType::StructField => {
                         format.push_str("<struct>");
                     }
+                    LlvmType::Vector { .. } => {
+                        format.push_str("<vector>");
+                    }
                 }
             }
             format.push('\n');
@@ -3655,7 +3765,7 @@ impl LlvmEmitter {
                 writeln!(out, "  {} = ptrtoint i8* {} to i64", temp, value.repr).unwrap();
                 temp
             }
-            LlvmType::Enum | LlvmType::Struct | LlvmType::StructField => {
+            LlvmType::Enum | LlvmType::Struct | LlvmType::StructField | LlvmType::Vector { .. } => {
                 return Err(
                     "nested aggregate payloads are not implemented in the LLVM backend".into(),
                 );
@@ -3720,7 +3830,7 @@ impl LlvmEmitter {
                 writeln!(out, "  {} = inttoptr i64 {} to i8*", temp, raw).unwrap();
                 temp
             }
-            LlvmType::Enum | LlvmType::Struct | LlvmType::StructField => {
+            LlvmType::Enum | LlvmType::Struct | LlvmType::StructField | LlvmType::Vector { .. } => {
                 return Err(
                     "nested aggregate payloads are not implemented in the LLVM backend".into(),
                 );
@@ -7745,11 +7855,65 @@ fn main() -> i32:
             enum_layouts: HashMap::new(),
         };
 
-        let llvm = emit_llvm_with_options(&module, LlvmEmitOptions::default())
-            .expect("LLVM emission failed");
+        let llvm_res = emit_llvm_with_options(&module, LlvmEmitOptions::default());
+        assert!(llvm_res.is_ok(), "LLVM emission failed");
+        let Ok(llvm) = llvm_res else {
+            return;
+        };
         assert!(
             llvm.contains("asm sideeffect \"syscall\"") || llvm.contains("__agam_pal_syscall"),
             "expected syscall emission in LLVM IR, got:\n{llvm}"
+        );
+    }
+
+    #[test]
+    fn test_codegen_llvm_vector_intrinsics_and_alias_metadata() {
+        let b0 = BlockId(0);
+        let v_res = ValueId(0);
+        let module = MirModule {
+            functions: vec![MirFunction {
+                name: "test_vector_meta".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: agam_sema::symbol::TypeId(1),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![Instruction {
+                        result: v_res,
+                        ty: agam_sema::symbol::TypeId(1),
+                        op: Op::ConstInt(0),
+                    }],
+                    terminator: Terminator::Return(v_res),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
+        };
+
+        let llvm_res = emit_llvm_with_options(&module, LlvmEmitOptions::default());
+        assert!(llvm_res.is_ok(), "LLVM emission failed");
+        let Ok(llvm) = llvm_res else {
+            return;
+        };
+
+        assert!(
+            llvm.contains("declare <4 x float> @llvm.fmuladd.v4f32"),
+            "Must declare vector fmuladd intrinsic"
+        );
+        assert!(
+            llvm.contains("declare i64 @llvm.vector.reduce.add.v4i64"),
+            "Must declare vector horizontal reduction intrinsic"
+        );
+        assert!(
+            llvm.contains("!\"agam.alias.domain\""),
+            "Must emit scoped alias metadata domain"
+        );
+        assert!(
+            llvm.contains("!\"llvm.loop.vectorize.enable\""),
+            "Must emit vectorization loop control metadata"
         );
     }
 }

@@ -1,5 +1,8 @@
 //! Shared MIR-level call-cache selection analysis.
 
+pub mod alias;
+pub use alias::{AliasOracle, AliasRelation, DisjointnessProof, PointerProvenance};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 

@@ -11,8 +11,10 @@ pub mod escape;
 pub mod inline;
 pub mod loop_unroll;
 pub mod polyhedral;
+pub mod vectorize;
 
 pub use ai_intel::{AiCompilerReport, AiOptimizationAdvisor, OptimizationRecommendation};
+pub use vectorize::{VectorizationPlan, vectorize_function};
 
 use crate::ir::MirModule;
 use crate::verifier::MirVerifier;

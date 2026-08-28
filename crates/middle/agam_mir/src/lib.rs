@@ -15,14 +15,17 @@ pub mod ir;
 pub mod lower;
 pub mod monomorphize;
 pub mod opt;
+pub mod scev;
 pub mod verifier;
 
 pub use analysis::{
-    ControlFlowGraph, DominanceFrontier, DominatorTree, LoopForest, NaturalLoop, ReversePostOrder,
+    AliasOracle, AliasRelation, ControlFlowGraph, DisjointnessProof, DominanceFrontier,
+    DominatorTree, LoopForest, NaturalLoop, PointerProvenance, ReversePostOrder,
 };
 pub use dialect::{
     AsyncDialectOp, BarrierScope, DialectKind, DialectLoweringEngine, GpuDialectOp, MultiLevelOp,
     TensorOp, TensorReduceKind,
 };
 pub use eval::{ComptimeError, ComptimeInterpreter, ConstValue};
+pub use scev::{LoopDescriptor, LoopNest, ScevExpr, ScevSolver, TripCount, lower_to_affine};
 pub use verifier::{MirVerificationError, MirVerifier};

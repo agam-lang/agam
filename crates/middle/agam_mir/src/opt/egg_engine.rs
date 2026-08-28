@@ -27,10 +27,16 @@ define_language! {
         ">>" = Shr([Id; 2]),
         "neg" = Neg(Id),
         "not" = Not(Id),
+
+        // SCEV & Memory Addressing Extensions (Directive 2.1)
+        "scev-rec" = ScevRec([Id; 3]),     // [base, step, loop_id]
+        "scev-inv" = ScevInvariant(Id),    // [val]
+        "ptr-offset" = PtrOffset([Id; 2]), // [base_ptr, offset]
+        "array-idx" = ArrayIndex([Id; 3]), // [base_ptr, index, stride]
     }
 }
 
-/// Construct standard algebraic rewrite rules for scalar operations.
+/// Construct standard algebraic rewrite rules for scalar operations and address arithmetic.
 pub fn algebraic_rules() -> Vec<Rewrite<AgamLanguage, ()>> {
     vec![
         // Additive identities
@@ -60,6 +66,13 @@ pub fn algebraic_rules() -> Vec<Rewrite<AgamLanguage, ()>> {
         rewrite!("xor-zero"; "(^ ?a 0)" => "?a"),
         // Double negation
         rewrite!("double-neg"; "(neg (neg ?a))" => "?a"),
+        // SCEV & Memory Address Arithmetic Rewrite Rules (Directive 2.1)
+        rewrite!("ptr-offset-flatten"; "(ptr-offset (ptr-offset ?p ?off1) ?off2)" => "(ptr-offset ?p (+ ?off1 ?off2))"),
+        rewrite!("array-idx-to-offset"; "(array-idx ?p ?i ?stride)" => "(ptr-offset ?p (* ?i ?stride))"),
+        rewrite!("ptr-offset-zero"; "(ptr-offset ?p 0)" => "?p"),
+        rewrite!("ptr-offset-scev-rec"; "(ptr-offset ?p (scev-rec ?b ?s ?loop))" => "(scev-rec (ptr-offset ?p ?b) ?s ?loop)"),
+        rewrite!("scev-rec-scale"; "(* (scev-rec ?b ?s ?loop) ?inv)" => "(scev-rec (* ?b ?inv) (* ?s ?inv) ?loop)"),
+        rewrite!("ptr-offset-distribute-add"; "(ptr-offset ?p (+ ?a ?b))" => "(ptr-offset (ptr-offset ?p ?a) ?b)"),
     ]
 }
 
@@ -81,6 +94,28 @@ pub fn simplify_expr(expr_str: &str) -> Result<String, String> {
     let (_best_cost, best_expr) = extractor.find_best(root);
 
     Ok(best_expr.to_string())
+}
+
+/// Check whether two expressions are provably equivalent under equality saturation rules.
+pub fn are_equivalent(expr1_str: &str, expr2_str: &str) -> bool {
+    let Ok(expr1) = expr1_str.parse::<RecExpr<AgamLanguage>>() else {
+        return false;
+    };
+    let Ok(expr2) = expr2_str.parse::<RecExpr<AgamLanguage>>() else {
+        return false;
+    };
+
+    let rules = algebraic_rules();
+    let runner = Runner::default()
+        .with_expr(&expr1)
+        .with_expr(&expr2)
+        .with_node_limit(10_000)
+        .with_iter_limit(30)
+        .run(&rules);
+
+    let id1 = runner.roots[0];
+    let id2 = runner.roots[1];
+    runner.egraph.find(id1) == runner.egraph.find(id2)
 }
 
 /// Run `egg`-powered algebraic equality saturation and simplification across all functions in a module.
@@ -304,5 +339,36 @@ mod tests {
         let changed = optimize_function(&mut func);
         assert!(changed, "egg_engine must optimize (+ v0 0) into Copy(v0)");
         assert_eq!(func.blocks[0].instructions[2].op, Op::Copy(v0));
+    }
+
+    #[test]
+    fn test_egg_ptr_offset_zero() {
+        assert!(are_equivalent("(ptr-offset p 0)", "p"));
+        let res = simplify_expr("(ptr-offset p 0)").unwrap_or_default();
+        assert_eq!(res, "p");
+    }
+
+    #[test]
+    fn test_egg_array_index_to_offset_equivalence() {
+        assert!(are_equivalent(
+            "(array-idx base i 4)",
+            "(ptr-offset base (* i 4))"
+        ));
+    }
+
+    #[test]
+    fn test_egg_multi_dimensional_stride_flattening() {
+        assert!(are_equivalent(
+            "(ptr-offset (ptr-offset base (* i 64)) (* j 4))",
+            "(ptr-offset base (+ (* i 64) (* j 4)))"
+        ));
+    }
+
+    #[test]
+    fn test_egg_scev_rec_scaling_and_distribution() {
+        assert!(are_equivalent(
+            "(* (scev-rec b s loop_0) 4)",
+            "(scev-rec (* b 4) (* s 4) loop_0)"
+        ));
     }
 }
