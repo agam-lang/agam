@@ -47,12 +47,12 @@ fn test_compute_range() -> bool:
     return compute(1, 10) == 55
 "#;
         // 1. Verify JIT execution
-        let summary = run_source(src, "memory://diff_compute.agam").map_err(|e| e)?;
+        let summary = run_source(src, "memory://diff_compute.agam")?;
         assert_eq!(summary.passed(), 1, "JIT test execution failed");
 
         // 2. Verify LLVM IR emission parity
-        let mir = compile_to_mir(src).map_err(|e| e)?;
-        let llvm_ir = emit_llvm(&mir).map_err(|e| e)?;
+        let mir = compile_to_mir(src)?;
+        let llvm_ir = emit_llvm(&mir)?;
         assert!(
             llvm_ir.contains("@agam_compute(") || llvm_ir.contains("@compute("),
             "LLVM must emit compute function signature"
@@ -77,12 +77,12 @@ fn test_fibonacci() -> bool:
     return fib(10) == 55
 "#;
         // 1. Verify JIT execution
-        let summary = run_source(src, "memory://diff_fib.agam").map_err(|e| e)?;
+        let summary = run_source(src, "memory://diff_fib.agam")?;
         assert_eq!(summary.passed(), 1, "JIT fib(10) failed");
 
         // 2. Verify LLVM IR emission parity
-        let mir = compile_to_mir(src).map_err(|e| e)?;
-        let llvm_ir = emit_llvm(&mir).map_err(|e| e)?;
+        let mir = compile_to_mir(src)?;
+        let llvm_ir = emit_llvm(&mir)?;
         assert!(
             llvm_ir.contains("@agam_fib(") || llvm_ir.contains("@fib("),
             "LLVM must emit fib function signature"
@@ -115,12 +115,12 @@ fn test_primes() -> bool:
     return count_primes_to(20) == 8
 "#;
         // 1. Verify JIT execution
-        let summary = run_source(src, "memory://diff_primes.agam").map_err(|e| e)?;
+        let summary = run_source(src, "memory://diff_primes.agam")?;
         assert_eq!(summary.passed(), 1, "JIT primes failed");
 
         // 2. Verify LLVM IR emission parity
-        let mir = compile_to_mir(src).map_err(|e| e)?;
-        let llvm_ir = emit_llvm(&mir).map_err(|e| e)?;
+        let mir = compile_to_mir(src)?;
+        let llvm_ir = emit_llvm(&mir)?;
         assert!(
             llvm_ir.contains("@agam_count_primes_to(") || llvm_ir.contains("@count_primes_to("),
             "LLVM must emit count_primes_to function signature"

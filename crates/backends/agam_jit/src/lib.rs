@@ -2370,19 +2370,12 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
     for block in &func.blocks {
         for instr in &block.instructions {
             let ty = match &instr.op {
-                Op::ConstInt(val) => infer_jit_type_from_type_id(instr.ty).unwrap_or_else(|| {
-                    if *val > i32::MAX as i64 || *val < i32::MIN as i64 {
-                        JitType::Int {
-                            bits: 64,
-                            signed: true,
-                        }
-                    } else {
-                        JitType::Int {
-                            bits: 64,
-                            signed: true,
-                        }
-                    }
-                }),
+                Op::ConstInt(_val) => {
+                    infer_jit_type_from_type_id(instr.ty).unwrap_or(JitType::Int {
+                        bits: 64,
+                        signed: true,
+                    })
+                }
                 Op::ConstFloat(_) => {
                     infer_jit_type_from_type_id(instr.ty).unwrap_or(JitType::Float64)
                 }

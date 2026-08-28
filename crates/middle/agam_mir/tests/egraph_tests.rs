@@ -1,5 +1,7 @@
 //! Integration tests for E-Graph Superoptimization & Algebraic Tensor Fusion.
 
+#![allow(deprecated)]
+
 use std::collections::HashMap;
 
 use agam_mir::ir::{

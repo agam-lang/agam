@@ -372,22 +372,22 @@ fn parse_c_type_str(s: &str) -> Result<CType, BindgenError> {
     }
 
     // Check array suffix [N]
-    if let Some(open_brk) = clean.rfind('[') {
-        if let Some(close_brk) = clean.rfind(']') {
-            if open_brk < close_brk {
-                let base_str = clean[..open_brk].trim();
-                let size_str = clean[open_brk + 1..close_brk].trim();
-                let size = size_str.parse::<usize>().map_err(|_| {
-                    BindgenError::new(
-                        format!("Invalid array dimension '{}'", size_str),
-                        format!("Failed to parse array size in type '{}'", raw),
-                        "Use integer literal constants for C array dimensions",
-                    )
-                })?;
-                let base_ty = parse_c_type_str(base_str)?;
-                return Ok(CType::Array(Box::new(base_ty), size));
-            }
-        }
+    let brackets = match (clean.rfind('['), clean.rfind(']')) {
+        (Some(open), Some(close)) if open < close => Some((open, close)),
+        _ => None,
+    };
+    if let Some((open_brk, close_brk)) = brackets {
+        let base_str = clean[..open_brk].trim();
+        let size_str = clean[open_brk + 1..close_brk].trim();
+        let size = size_str.parse::<usize>().map_err(|_| {
+            BindgenError::new(
+                format!("Invalid array dimension '{}'", size_str),
+                format!("Failed to parse array size in type '{}'", raw),
+                "Use integer literal constants for C array dimensions",
+            )
+        })?;
+        let base_ty = parse_c_type_str(base_str)?;
+        return Ok(CType::Array(Box::new(base_ty), size));
     }
 
     let resolved = match clean {

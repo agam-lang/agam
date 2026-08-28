@@ -94,7 +94,7 @@ pub fn align_to_page_size(size: usize) -> Result<usize, PalMemoryError> {
         ));
     }
     let page_sz = system_page_size();
-    let rounded = (size + page_sz - 1) / page_sz * page_sz;
+    let rounded = size.div_ceil(page_sz) * page_sz;
     Ok(rounded)
 }
 
@@ -324,6 +324,10 @@ impl PageAllocation {
     }
 
     /// Return the mutable base raw pointer to the mapped virtual address range.
+    ///
+    /// # Safety
+    /// Caller must ensure that concurrent writes do not violate Rust aliasing guarantees
+    /// and that memory access is restricted to the allocated page bounds.
     pub unsafe fn as_mut_ptr(&mut self) -> *mut u8 {
         self.ptr
     }

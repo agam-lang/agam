@@ -109,7 +109,7 @@ impl DateTime {
             .map(|dt| Self {
                 inner: dt.with_timezone(&Utc),
             })
-            .map_err(|e| TimeError::new(e))
+            .map_err(TimeError::new)
     }
 
     /// Return Unix epoch timestamp in seconds.

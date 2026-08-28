@@ -4,33 +4,23 @@ use agam_target::TargetTriple;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BackendKind {
+    #[default]
     Jit,
     Llvm,
     C,
 }
 
-impl Default for BackendKind {
-    fn default() -> Self {
-        Self::Jit
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum OptLevel {
+    #[default]
     O0,
     O1,
     O2,
     O3,
     Os,
     Oz,
-}
-
-impl Default for OptLevel {
-    fn default() -> Self {
-        Self::O0
-    }
 }
 
 impl OptLevel {

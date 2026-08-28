@@ -31,6 +31,7 @@ impl fmt::Display for DiagnosticLevel {
 }
 
 #[cfg(test)]
+#[test]
 fn test_diagnostic_level_display() {
     assert_eq!(DiagnosticLevel::Error.to_string(), "error");
     assert_eq!(DiagnosticLevel::Warning.to_string(), "warning");

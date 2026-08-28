@@ -845,7 +845,7 @@ impl SimdOps {
     #[inline]
     pub fn dot(a: &[f64], b: &[f64]) -> f64 {
         let n = a.len().min(b.len());
-        simd_dot_f64(&a[..n], &b[..n]).unwrap_or_else(|_| 0.0)
+        simd_dot_f64(&a[..n], &b[..n]).unwrap_or(0.0)
     }
 
     /// Sum reduction: Σ a[i].

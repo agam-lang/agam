@@ -90,10 +90,10 @@ pub fn read_lines(path: impl AsRef<Path>) -> Result<Vec<String>, IoError> {
 /// Write a UTF-8 text file, creating parent directories when needed.
 pub fn write_string(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<(), IoError> {
     let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        create_dir_all(parent)?;
     }
     std::fs::write(path, contents.as_ref())
         .map_err(|error| IoError::new("write_string", path, error))
@@ -102,10 +102,10 @@ pub fn write_string(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result
 /// Append UTF-8 text to a file, creating parent directories when needed.
 pub fn append_string(path: impl AsRef<Path>, contents: impl AsRef<str>) -> Result<(), IoError> {
     let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            create_dir_all(parent)?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        create_dir_all(parent)?;
     }
     let mut file = std::fs::OpenOptions::new()
         .create(true)

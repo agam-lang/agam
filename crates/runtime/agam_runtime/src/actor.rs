@@ -450,6 +450,350 @@ impl ActorSystem {
     }
 }
 
+/// # Distributed Actor Wire Framing & Transport Protocol (`agam_runtime::actor::remote`)
+///
+/// Implements cross-node binary framing, CRC32 payload verification,
+/// and `RemoteActorPath` URI resolution over TCP/IP.
+pub mod remote {
+    use super::ActorError;
+    use crc32fast::Hasher;
+    use serde::{Deserialize, Serialize};
+    use std::fmt;
+
+    /// 4-byte magic signature for Agam Distributed Actor wire framing ("AGMA").
+    pub const WIRE_MAGIC: [u8; 4] = *b"AGMA";
+
+    /// Current wire protocol version.
+    pub const WIRE_VERSION: u16 = 1;
+
+    /// Fixed 24-byte binary wire frame header size.
+    pub const WIRE_HEADER_SIZE: usize = 24;
+
+    /// Enumeration of distributed actor message frame classifications.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[repr(u16)]
+    pub enum ActorWireMsgKind {
+        /// Initial cross-node handshake establishing session parameters.
+        Handshake = 1,
+        /// Positive acknowledgement of remote node session handshake.
+        HandshakeAck = 2,
+        /// Keep-alive heartbeat packet maintaining active connection liveness.
+        Heartbeat = 3,
+        /// Standard user-level payload envelope directed to an actor.
+        UserMessage = 4,
+        /// System-level control directive (e.g. Stop, Escalate, Restart).
+        SystemSignal = 5,
+        /// DeathWatch notification of remote actor termination.
+        Terminated = 6,
+        /// Undeliverable message routed to the distributed dead-letter mailbox.
+        DeadLetter = 7,
+    }
+
+    impl ActorWireMsgKind {
+        pub fn from_u16(val: u16) -> Option<Self> {
+            match val {
+                1 => Some(Self::Handshake),
+                2 => Some(Self::HandshakeAck),
+                3 => Some(Self::Heartbeat),
+                4 => Some(Self::UserMessage),
+                5 => Some(Self::SystemSignal),
+                6 => Some(Self::Terminated),
+                7 => Some(Self::DeadLetter),
+                _ => None,
+            }
+        }
+    }
+
+    /// Fixed 24-byte binary header preceding all distributed actor frames.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ActorWireHeader {
+        pub magic: [u8; 4],
+        pub version: u16,
+        pub kind: ActorWireMsgKind,
+        pub stream_id: u64,
+        pub payload_len: u32,
+        pub checksum: u32,
+    }
+
+    impl ActorWireHeader {
+        pub fn new(kind: ActorWireMsgKind, stream_id: u64, payload: &[u8]) -> Self {
+            let mut hasher = Hasher::new();
+            hasher.update(payload);
+            let checksum = hasher.finalize();
+
+            Self {
+                magic: WIRE_MAGIC,
+                version: WIRE_VERSION,
+                kind,
+                stream_id,
+                payload_len: payload.len() as u32,
+                checksum,
+            }
+        }
+
+        pub fn encode(&self, out: &mut [u8; WIRE_HEADER_SIZE]) {
+            out[0..4].copy_from_slice(&self.magic);
+            out[4..6].copy_from_slice(&self.version.to_be_bytes());
+            out[6..8].copy_from_slice(&(self.kind as u16).to_be_bytes());
+            out[8..16].copy_from_slice(&self.stream_id.to_be_bytes());
+            out[16..20].copy_from_slice(&self.payload_len.to_be_bytes());
+            out[20..24].copy_from_slice(&self.checksum.to_be_bytes());
+        }
+
+        pub fn decode(buf: &[u8; WIRE_HEADER_SIZE]) -> Result<Self, ActorError> {
+            let mut magic = [0u8; 4];
+            magic.copy_from_slice(&buf[0..4]);
+            if magic != WIRE_MAGIC {
+                return Err(ActorError::new(
+                    "Invalid wire frame magic bytes",
+                    format!("Expected {:?}, found {:?}", WIRE_MAGIC, magic),
+                    "Verify connecting peer is running a compatible Agam runtime",
+                ));
+            }
+
+            let mut version_bytes = [0u8; 2];
+            version_bytes.copy_from_slice(&buf[4..6]);
+            let version = u16::from_be_bytes(version_bytes);
+            if version != WIRE_VERSION {
+                return Err(ActorError::new(
+                    "Unsupported wire protocol version",
+                    format!("Expected version {}, found {}", WIRE_VERSION, version),
+                    "Upgrade node runtime to match peer wire framing version",
+                ));
+            }
+
+            let mut kind_bytes = [0u8; 2];
+            kind_bytes.copy_from_slice(&buf[6..8]);
+            let raw_kind = u16::from_be_bytes(kind_bytes);
+            let kind = ActorWireMsgKind::from_u16(raw_kind).ok_or_else(|| {
+                ActorError::new(
+                    "Unknown wire message kind identifier",
+                    format!("Received unassigned kind tag: {}", raw_kind),
+                    "Check network integrity or peer protocol compatibility",
+                )
+            })?;
+
+            let mut stream_bytes = [0u8; 8];
+            stream_bytes.copy_from_slice(&buf[8..16]);
+            let stream_id = u64::from_be_bytes(stream_bytes);
+
+            let mut len_bytes = [0u8; 4];
+            len_bytes.copy_from_slice(&buf[16..20]);
+            let payload_len = u32::from_be_bytes(len_bytes);
+
+            let mut crc_bytes = [0u8; 4];
+            crc_bytes.copy_from_slice(&buf[20..24]);
+            let checksum = u32::from_be_bytes(crc_bytes);
+
+            Ok(Self {
+                magic,
+                version,
+                kind,
+                stream_id,
+                payload_len,
+                checksum,
+            })
+        }
+    }
+
+    /// Discrete transport frame composed of a validated header and verified payload.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ActorWireFrame {
+        pub header: ActorWireHeader,
+        pub payload: Vec<u8>,
+    }
+
+    impl ActorWireFrame {
+        pub fn new(kind: ActorWireMsgKind, stream_id: u64, payload: Vec<u8>) -> Self {
+            let header = ActorWireHeader::new(kind, stream_id, &payload);
+            Self { header, payload }
+        }
+
+        pub fn encode(&self) -> Vec<u8> {
+            let mut buf = vec![0u8; WIRE_HEADER_SIZE + self.payload.len()];
+            let mut hdr_bytes = [0u8; WIRE_HEADER_SIZE];
+            self.header.encode(&mut hdr_bytes);
+            buf[0..WIRE_HEADER_SIZE].copy_from_slice(&hdr_bytes);
+            buf[WIRE_HEADER_SIZE..].copy_from_slice(&self.payload);
+            buf
+        }
+
+        pub fn decode(buf: &[u8]) -> Result<Option<(Self, usize)>, ActorError> {
+            if buf.len() < WIRE_HEADER_SIZE {
+                return Ok(None);
+            }
+
+            let mut hdr_bytes = [0u8; WIRE_HEADER_SIZE];
+            hdr_bytes.copy_from_slice(&buf[0..WIRE_HEADER_SIZE]);
+            let header = ActorWireHeader::decode(&hdr_bytes)?;
+
+            let total_len = WIRE_HEADER_SIZE + header.payload_len as usize;
+            if buf.len() < total_len {
+                return Ok(None);
+            }
+
+            let payload = buf[WIRE_HEADER_SIZE..total_len].to_vec();
+
+            let mut hasher = Hasher::new();
+            hasher.update(&payload);
+            let calculated_crc = hasher.finalize();
+
+            if calculated_crc != header.checksum {
+                return Err(ActorError::new(
+                    "Actor wire payload checksum mismatch",
+                    format!(
+                        "Header CRC 0x{:08X} != calculated CRC 0x{:08X}",
+                        header.checksum, calculated_crc
+                    ),
+                    "Discard corrupted frame and request peer retransmission",
+                ));
+            }
+
+            Ok(Some((Self { header, payload }, total_len)))
+        }
+    }
+
+    /// Fully-qualified canonical address identifying an actor in a distributed cluster.
+    ///
+    /// URI Format: `agam.tcp://<node_id>@<host>:<port>/<path>`
+    /// Example: `agam.tcp://worker-1@127.0.0.1:9090/user/processor`
+    #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    pub struct RemoteActorPath {
+        pub system_protocol: String,
+        pub node_id: String,
+        pub host: String,
+        pub port: u16,
+        pub path: String,
+    }
+
+    impl RemoteActorPath {
+        pub fn new(
+            node_id: impl Into<String>,
+            host: impl Into<String>,
+            port: u16,
+            path: impl Into<String>,
+        ) -> Self {
+            Self {
+                system_protocol: "agam.tcp".into(),
+                node_id: node_id.into(),
+                host: host.into(),
+                port,
+                path: path.into(),
+            }
+        }
+
+        pub fn parse(uri: &str) -> Result<Self, ActorError> {
+            let (proto, rest) = uri.split_once("://").ok_or_else(|| {
+                ActorError::new(
+                    "Invalid actor path format",
+                    format!("Missing '://' protocol delimiter in '{}'", uri),
+                    "Use 'agam.tcp://node_id@host:port/path'",
+                )
+            })?;
+
+            if proto != "agam.tcp" && proto != "agam" {
+                return Err(ActorError::new(
+                    "Unsupported transport protocol in actor path",
+                    format!("Protocol '{}' is not supported", proto),
+                    "Use 'agam.tcp' as the transport scheme",
+                ));
+            }
+
+            let (node_and_addr, path_part) = match rest.split_once('/') {
+                Some((na, p)) => (na, format!("/{}", p)),
+                None => (rest, "/".to_string()),
+            };
+
+            let (node_id, addr) = node_and_addr.split_once('@').ok_or_else(|| {
+                ActorError::new(
+                    "Missing node identifier in actor path",
+                    format!("Missing '@' node delimiter in '{}'", node_and_addr),
+                    "Format path as 'node_id@host:port'",
+                )
+            })?;
+
+            let (host, port_str) = addr.rsplit_once(':').ok_or_else(|| {
+                ActorError::new(
+                    "Missing port specification in actor path",
+                    format!("Missing ':port' delimiter in '{}'", addr),
+                    "Specify numeric TCP port (e.g. '127.0.0.1:9090')",
+                )
+            })?;
+
+            let port = port_str.parse::<u16>().map_err(|e| {
+                ActorError::new(
+                    "Invalid TCP port number in actor path",
+                    format!("Port string '{}' failed to parse: {}", port_str, e),
+                    "Ensure port is a valid u16 integer (1..65535)",
+                )
+            })?;
+
+            Ok(Self {
+                system_protocol: proto.to_string(),
+                node_id: node_id.to_string(),
+                host: host.to_string(),
+                port,
+                path: path_part,
+            })
+        }
+    }
+
+    impl fmt::Display for RemoteActorPath {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                f,
+                "{}://{}@{}:{}{}",
+                self.system_protocol, self.node_id, self.host, self.port, self.path
+            )
+        }
+    }
+
+    /// Serialized cross-node message envelope carrying routing metadata and payload.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct RemoteEnvelope {
+        pub sender: Option<RemoteActorPath>,
+        pub target: RemoteActorPath,
+        pub correlation_id: u64,
+        pub payload: Vec<u8>,
+    }
+
+    impl RemoteEnvelope {
+        pub fn new(
+            sender: Option<RemoteActorPath>,
+            target: RemoteActorPath,
+            correlation_id: u64,
+            payload: Vec<u8>,
+        ) -> Self {
+            Self {
+                sender,
+                target,
+                correlation_id,
+                payload,
+            }
+        }
+
+        pub fn serialize(&self) -> Result<Vec<u8>, ActorError> {
+            serde_json::to_vec(self).map_err(|e| {
+                ActorError::new(
+                    "Failed to serialize remote actor envelope",
+                    e.to_string(),
+                    "Verify message payload types are serializable",
+                )
+            })
+        }
+
+        pub fn deserialize(bytes: &[u8]) -> Result<Self, ActorError> {
+            serde_json::from_slice(bytes).map_err(|e| {
+                ActorError::new(
+                    "Failed to deserialize remote actor envelope",
+                    e.to_string(),
+                    "Check for protocol version or envelope schema mismatch",
+                )
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,5 +935,76 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_remote_wire_frame_encode_decode_roundtrip() -> Result<(), ActorError> {
+        use remote::*;
+
+        let payload = b"{\"event\":\"UserJoined\",\"user_id\":42}".to_vec();
+        let frame = ActorWireFrame::new(ActorWireMsgKind::UserMessage, 1001, payload.clone());
+
+        let encoded = frame.encode();
+        assert_eq!(encoded.len(), WIRE_HEADER_SIZE + payload.len());
+
+        let parsed = ActorWireFrame::decode(&encoded)?;
+        assert!(parsed.is_some());
+        let (decoded, consumed) = parsed.unwrap_or_else(|| unreachable!());
+
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(decoded.header.kind, ActorWireMsgKind::UserMessage);
+        assert_eq!(decoded.header.stream_id, 1001);
+        assert_eq!(decoded.payload, payload);
+        Ok(())
+    }
+
+    #[test]
+    fn test_remote_wire_frame_corrupted_checksum_rejected() {
+        use remote::*;
+
+        let payload = b"sensitive_actor_payload".to_vec();
+        let frame = ActorWireFrame::new(ActorWireMsgKind::UserMessage, 42, payload);
+        let mut encoded = frame.encode();
+
+        // Corrupt payload byte
+        let last_idx = encoded.len() - 1;
+        encoded[last_idx] ^= 0xFF;
+
+        let err = ActorWireFrame::decode(&encoded).expect_err("checksum mismatch expected");
+        assert!(err.cause.contains("checksum mismatch"));
+    }
+
+    #[test]
+    fn test_remote_actor_path_parsing_and_formatting() -> Result<(), ActorError> {
+        use remote::*;
+
+        let raw_uri = "agam.tcp://cluster-node-1@192.168.1.50:8080/user/computation/worker_3";
+        let path = RemoteActorPath::parse(raw_uri)?;
+
+        assert_eq!(path.system_protocol, "agam.tcp");
+        assert_eq!(path.node_id, "cluster-node-1");
+        assert_eq!(path.host, "192.168.1.50");
+        assert_eq!(path.port, 8080);
+        assert_eq!(path.path, "/user/computation/worker_3");
+
+        assert_eq!(path.to_string(), raw_uri);
+        Ok(())
+    }
+
+    #[test]
+    fn test_remote_envelope_serialization_roundtrip() -> Result<(), ActorError> {
+        use remote::*;
+
+        let sender = RemoteActorPath::new("node-a", "127.0.0.1", 9001, "/user/sender");
+        let target = RemoteActorPath::new("node-b", "127.0.0.1", 9002, "/user/receiver");
+        let envelope = RemoteEnvelope::new(Some(sender), target.clone(), 777, vec![1, 2, 3, 4, 5]);
+
+        let bytes = envelope.serialize()?;
+        let deserialized = RemoteEnvelope::deserialize(&bytes)?;
+
+        assert_eq!(envelope, deserialized);
+        assert_eq!(deserialized.target, target);
+        assert_eq!(deserialized.correlation_id, 777);
+        Ok(())
     }
 }

@@ -68,7 +68,7 @@ where
         .min(total)
         .max(1);
 
-    let chunk_size = (total + num_threads - 1) / num_threads;
+    let chunk_size = total.div_ceil(num_threads);
     let f_arc = Arc::new(f);
     let mut handles = Vec::with_capacity(num_threads);
 

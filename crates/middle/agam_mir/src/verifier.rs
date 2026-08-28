@@ -296,14 +296,14 @@ impl MirVerifier {
         }
 
         for block in &func.blocks {
-            if let Terminator::Return(ret_val) = &block.terminator {
-                if stack_allocations.contains(ret_val) {
-                    errors.push(MirVerificationError::EscapingStackAllocation {
-                        value: *ret_val,
-                        in_block: block.id,
-                        reason: "returned directly from function".into(),
-                    });
-                }
+            if let Terminator::Return(ret_val) = &block.terminator
+                && stack_allocations.contains(ret_val)
+            {
+                errors.push(MirVerificationError::EscapingStackAllocation {
+                    value: *ret_val,
+                    in_block: block.id,
+                    reason: "returned directly from function".into(),
+                });
             }
         }
 

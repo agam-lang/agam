@@ -40,6 +40,11 @@ Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhed
 | **Type Sandhi Matrix & SEMA** | **BUILD** | First-Party Native (`agam_sema`) | Unique Pāṇinian type-theoretic lattice and bidirectional constraint inference. |
 | **Mid-Level IR & Escape Analysis** | **BUILD** | First-Party Native (`agam_mir`) | Tailored SSA control flow, Cooper–Harvey–Kennedy dominators, and interprocedural static ARC elision. |
 | **Standard Library Ergonomics (`note.md`)** | **BUILD** | First-Party Native (`agam_std`) | Thin, zero-panic wrappers integrating adopted storage with Agam's ARC memory model, `Counter`, `bisect`, `Path`, `StringBuilder`, and 64-byte aligned tensors. |
+| **Distributed Actor Wire Protocol** | **BUILD** | First-Party Native (`agam_runtime::actor::remote`) | Agam-specific 16-byte fixed binary header framing (`AGAM_ACTOR_WIRE_V1`), correlation routing, and `RemoteActorPath` URI resolution over `PalSocket` / `EventDemuxer`. |
+| **CRC32 Checksums & Frame Integrity** | **ADOPT** | **`crc32fast`** | Standard SIMD-accelerated IEEE 802.3 CRC32 calculation across `actor::remote` and `audio.rs`; eliminates duplicate hand-rolled polynomial lookup tables. |
+| **4K Image Buffers & 2D Convolutions** | **BUILD** | First-Party Native (`agam_std::image`) | 4K image filtering ($3\times3$ Sobel, Gaussian blur, Laplacian sharpen) explicitly routing through `agam_runtime::simd` with Netpbm (PPM P6 / PGM P5) uncompressed binary codec. |
+| **Audio Waveform DSP & WAV Containers** | **BUILD** | First-Party Native (`agam_std::audio`) | Native multi-channel waveform representation, sample-rate conversion, peak/RMS metrics, and uncompressed PCM WAV container I/O. Complex FLAC LPC / Rice-Golomb bitstream compression is deferred to adopted codec boundary (`claxon`/`symphonia`). |
+| **HTTP Wire Parsing & Stream Security** | **ADOPT** | **`httparse`** | Zero-copy HTTP/1.1 parsing via `httparse`. HTTP/2 binary framing and HPACK multiplexing are explicitly deferred to prevent CVE/DoS (e.g. Rapid Reset) vulnerabilities. |
 
 ---
 

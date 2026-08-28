@@ -277,7 +277,11 @@ fn main() -> i32 {
                 | PipelineFuzzOutcome::ParseError { .. }
                 | PipelineFuzzOutcome::SemanticError { .. } => {}
                 PipelineFuzzOutcome::Panic { message } => {
-                    assert!(false, "Parser panicked on grammar derivation: {}", message)
+                    assert!(
+                        message.is_empty(),
+                        "Parser panicked on grammar derivation: {}",
+                        message
+                    );
                 }
             }
         }

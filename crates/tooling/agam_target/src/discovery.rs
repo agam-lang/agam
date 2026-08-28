@@ -220,12 +220,13 @@ pub fn discover_bundled_llvm_clang() -> Option<String> {
     if let Some(explicit_root) = env_path(LLVM_BUNDLE_DIR_ENV) {
         roots.push(explicit_root);
     }
-    if let Ok(current_exe) = std::env::current_exe() {
-        if let Some(exe_dir) = current_exe.parent() {
-            roots.push(exe_dir.to_path_buf());
-            if let Some(parent) = exe_dir.parent() {
-                roots.push(parent.to_path_buf());
-            }
+    if let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    {
+        roots.push(exe_dir.clone());
+        if let Some(parent) = exe_dir.parent() {
+            roots.push(parent.to_path_buf());
         }
     }
 
@@ -354,18 +355,14 @@ pub fn native_llvm_clang_candidates() -> Vec<String> {
     if let Some(bundled) = discover_bundled_llvm_clang() {
         candidates.push(bundled);
     }
-    if let Some(vs_clang) = discover_visual_studio_llvm_clang() {
-        if !candidates.iter().any(|candidate| candidate == &vs_clang) {
-            candidates.push(vs_clang);
-        }
+    if let Some(vs_clang) = discover_visual_studio_llvm_clang().filter(|c| !candidates.contains(c))
+    {
+        candidates.push(vs_clang);
     }
-    if let Some(standalone_clang) = discover_standalone_windows_llvm_clang() {
-        if !candidates
-            .iter()
-            .any(|candidate| candidate == &standalone_clang)
-        {
-            candidates.push(standalone_clang);
-        }
+    if let Some(standalone_clang) =
+        discover_standalone_windows_llvm_clang().filter(|c| !candidates.contains(c))
+    {
+        candidates.push(standalone_clang);
     }
     for path_candidate in ["clang", "clang++"] {
         if !candidates
@@ -433,28 +430,26 @@ pub fn find_msvc_toolchain() -> Result<MsvcToolchain, ToolchainDiscoveryError> {
     {
         if let Some(install_path) = discover_visual_studio_installation_path() {
             let vc_tools_root = install_path.join(r"VC\Tools\MSVC");
-            if vc_tools_root.is_dir() {
-                if let Ok(entries) = std::fs::read_dir(&vc_tools_root) {
-                    let mut versions: Vec<PathBuf> = entries
-                        .filter_map(Result::ok)
-                        .map(|e| e.path())
-                        .filter(|p| p.is_dir())
-                        .collect();
-                    versions.sort();
-                    if let Some(latest_version) = versions.last() {
-                        let cl = latest_version.join(r"bin\Hostx64\x64\cl.exe");
-                        let link = latest_version.join(r"bin\Hostx64\x64\link.exe");
-                        let lib = latest_version.join(r"lib\x64");
-                        let inc = latest_version.join("include");
+            if let Ok(entries) = std::fs::read_dir(&vc_tools_root) {
+                let mut versions: Vec<PathBuf> = entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir())
+                    .collect();
+                versions.sort();
+                if let Some(latest_version) = versions.last() {
+                    let cl = latest_version.join(r"bin\Hostx64\x64\cl.exe");
+                    let link = latest_version.join(r"bin\Hostx64\x64\link.exe");
+                    let lib = latest_version.join(r"lib\x64");
+                    let inc = latest_version.join("include");
 
-                        return Ok(MsvcToolchain {
-                            installation_path: install_path,
-                            cl_path: cl,
-                            link_path: link,
-                            lib_paths: vec![lib],
-                            include_paths: vec![inc],
-                        });
-                    }
+                    return Ok(MsvcToolchain {
+                        installation_path: install_path,
+                        cl_path: cl,
+                        link_path: link,
+                        lib_paths: vec![lib],
+                        include_paths: vec![inc],
+                    });
                 }
             }
         }

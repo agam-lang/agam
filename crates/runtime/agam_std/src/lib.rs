@@ -5,6 +5,7 @@
 //! All data structures use contiguous memory layouts, `#[repr(C)]` alignment,
 //! and cache-friendly access patterns for maximum hardware performance.
 
+pub mod audio;
 pub mod cli;
 pub mod collections;
 pub mod combinatorics;
@@ -20,6 +21,8 @@ pub mod fft;
 pub mod gpu;
 pub mod group_theory;
 pub mod hankel;
+pub mod http;
+pub mod image;
 pub mod io;
 pub mod ipc;
 pub mod iter;
@@ -47,6 +50,7 @@ pub mod tensor;
 pub mod time;
 pub mod units;
 
+pub use audio::{AudioBuffer, AudioError, PcmBitDepth, WavCodec};
 pub use cli::{App, CliError, CliErrorKind, ParsedArgs};
 pub use collections::{
     CompactGraph, Counter, FastHashMap, FastHashSet, FastRingBuffer, FastVec, OrderedMap,
@@ -70,6 +74,8 @@ pub use fft::{blackman_window, fft, hamming_window, hanning_window, ifft};
 pub use gpu::{AsyncPipelineStage, Extent, GpuBuffer, GpuError, PartitionView, Tile, tile_matmul};
 pub use group_theory::{LeavittAlgebraElement, kazhdan_constant_property_t};
 pub use hankel::{HankelError, HankelMatrix, solve_hankel_system};
+pub use http::{HttpError, HttpHandler, HttpRouter, HttpStatus};
+pub use image::{Convolve2D, Gray8, ImageBuffer, ImageError, NetpbmCodec, Pixel, Rgb8, Rgba8};
 pub use io::{AgamPath, FastBufReader, FastBufWriter, IoError};
 pub use ipc::{IpcError, SharedMemoryRegion, SpscRingBuffer};
 pub use iter::{

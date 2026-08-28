@@ -128,17 +128,14 @@ fn analyze_and_mutate_function_escape(
 
         for block in &func.blocks {
             // Terminator escapes
-            match &block.terminator {
-                Terminator::Return(ret_val) => {
-                    let cur = value_escapes
-                        .entry(*ret_val)
-                        .or_insert(EscapeState::NoEscape);
-                    if *cur < EscapeState::GlobalEscape {
-                        *cur = EscapeState::GlobalEscape;
-                        changed = true;
-                    }
+            if let Terminator::Return(ret_val) = &block.terminator {
+                let cur = value_escapes
+                    .entry(*ret_val)
+                    .or_insert(EscapeState::NoEscape);
+                if *cur < EscapeState::GlobalEscape {
+                    *cur = EscapeState::GlobalEscape;
+                    changed = true;
                 }
-                _ => {}
             }
 
             // Instruction uses

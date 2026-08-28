@@ -412,7 +412,7 @@ mod tests {
             #[cfg(unix)]
             let sym_name = "getpid";
 
-            let sym_res = unsafe { lib.get_symbol::<unsafe extern "C" fn() -> u32>(sym_name) };
+            let sym_res = unsafe { lib.get_symbol::<()>(sym_name) };
             assert!(sym_res.is_ok());
             if let Ok(sym_ptr) = sym_res {
                 assert!(!sym_ptr.is_null());

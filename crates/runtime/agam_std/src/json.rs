@@ -142,17 +142,17 @@ impl JsonValue {
 
 /// Parse a JSON string into a dynamic `JsonValue`.
 pub fn parse(text: &str) -> Result<JsonValue, JsonError> {
-    serde_json::from_str(text).map_err(|e| JsonError::new(e))
+    serde_json::from_str(text).map_err(JsonError::new)
 }
 
 /// Serialize a `JsonValue` into a compact JSON string.
 pub fn stringify(val: &JsonValue) -> Result<String, JsonError> {
-    serde_json::to_string(val).map_err(|e| JsonError::new(e))
+    serde_json::to_string(val).map_err(JsonError::new)
 }
 
 /// Serialize a `JsonValue` into an indented, human-readable JSON string.
 pub fn stringify_pretty(val: &JsonValue) -> Result<String, JsonError> {
-    serde_json::to_string_pretty(val).map_err(|e| JsonError::new(e))
+    serde_json::to_string_pretty(val).map_err(JsonError::new)
 }
 
 #[cfg(test)]

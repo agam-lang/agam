@@ -25,7 +25,7 @@ pub fn float() -> f64 {
 }
 
 /// Randomly select one element from a slice with uniform distribution.
-pub fn choice<'a, T>(slice: &'a [T]) -> Option<&'a T> {
+pub fn choice<T>(slice: &[T]) -> Option<&T> {
     let mut rng = rand::thread_rng();
     slice.choose(&mut rng)
 }
@@ -82,7 +82,7 @@ mod tests {
     fn test_int_range_within_bounds() {
         for _ in 0..100 {
             let n = int_range(10, 20);
-            assert!(n >= 10 && n < 20);
+            assert!((10..20).contains(&n));
         }
         assert_eq!(int_range(5, 5), 5);
     }
@@ -91,7 +91,7 @@ mod tests {
     fn test_float_within_unit_interval() {
         for _ in 0..100 {
             let f = float();
-            assert!(f >= 0.0 && f < 1.0);
+            assert!((0.0..1.0).contains(&f));
         }
     }
 

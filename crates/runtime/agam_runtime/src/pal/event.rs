@@ -675,10 +675,10 @@ impl EventDemuxer {
                 .map(|e| {
                     let mut req_events = 0i16;
                     if e.interest.readable {
-                        req_events |= POLLIN as i16;
+                        req_events |= POLLIN;
                     }
                     if e.interest.writable {
-                        req_events |= POLLOUT as i16;
+                        req_events |= POLLOUT;
                     }
                     WSAPOLLFD {
                         fd: e.socket,
@@ -711,10 +711,10 @@ impl EventDemuxer {
                 if pfd.revents != 0 {
                     let entry = &self.entries[i];
                     let rev = pfd.revents;
-                    let readable = (rev & (POLLIN as i16)) != 0;
-                    let writable = (rev & (POLLOUT as i16)) != 0;
-                    let is_error = (rev & (POLLERR as i16 | POLLNVAL as i16)) != 0;
-                    let is_hup = (rev & (POLLHUP as i16)) != 0;
+                    let readable = (rev & POLLIN) != 0;
+                    let writable = (rev & POLLOUT) != 0;
+                    let is_error = (rev & (POLLERR | POLLNVAL)) != 0;
+                    let is_hup = (rev & POLLHUP) != 0;
 
                     events.push(Event {
                         token: entry.token,

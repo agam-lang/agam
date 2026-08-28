@@ -330,14 +330,6 @@ impl<T: Hash + Eq + Clone> Counter<T> {
         }
     }
 
-    pub fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let mut counter = Self::new();
-        for item in iter {
-            counter.increment(item);
-        }
-        counter
-    }
-
     pub fn increment(&mut self, item: T) {
         *self.counts.entry(item).or_insert(0) += 1;
     }
@@ -355,6 +347,16 @@ impl<T: Hash + Eq + Clone> Counter<T> {
         items.sort_by(|a, b| b.1.cmp(&a.1));
         items.truncate(n);
         items
+    }
+}
+
+impl<T: Hash + Eq + Clone> FromIterator<T> for Counter<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut counter = Self::new();
+        for item in iter {
+            counter.increment(item);
+        }
+        counter
     }
 }
 
