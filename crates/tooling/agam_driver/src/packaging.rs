@@ -1990,7 +1990,7 @@ pub(crate) fn sdk_supported_targets(
 
     if matches!(
         host_llvm_target_platform(),
-        LlvmTargetPlatform::Windows | LlvmTargetPlatform::Linux
+        LlvmTargetPlatform::Windows | LlvmTargetPlatform::Linux | LlvmTargetPlatform::MacOs
     ) {
         targets.push(agam_pkg::SdkTargetProfile {
             name: "android-arm64".into(),

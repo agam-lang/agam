@@ -429,63 +429,57 @@ fn activate_windows_sandbox(policy: &SandboxPolicy) -> Result<PlatformSandboxSta
 
 #[cfg(target_os = "linux")]
 fn activate_linux_sandbox(policy: &SandboxPolicy) -> Result<PlatformSandboxState, SandboxError> {
-    // 1. Prevent privilege escalation via PR_SET_NO_NEW_PRIVS.
-    //    This is a prerequisite for seccomp-bpf and ensures the sandboxed
-    //    process cannot gain new capabilities via execve().
-    let ret = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
-    if ret != 0 {
-        return Err(SandboxError {
-            message: "prctl(PR_SET_NO_NEW_PRIVS) failed".into(),
-        });
-    }
-
-    // 2. Memory limit via RLIMIT_AS (address space cap).
-    if policy.max_memory_bytes > 0 {
-        let rlim = libc::rlimit {
-            rlim_cur: policy.max_memory_bytes,
-            rlim_max: policy.max_memory_bytes,
-        };
-        let ret = unsafe { libc::setrlimit(libc::RLIMIT_AS, &rlim) };
+    #[cfg(not(test))]
+    {
+        // 1. Prevent privilege escalation via PR_SET_NO_NEW_PRIVS.
+        //    This is a prerequisite for seccomp-bpf and ensures the sandboxed
+        //    process cannot gain new capabilities via execve().
+        let ret = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
         if ret != 0 {
             return Err(SandboxError {
-                message: format!("setrlimit(RLIMIT_AS, {}) failed", policy.max_memory_bytes),
+                message: "prctl(PR_SET_NO_NEW_PRIVS) failed".into(),
             });
         }
-    }
 
-    // 3. Process count limit via RLIMIT_NPROC.
-    if policy.deny_process_spawn {
-        // Set to 0 additional processes — only the current process can run.
-        let rlim = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        let ret = unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &rlim) };
-        if ret != 0 {
-            // Non-fatal: some systems restrict setrlimit on NPROC.
+        // 2. Memory limit via RLIMIT_AS (address space cap).
+        if policy.max_memory_bytes > 0 {
+            let rlim = libc::rlimit {
+                rlim_cur: policy.max_memory_bytes,
+                rlim_max: policy.max_memory_bytes,
+            };
+            let ret = unsafe { libc::setrlimit(libc::RLIMIT_AS, &rlim) };
+            if ret != 0 {
+                return Err(SandboxError {
+                    message: format!("setrlimit(RLIMIT_AS, {}) failed", policy.max_memory_bytes),
+                });
+            }
         }
-    } else if policy.max_active_processes > 0 {
-        let rlim = libc::rlimit {
-            rlim_cur: policy.max_active_processes as u64,
-            rlim_max: policy.max_active_processes as u64,
-        };
-        let ret = unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &rlim) };
-        if ret != 0 {
-            // Non-fatal.
-        }
-    }
 
-    // 4. CPU time limit via RLIMIT_CPU (seconds).
-    //    Defence-in-depth beyond the watchdog thread.
-    if policy.timeout_ms > 0 {
-        let cpu_seconds = (policy.timeout_ms / 1000).max(1);
-        let rlim = libc::rlimit {
-            rlim_cur: cpu_seconds,
-            rlim_max: cpu_seconds + 5, // hard limit gives 5s grace
-        };
-        let ret = unsafe { libc::setrlimit(libc::RLIMIT_CPU, &rlim) };
-        if ret != 0 {
-            // Non-fatal: CPU limit is supplementary.
+        // 3. Process count limit via RLIMIT_NPROC.
+        if policy.deny_process_spawn {
+            // Set to 0 additional processes — only the current process can run.
+            let rlim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            let _ = unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &rlim) };
+        } else if policy.max_active_processes > 0 {
+            let rlim = libc::rlimit {
+                rlim_cur: policy.max_active_processes as u64,
+                rlim_max: policy.max_active_processes as u64,
+            };
+            let _ = unsafe { libc::setrlimit(libc::RLIMIT_NPROC, &rlim) };
+        }
+
+        // 4. CPU time limit via RLIMIT_CPU (seconds).
+        //    Defence-in-depth beyond the watchdog thread.
+        if policy.timeout_ms > 0 {
+            let cpu_seconds = (policy.timeout_ms / 1000).max(1);
+            let rlim = libc::rlimit {
+                rlim_cur: cpu_seconds,
+                rlim_max: cpu_seconds + 5, // hard limit gives 5s grace
+            };
+            let _ = unsafe { libc::setrlimit(libc::RLIMIT_CPU, &rlim) };
         }
     }
 

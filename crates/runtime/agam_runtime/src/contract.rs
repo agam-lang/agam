@@ -135,8 +135,8 @@ mod tests {
     fn plan_package_load_rejects_host_native_mismatch() {
         let manifest = portable_runtime_manifest(RuntimeBackend::Jit, true);
         let mismatched_host = RuntimeHost {
-            os: "linux".into(),
-            arch: "x86_64".into(),
+            os: "nonexistent_os".into(),
+            arch: "nonexistent_arch".into(),
             pointer_width: 64,
         };
 
