@@ -270,6 +270,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn exec_client_invokes_mock_exec_tool_and_parses_response() {
         let root = temp_dir("agam_exec_client");
         let executable = write_mock_exec_tool(&root);

@@ -378,6 +378,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_dynamic_library_open_nonexistent_returns_nyaya_error() {
         let res = DynamicLibrary::open("non_existent_library_agam_xyz_12345.dll");
         assert!(res.is_err());
@@ -389,6 +390,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_dynamic_library_open_and_resolve_standard_symbol() {
         #[cfg(windows)]
         let lib_path = "kernel32.dll";
