@@ -25,6 +25,11 @@ impl TraitLattice {
         }
     }
 
+    /// Universal top lattice element (alias for empty).
+    pub fn top() -> Self {
+        Self::empty()
+    }
+
     /// Construct a lattice element from a slice of trait IDs.
     pub fn from_traits(traits: &[SymbolId]) -> Self {
         let mut set = BTreeSet::new();
@@ -679,5 +684,38 @@ mod tests {
             hit_limit,
             "Recursion limit should protect against infinite monomorphization depth"
         );
+    }
+
+    #[test]
+    fn test_sandhi_trait_lattice_algebraic_soundness_laws() {
+        let t1 = SymbolId(1);
+        let t2 = SymbolId(2);
+        let t3 = SymbolId(3);
+        let t4 = SymbolId(4);
+
+        let a = TraitLattice::from_traits(&[t1, t2]);
+        let b = TraitLattice::from_traits(&[t2, t3]);
+        let c = TraitLattice::from_traits(&[t3, t4]);
+        let top = TraitLattice::top();
+
+        // 1. Commutativity: a ⊓ b == b ⊓ a, a ⊔ b == b ⊔ a
+        assert_eq!(a.meet(&b), b.meet(&a));
+        assert_eq!(a.join(&b), b.join(&a));
+
+        // 2. Associativity: (a ⊓ b) ⊓ c == a ⊓ (b ⊓ c), (a ⊔ b) ⊔ c == a ⊔ (b ⊔ c)
+        assert_eq!(a.meet(&b).meet(&c), a.meet(&b.meet(&c)));
+        assert_eq!(a.join(&b).join(&c), a.join(&b.join(&c)));
+
+        // 3. Idempotence: a ⊓ a == a, a ⊔ a == a
+        assert_eq!(a.meet(&a), a);
+        assert_eq!(a.join(&a), a);
+
+        // 4. Absorption Laws: a ⊓ (a ⊔ b) == a, a ⊔ (a ⊓ b) == a
+        assert_eq!(a.meet(&a.join(&b)), a);
+        assert_eq!(a.join(&a.meet(&b)), a);
+
+        // 5. Identity: a ⊓ Top == a, a ⊔ Top == Top
+        assert_eq!(a.meet(&top), a);
+        assert_eq!(a.join(&top), top);
     }
 }

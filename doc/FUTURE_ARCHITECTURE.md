@@ -119,3 +119,19 @@ Every capability claimed as 🟢 or 🟡 must be verifiable by checking the repo
 - C-ABI runtime exports: `crates/runtime/agam_runtime/src/export.rs`
 - NVPTX64 kernel emission: `crates/backends/agam_codegen/src/gpu_emitter.rs`
 - Quaternion implementation: `crates/runtime/agam_std/src/complex.rs`
+
+---
+
+## 7. The `agam_runtime` vs `agam_std` Layering Contract
+
+To prevent architectural entropy and circular coupling, the boundary between the runtime and standard library is strictly governed by the following invariant:
+
+1. **`agam_runtime` (Platform Abstraction & Low-Level Primitives)**:
+   - **Role**: Bare-metal hardware, OS, and memory substrates.
+   - **Contents**: OS virtual memory (`pal::memory`), async demuxers (`pal::event`), non-blocking raw descriptors (`pal::net`), hardware feature probes and cacheline-aligned buffers (`simd::AlignedBuffer`), and sandboxing (`sandbox`).
+   - **Invariants**: `#![deny(clippy::unwrap_used)]`, zero allocations on error paths, zero dependencies on `agam_std`.
+
+2. **`agam_std` (Ergonomic Standard Library & User-Facing Types)**:
+   - **Role**: High-level idioms, user collections, math surfaces, and standard modules.
+   - **Contents**: `std.tensor`, `std.linalg`, `std.sync`, `std.io`, `std.time`, `std.cli`, `std.re`, `std.csv`.
+   - **Layering Rule**: `agam_std` depends on `agam_runtime` for execution primitives, wrapping them in safe, zero-panic, Nyāya-formatted user interfaces.

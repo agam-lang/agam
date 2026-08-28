@@ -123,4 +123,76 @@ mod tests {
         optimize_module(&mut module);
         assert!(MirVerifier::verify_module(&module).is_ok());
     }
+
+    #[test]
+    fn test_pass_ordering_independence_convergence() {
+        let b0 = crate::ir::BlockId(0);
+        let v0 = ValueId(0);
+        let v1 = ValueId(1);
+        let v2 = ValueId(2);
+
+        let make_module = || MirModule {
+            functions: vec![MirFunction {
+                name: "test_convergence".into(),
+                generics: vec![],
+                params: vec![MirParam {
+                    name: "x".into(),
+                    value: v0,
+                    ty: TypeId(1),
+                    gpu_abi: Default::default(),
+                    memory_type: None,
+                }],
+                return_ty: TypeId(1),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v1,
+                            ty: TypeId(1),
+                            op: Op::ConstInt(5),
+                        },
+                        Instruction {
+                            result: v2,
+                            ty: TypeId(1),
+                            op: Op::BinOp {
+                                op: crate::ir::MirBinOp::Add,
+                                left: v1,
+                                right: v1,
+                            },
+                        },
+                    ],
+                    terminator: Terminator::Return(v2),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
+        };
+
+        // Pipeline 1: egg_engine before escape
+        let mut mod1 = make_module();
+        constant_fold::run(&mut mod1);
+        egg_engine::run(&mut mod1);
+        let purity = escape::CalleePurityInfo::default();
+        escape::run_escape_and_promote(&mut mod1, &purity);
+        dce::run(&mut mod1);
+
+        // Pipeline 2: escape before egg_engine
+        let mut mod2 = make_module();
+        constant_fold::run(&mut mod2);
+        escape::run_escape_and_promote(&mut mod2, &purity);
+        egg_engine::run(&mut mod2);
+        dce::run(&mut mod2);
+
+        // Both pipelines must produce equivalent instructions
+        assert_eq!(mod1.functions.len(), mod2.functions.len());
+        assert_eq!(
+            mod1.functions[0].blocks[0].instructions.len(),
+            mod2.functions[0].blocks[0].instructions.len()
+        );
+        assert!(MirVerifier::verify_module(&mod1).is_ok());
+        assert!(MirVerifier::verify_module(&mod2).is_ok());
+    }
 }
