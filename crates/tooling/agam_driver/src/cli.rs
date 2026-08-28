@@ -819,4 +819,3 @@ pub(crate) enum DaemonCommand {
     /// Signal a running background daemon to shut down gracefully
     Stop,
 }
-

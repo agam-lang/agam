@@ -32,11 +32,6 @@ pub use actor::{
     SupervisionStrategy, SupervisorDirective, SystemMessage,
 };
 
-pub use pal::{
-    AllocationFlags, Event, EventDemuxer, EventInterest, MemoryProtection, PageAllocation,
-    PalEventError, PalMemoryError, PalNetError, PalTcpListener, PalTcpStream, PalUdpSocket,
-    PollTimeout, ShutdownKind, Token, align_to_page_size, system_page_size,
-};
 pub use capability::{
     Capability, CapabilitySet, IsolationTier, PermissionDeniedError, global_capabilities,
 };
@@ -44,6 +39,11 @@ pub use crypto::{Sha256, chacha20_xor, hmac_sha256, sha256_digest};
 pub use hwinfo::{
     GpuTelemetry, HardwareInfo, MemoryTopology, NpuTelemetry, PerfTelemetry, SimdCapabilities,
     SimdTier, hwinfo,
+};
+pub use pal::{
+    AllocationFlags, Event, EventDemuxer, EventInterest, MemoryProtection, PageAllocation,
+    PalEventError, PalMemoryError, PalNetError, PalTcpListener, PalTcpStream, PalUdpSocket,
+    PollTimeout, ShutdownKind, Token, align_to_page_size, system_page_size,
 };
 pub use pqc::{
     MlDsaKeyPair, MlDsaParameter, MlDsaPublicKey, MlDsaSecretKey, MlKemKeyPair, MlKemParameter,

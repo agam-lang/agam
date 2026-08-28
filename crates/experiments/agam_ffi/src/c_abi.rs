@@ -182,7 +182,8 @@ impl DynamicLibrary {
                 )
             })?;
 
-            let handle = unsafe { libc::dlopen(c_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            let handle =
+                unsafe { libc::dlopen(c_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
             if handle.is_null() {
                 let err_msg = unsafe {
                     let err_ptr = libc::dlerror();

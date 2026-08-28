@@ -354,8 +354,6 @@ mod tests {
         }
     }
 
-
-
     #[test]
     fn test_inverse_2x2() {
         let m = Matrix::new(2, 2, vec![4.0, 7.0, 2.0, 6.0]);

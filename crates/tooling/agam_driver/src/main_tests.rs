@@ -3807,8 +3807,14 @@ fn test_self_hosting_stage0_modules_exist_and_validate() {
     let sema_agm = root.join("crates/middle/agam_sema/self_host/type_check.agm");
 
     assert!(lexer_agm.exists(), "Self-hosting stage-0 Lexer must exist");
-    assert!(parser_agm.exists(), "Self-hosting stage-0 Parser must exist");
-    assert!(sema_agm.exists(), "Self-hosting stage-0 Type Checker must exist");
+    assert!(
+        parser_agm.exists(),
+        "Self-hosting stage-0 Parser must exist"
+    );
+    assert!(
+        sema_agm.exists(),
+        "Self-hosting stage-0 Type Checker must exist"
+    );
 
     let lexer_src = fs::read_to_string(&lexer_agm).expect("read lexer.agm");
     let parser_src = fs::read_to_string(&parser_agm).expect("read parser.agm");

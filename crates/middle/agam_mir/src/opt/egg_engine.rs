@@ -7,7 +7,7 @@
 
 #![deny(clippy::unwrap_used)]
 
-use egg::{define_language, rewrite, Id, RecExpr, Rewrite, Runner, Symbol};
+use egg::{Id, RecExpr, Rewrite, Runner, Symbol, define_language, rewrite};
 
 use crate::ir::{MirBinOp, MirFunction, MirModule, MirUnOp, Op};
 
@@ -38,12 +38,10 @@ pub fn algebraic_rules() -> Vec<Rewrite<AgamLanguage, ()>> {
         rewrite!("add-zero-left"; "(+ 0 ?a)" => "?a"),
         rewrite!("add-comm"; "(+ ?a ?b)" => "(+ ?b ?a)"),
         rewrite!("add-assoc"; "(+ (+ ?a ?b) ?c)" => "(+ ?a (+ ?b ?c))"),
-
         // Subtractive identities
         rewrite!("sub-zero"; "(- ?a 0)" => "?a"),
         rewrite!("sub-self"; "(- ?a ?a)" => "0"),
         rewrite!("sub-cancel"; "(- (+ ?a ?b) ?b)" => "?a"),
-
         // Multiplicative identities
         rewrite!("mul-one-right"; "(* ?a 1)" => "?a"),
         rewrite!("mul-one-left"; "(* 1 ?a)" => "?a"),
@@ -51,10 +49,8 @@ pub fn algebraic_rules() -> Vec<Rewrite<AgamLanguage, ()>> {
         rewrite!("mul-zero-left"; "(* 0 ?a)" => "0"),
         rewrite!("mul-comm"; "(* ?a ?b)" => "(* ?b ?a)"),
         rewrite!("mul-assoc"; "(* (* ?a ?b) ?c)" => "(* ?a (* ?b ?c))"),
-
         // Distributivity
         rewrite!("distribute-mul-add"; "(* ?a (+ ?b ?c))" => "(+ (* ?a ?b) (* ?a ?c))"),
-
         // Bitwise identities
         rewrite!("and-self"; "(& ?a ?a)" => "?a"),
         rewrite!("or-self"; "(| ?a ?a)" => "?a"),
@@ -62,7 +58,6 @@ pub fn algebraic_rules() -> Vec<Rewrite<AgamLanguage, ()>> {
         rewrite!("and-zero"; "(& ?a 0)" => "0"),
         rewrite!("or-zero"; "(| ?a 0)" => "?a"),
         rewrite!("xor-zero"; "(^ ?a 0)" => "?a"),
-
         // Double negation
         rewrite!("double-neg"; "(neg (neg ?a))" => "?a"),
     ]
@@ -108,7 +103,11 @@ pub fn optimize_function(func: &mut MirFunction) -> bool {
         for inst in &block.instructions {
             if let Op::ConstInt(n) = inst.op {
                 const_values.insert(inst.result, n);
-            } else if let Op::UnOp { op: MirUnOp::Neg, operand } = inst.op {
+            } else if let Op::UnOp {
+                op: MirUnOp::Neg,
+                operand,
+            } = inst.op
+            {
                 neg_unops.insert(inst.result, operand);
             }
         }
@@ -194,7 +193,10 @@ pub fn optimize_function(func: &mut MirFunction) -> bool {
                         _ => {}
                     }
                 }
-                Op::UnOp { op: MirUnOp::Neg, operand } => {
+                Op::UnOp {
+                    op: MirUnOp::Neg,
+                    operand,
+                } => {
                     // Check double negation: neg(neg(orig_val)) -> Copy(orig_val)
                     if let Some(&orig_val) = neg_unops.get(operand) {
                         inst.op = Op::Copy(orig_val);

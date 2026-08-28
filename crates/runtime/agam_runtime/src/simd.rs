@@ -92,7 +92,11 @@ pub struct SimdError {
 }
 
 impl SimdError {
-    pub fn new(cause: impl Into<String>, context: impl Into<String>, remedy: impl Into<String>) -> Self {
+    pub fn new(
+        cause: impl Into<String>,
+        context: impl Into<String>,
+        remedy: impl Into<String>,
+    ) -> Self {
         Self {
             cause: cause.into(),
             context: context.into(),
@@ -139,7 +143,10 @@ impl<T, const ALIGN: usize> AlignedBuffer<T, ALIGN> {
         let size = capacity.checked_mul(elem_size).ok_or_else(|| {
             SimdError::new(
                 "Buffer capacity overflow",
-                format!("Capacity {} * element size {} exceeds usize::MAX", capacity, elem_size),
+                format!(
+                    "Capacity {} * element size {} exceeds usize::MAX",
+                    capacity, elem_size
+                ),
                 "Reduce requested vector allocation capacity",
             )
         })?;
@@ -157,7 +164,10 @@ impl<T, const ALIGN: usize> AlignedBuffer<T, ALIGN> {
         if raw.is_null() {
             return Err(SimdError::new(
                 "Out of memory allocating aligned buffer",
-                format!("Failed to allocate {} bytes with {}-byte alignment", size, align),
+                format!(
+                    "Failed to allocate {} bytes with {}-byte alignment",
+                    size, align
+                ),
                 "Ensure sufficient virtual/physical RAM is available",
             ));
         }
@@ -234,7 +244,11 @@ impl<T, const ALIGN: usize> AlignedBuffer<T, ALIGN> {
     /// Push an element to the buffer.
     pub fn push(&mut self, item: T) -> Result<(), SimdError> {
         if self.len >= self.capacity {
-            let new_cap = if self.capacity == 0 { 8 } else { self.capacity * 2 };
+            let new_cap = if self.capacity == 0 {
+                8
+            } else {
+                self.capacity * 2
+            };
             self.grow(new_cap)?;
         }
         unsafe {
@@ -246,17 +260,20 @@ impl<T, const ALIGN: usize> AlignedBuffer<T, ALIGN> {
 
     fn grow(&mut self, new_capacity: usize) -> Result<(), SimdError> {
         let elem_size = std::mem::size_of::<T>();
-        let new_size = new_capacity.checked_mul(elem_size).ok_or_else(|| {
-            SimdError::new("Capacity overflow during growth", "", "")
-        })?;
+        let new_size = new_capacity
+            .checked_mul(elem_size)
+            .ok_or_else(|| SimdError::new("Capacity overflow during growth", "", ""))?;
         let align = ALIGN.max(std::mem::align_of::<T>());
-        let new_layout = Layout::from_size_align(new_size, align).map_err(|e| {
-            SimdError::new(format!("Invalid layout: {}", e), "", "")
-        })?;
+        let new_layout = Layout::from_size_align(new_size, align)
+            .map_err(|e| SimdError::new(format!("Invalid layout: {}", e), "", ""))?;
 
         let new_ptr = unsafe { std::alloc::alloc(new_layout) as *mut T };
         if new_ptr.is_null() {
-            return Err(SimdError::new("Out of memory growing aligned buffer", "", ""));
+            return Err(SimdError::new(
+                "Out of memory growing aligned buffer",
+                "",
+                "",
+            ));
         }
 
         if self.len > 0 {
@@ -322,7 +339,12 @@ pub fn simd_add_f32(a: &[f32], b: &[f32], dst: &mut [f32]) -> Result<(), SimdErr
     if a.len() != b.len() || a.len() != dst.len() {
         return Err(SimdError::new(
             "Slice length mismatch for simd_add_f32",
-            format!("a.len={}, b.len={}, dst.len={}", a.len(), b.len(), dst.len()),
+            format!(
+                "a.len={}, b.len={}, dst.len={}",
+                a.len(),
+                b.len(),
+                dst.len()
+            ),
             "Ensure input and destination slices have identical lengths",
         ));
     }
@@ -373,7 +395,12 @@ pub fn simd_mul_f32(a: &[f32], b: &[f32], dst: &mut [f32]) -> Result<(), SimdErr
     if a.len() != b.len() || a.len() != dst.len() {
         return Err(SimdError::new(
             "Slice length mismatch for simd_mul_f32",
-            format!("a.len={}, b.len={}, dst.len={}", a.len(), b.len(), dst.len()),
+            format!(
+                "a.len={}, b.len={}, dst.len={}",
+                a.len(),
+                b.len(),
+                dst.len()
+            ),
             "Ensure input and destination slices have identical lengths",
         ));
     }
@@ -423,7 +450,13 @@ pub fn simd_fma_f32(a: &[f32], b: &[f32], c: &[f32], dst: &mut [f32]) -> Result<
     if a.len() != b.len() || a.len() != c.len() || a.len() != dst.len() {
         return Err(SimdError::new(
             "Slice length mismatch for simd_fma_f32",
-            format!("a.len={}, b.len={}, c.len={}, dst.len={}", a.len(), b.len(), c.len(), dst.len()),
+            format!(
+                "a.len={}, b.len={}, c.len={}, dst.len={}",
+                a.len(),
+                b.len(),
+                c.len(),
+                dst.len()
+            ),
             "Ensure input and destination slices have identical lengths",
         ));
     }
@@ -536,7 +569,12 @@ pub fn simd_add_f64(a: &[f64], b: &[f64], dst: &mut [f64]) -> Result<(), SimdErr
     if a.len() != b.len() || a.len() != dst.len() {
         return Err(SimdError::new(
             "Slice length mismatch for simd_add_f64",
-            format!("a.len={}, b.len={}, dst.len={}", a.len(), b.len(), dst.len()),
+            format!(
+                "a.len={}, b.len={}, dst.len={}",
+                a.len(),
+                b.len(),
+                dst.len()
+            ),
             "Ensure input and destination slices have identical lengths",
         ));
     }
@@ -586,7 +624,12 @@ pub fn simd_mul_f64(a: &[f64], b: &[f64], dst: &mut [f64]) -> Result<(), SimdErr
     if a.len() != b.len() || a.len() != dst.len() {
         return Err(SimdError::new(
             "Slice length mismatch for simd_mul_f64",
-            format!("a.len={}, b.len={}, dst.len={}", a.len(), b.len(), dst.len()),
+            format!(
+                "a.len={}, b.len={}, dst.len={}",
+                a.len(),
+                b.len(),
+                dst.len()
+            ),
             "Ensure input and destination slices have identical lengths",
         ));
     }
@@ -636,7 +679,13 @@ pub fn simd_fma_f64(a: &[f64], b: &[f64], c: &[f64], dst: &mut [f64]) -> Result<
     if a.len() != b.len() || a.len() != c.len() || a.len() != dst.len() {
         return Err(SimdError::new(
             "Slice length mismatch for simd_fma_f64",
-            format!("a.len={}, b.len={}, c.len={}, dst.len={}", a.len(), b.len(), c.len(), dst.len()),
+            format!(
+                "a.len={}, b.len={}, c.len={}, dst.len={}",
+                a.len(),
+                b.len(),
+                c.len(),
+                dst.len()
+            ),
             "Ensure input and destination slices have identical lengths",
         ));
     }

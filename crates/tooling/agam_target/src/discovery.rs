@@ -60,8 +60,14 @@ pub enum ToolchainDiscoveryError {
 impl std::fmt::Display for ToolchainDiscoveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ClangNotFound { searched_paths, remediation_hint } => {
-                writeln!(f, "error: Native Clang/LLVM toolchain was not found on PATH or Visual Studio.")?;
+            Self::ClangNotFound {
+                searched_paths,
+                remediation_hint,
+            } => {
+                writeln!(
+                    f,
+                    "error: Native Clang/LLVM toolchain was not found on PATH or Visual Studio."
+                )?;
                 if !searched_paths.is_empty() {
                     writeln!(f, "Searched locations:")?;
                     for p in searched_paths {
@@ -71,10 +77,16 @@ impl std::fmt::Display for ToolchainDiscoveryError {
                 write!(f, "Action: {remediation_hint}")
             }
             Self::MsvcNotFound { remediation_hint } => {
-                write!(f, "error: MSVC C++ Build Tools not detected. {remediation_hint}")
+                write!(
+                    f,
+                    "error: MSVC C++ Build Tools not detected. {remediation_hint}"
+                )
             }
             Self::AndroidNdkNotFound => {
-                write!(f, "error: Android NDK not found. Set ANDROID_NDK_HOME or ANDROID_NDK_ROOT.")
+                write!(
+                    f,
+                    "error: Android NDK not found. Set ANDROID_NDK_HOME or ANDROID_NDK_ROOT."
+                )
             }
         }
     }
@@ -116,7 +128,8 @@ pub fn classify_llvm_target_platform(target: Option<&str>) -> LlvmTargetPlatform
         {
             return LlvmTargetPlatform::Ios;
         }
-        if target.contains("apple-darwin") || target.contains("macos") || target.contains("darwin") {
+        if target.contains("apple-darwin") || target.contains("macos") || target.contains("darwin")
+        {
             return LlvmTargetPlatform::MacOs;
         }
         if target.contains("windows") || target.contains("mingw") || target.contains("msvc") {
@@ -347,12 +360,18 @@ pub fn native_llvm_clang_candidates() -> Vec<String> {
         }
     }
     if let Some(standalone_clang) = discover_standalone_windows_llvm_clang() {
-        if !candidates.iter().any(|candidate| candidate == &standalone_clang) {
+        if !candidates
+            .iter()
+            .any(|candidate| candidate == &standalone_clang)
+        {
             candidates.push(standalone_clang);
         }
     }
     for path_candidate in ["clang", "clang++"] {
-        if !candidates.iter().any(|candidate| candidate == path_candidate) {
+        if !candidates
+            .iter()
+            .any(|candidate| candidate == path_candidate)
+        {
             candidates.push(path_candidate.into());
         }
     }
@@ -442,7 +461,9 @@ pub fn find_msvc_toolchain() -> Result<MsvcToolchain, ToolchainDiscoveryError> {
     }
 
     Err(ToolchainDiscoveryError::MsvcNotFound {
-        remediation_hint: "Install Visual Studio Build Tools with the 'Desktop development with C++' workload.".into(),
+        remediation_hint:
+            "Install Visual Studio Build Tools with the 'Desktop development with C++' workload."
+                .into(),
     })
 }
 

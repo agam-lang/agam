@@ -297,7 +297,10 @@ impl<A: Actor> ActorCell<A> {
             match self.receiver.recv_timeout(Duration::from_millis(50)) {
                 Ok(Envelope::User(msg)) => {
                     if let Err(err) = self.behavior.handle(&mut ctx, msg) {
-                        eprintln!("[actor-system] Error handling message in {}: {}", self.id, err);
+                        eprintln!(
+                            "[actor-system] Error handling message in {}: {}",
+                            self.id, err
+                        );
                         break;
                     }
                 }
@@ -464,7 +467,11 @@ mod tests {
     impl Actor for CounterActor {
         type Message = CounterMsg;
 
-        fn handle(&mut self, _ctx: &mut ActorContext<Self::Message>, msg: Self::Message) -> ActorResult {
+        fn handle(
+            &mut self,
+            _ctx: &mut ActorContext<Self::Message>,
+            msg: Self::Message,
+        ) -> ActorResult {
             match msg {
                 CounterMsg::Increment(val) => {
                     self.count += val;
@@ -474,7 +481,11 @@ mod tests {
                     let _ = reply.send(self.count);
                     Ok(())
                 }
-                CounterMsg::Crash => Err(ActorError::new("Simulated crash", "Test handler", "Restart")),
+                CounterMsg::Crash => Err(ActorError::new(
+                    "Simulated crash",
+                    "Test handler",
+                    "Restart",
+                )),
             }
         }
     }
@@ -489,7 +500,9 @@ mod tests {
         assert!(counter_ref.is_alive());
 
         counter_ref.tell(CounterMsg::Increment(5)).expect("tell 5");
-        counter_ref.tell(CounterMsg::Increment(10)).expect("tell 10");
+        counter_ref
+            .tell(CounterMsg::Increment(10))
+            .expect("tell 10");
 
         let total = counter_ref
             .ask(CounterMsg::Get, Duration::from_millis(500))

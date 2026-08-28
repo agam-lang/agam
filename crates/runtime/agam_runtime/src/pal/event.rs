@@ -125,12 +125,10 @@ unsafe impl Sync for EventDemuxer {}
 fn ensure_winsock_initialized() {
     use std::sync::Once;
     static INIT: Once = Once::new();
-    INIT.call_once(|| {
-        unsafe {
-            use windows_sys::Win32::Networking::WinSock::{WSAStartup, WSADATA};
-            let mut data: WSADATA = std::mem::zeroed();
-            let _ = WSAStartup(0x0202, &mut data);
-        }
+    INIT.call_once(|| unsafe {
+        use windows_sys::Win32::Networking::WinSock::{WSADATA, WSAStartup};
+        let mut data: WSADATA = std::mem::zeroed();
+        let _ = WSAStartup(0x0202, &mut data);
     });
 }
 
@@ -534,8 +532,7 @@ impl EventDemuxer {
                 PollTimeout::Duration(d) => d.as_millis().min(i32::MAX as u128) as i32,
             };
 
-            let mut epoll_events: [libc::epoll_event; 128] =
-                unsafe { std::mem::zeroed() };
+            let mut epoll_events: [libc::epoll_event; 128] = unsafe { std::mem::zeroed() };
 
             let nfds = loop {
                 let res = unsafe {
@@ -697,16 +694,11 @@ impl EventDemuxer {
                 PollTimeout::Duration(d) => d.as_millis().min(i32::MAX as u128) as i32,
             };
 
-            let res = unsafe {
-                WSAPoll(
-                    poll_fds.as_mut_ptr(),
-                    poll_fds.len() as u32,
-                    timeout_ms,
-                )
-            };
+            let res = unsafe { WSAPoll(poll_fds.as_mut_ptr(), poll_fds.len() as u32, timeout_ms) };
 
             if res < 0 {
-                let os_err = unsafe { windows_sys::Win32::Networking::WinSock::WSAGetLastError() } as i32;
+                let os_err =
+                    unsafe { windows_sys::Win32::Networking::WinSock::WSAGetLastError() } as i32;
                 return Err(PalEventError::new(
                     os_err,
                     "WSAPoll syscall returned an error",
@@ -793,8 +785,8 @@ impl Drop for EventDemuxer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{TcpListener, TcpStream};
     use std::io::Write;
+    use std::net::{TcpListener, TcpStream};
 
     #[test]
     fn test_event_demuxer_creation_and_teardown() {
@@ -819,7 +811,10 @@ mod tests {
         let mut demuxer = EventDemuxer::new().unwrap_or_else(|_| unreachable!());
         let mut events = Vec::new();
         let start = std::time::Instant::now();
-        let res = demuxer.poll(&mut events, PollTimeout::Duration(Duration::from_millis(50)));
+        let res = demuxer.poll(
+            &mut events,
+            PollTimeout::Duration(Duration::from_millis(50)),
+        );
         let elapsed = start.elapsed();
 
         assert!(res.is_ok());
@@ -876,7 +871,10 @@ mod tests {
         assert!(write_res.is_ok());
 
         let mut events = Vec::new();
-        let poll_res = demuxer.poll(&mut events, PollTimeout::Duration(Duration::from_millis(200)));
+        let poll_res = demuxer.poll(
+            &mut events,
+            PollTimeout::Duration(Duration::from_millis(200)),
+        );
         assert!(poll_res.is_ok());
         if let Ok(count) = poll_res {
             assert!(count >= 1);

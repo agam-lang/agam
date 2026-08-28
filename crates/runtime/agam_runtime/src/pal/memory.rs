@@ -121,8 +121,8 @@ impl PageAllocation {
         #[cfg(windows)]
         {
             use windows_sys::Win32::System::Memory::{
-                VirtualAlloc, MEM_COMMIT, MEM_LARGE_PAGES, MEM_RESERVE,
-                PAGE_EXECUTE_READ, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
+                MEM_COMMIT, MEM_LARGE_PAGES, MEM_RESERVE, PAGE_EXECUTE_READ, PAGE_NOACCESS,
+                PAGE_READONLY, PAGE_READWRITE, VirtualAlloc,
             };
 
             let win_prot = match protection {
@@ -137,20 +137,17 @@ impl PageAllocation {
                 alloc_type |= MEM_LARGE_PAGES;
             }
 
-            let raw_ptr = unsafe {
-                VirtualAlloc(
-                    std::ptr::null(),
-                    layout_size,
-                    alloc_type,
-                    win_prot,
-                )
-            };
+            let raw_ptr =
+                unsafe { VirtualAlloc(std::ptr::null(), layout_size, alloc_type, win_prot) };
 
             if raw_ptr.is_null() {
                 let os_err = unsafe { windows_sys::Win32::Foundation::GetLastError() } as i32;
                 return Err(PalMemoryError::new(
                     os_err,
-                    format!("VirtualAlloc failed for {} bytes with protection {:?}", layout_size, protection),
+                    format!(
+                        "VirtualAlloc failed for {} bytes with protection {:?}",
+                        layout_size, protection
+                    ),
                     "OS failed to reserve/commit virtual address space",
                     "Check system virtual memory availability and protection permissions",
                 ));
@@ -188,7 +185,10 @@ impl PageAllocation {
                 let os_err = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
                 return Err(PalMemoryError::new(
                     os_err,
-                    format!("mmap failed for {} bytes with protection {:?}", layout_size, protection),
+                    format!(
+                        "mmap failed for {} bytes with protection {:?}",
+                        layout_size, protection
+                    ),
                     "POSIX kernel failed to allocate anonymous memory pages",
                     "Check process memory limits (rlimit) and address space exhaustion",
                 ));
@@ -220,7 +220,10 @@ impl PageAllocation {
     }
 
     /// Change the page protection flags of this existing virtual memory mapping.
-    pub fn set_protection(&mut self, new_protection: MemoryProtection) -> Result<(), PalMemoryError> {
+    pub fn set_protection(
+        &mut self,
+        new_protection: MemoryProtection,
+    ) -> Result<(), PalMemoryError> {
         if self.ptr.is_null() || self.layout_size == 0 {
             return Err(PalMemoryError::new(
                 0,
@@ -233,8 +236,8 @@ impl PageAllocation {
         #[cfg(windows)]
         {
             use windows_sys::Win32::System::Memory::{
-                VirtualProtect, PAGE_EXECUTE_READ, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
-                PAGE_PROTECTION_FLAGS,
+                PAGE_EXECUTE_READ, PAGE_NOACCESS, PAGE_PROTECTION_FLAGS, PAGE_READONLY,
+                PAGE_READWRITE, VirtualProtect,
             };
 
             let win_prot = match new_protection {
@@ -246,12 +249,7 @@ impl PageAllocation {
 
             let mut old_prot: PAGE_PROTECTION_FLAGS = 0;
             let res = unsafe {
-                VirtualProtect(
-                    self.ptr.cast(),
-                    self.layout_size,
-                    win_prot,
-                    &mut old_prot,
-                )
+                VirtualProtect(self.ptr.cast(), self.layout_size, win_prot, &mut old_prot)
             };
 
             if res == 0 {
@@ -356,7 +354,7 @@ impl Drop for PageAllocation {
 
         #[cfg(windows)]
         unsafe {
-            use windows_sys::Win32::System::Memory::{VirtualFree, MEM_RELEASE};
+            use windows_sys::Win32::System::Memory::{MEM_RELEASE, VirtualFree};
             VirtualFree(self.ptr.cast(), 0, MEM_RELEASE);
         }
 
@@ -376,11 +374,8 @@ mod tests {
 
     #[test]
     fn test_page_allocation_write_and_drop() {
-        let alloc_res = PageAllocation::allocate(
-            4096,
-            MemoryProtection::ReadWrite,
-            AllocationFlags::Standard,
-        );
+        let alloc_res =
+            PageAllocation::allocate(4096, MemoryProtection::ReadWrite, AllocationFlags::Standard);
         assert!(alloc_res.is_ok());
         if let Ok(mut alloc) = alloc_res {
             assert!(alloc.len() >= 4096);
@@ -398,11 +393,8 @@ mod tests {
 
     #[test]
     fn test_page_size_alignment_rounding() {
-        let alloc_res = PageAllocation::allocate(
-            100,
-            MemoryProtection::ReadWrite,
-            AllocationFlags::Standard,
-        );
+        let alloc_res =
+            PageAllocation::allocate(100, MemoryProtection::ReadWrite, AllocationFlags::Standard);
         assert!(alloc_res.is_ok());
         if let Ok(alloc) = alloc_res {
             let page_sz = system_page_size();
@@ -412,11 +404,8 @@ mod tests {
 
     #[test]
     fn test_zero_size_allocation_fails() {
-        let alloc_res = PageAllocation::allocate(
-            0,
-            MemoryProtection::ReadWrite,
-            AllocationFlags::Standard,
-        );
+        let alloc_res =
+            PageAllocation::allocate(0, MemoryProtection::ReadWrite, AllocationFlags::Standard);
         assert!(alloc_res.is_err());
         if let Err(e) = alloc_res {
             assert!(e.to_string().contains("PAL Memory Diagnostic"));
@@ -425,11 +414,8 @@ mod tests {
 
     #[test]
     fn test_protection_transition() {
-        let alloc_res = PageAllocation::allocate(
-            4096,
-            MemoryProtection::ReadWrite,
-            AllocationFlags::Standard,
-        );
+        let alloc_res =
+            PageAllocation::allocate(4096, MemoryProtection::ReadWrite, AllocationFlags::Standard);
         assert!(alloc_res.is_ok());
         if let Ok(mut alloc) = alloc_res {
             let slice = alloc.as_mut_slice();

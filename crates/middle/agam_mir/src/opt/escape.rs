@@ -130,7 +130,9 @@ fn analyze_and_mutate_function_escape(
             // Terminator escapes
             match &block.terminator {
                 Terminator::Return(ret_val) => {
-                    let cur = value_escapes.entry(*ret_val).or_insert(EscapeState::NoEscape);
+                    let cur = value_escapes
+                        .entry(*ret_val)
+                        .or_insert(EscapeState::NoEscape);
                     if *cur < EscapeState::GlobalEscape {
                         *cur = EscapeState::GlobalEscape;
                         changed = true;
@@ -158,7 +160,10 @@ fn analyze_and_mutate_function_escape(
                         }
                     }
                     Op::StoreIndex { object, value, .. } => {
-                        let obj_esc = value_escapes.get(object).copied().unwrap_or(EscapeState::NoEscape);
+                        let obj_esc = value_escapes
+                            .get(object)
+                            .copied()
+                            .unwrap_or(EscapeState::NoEscape);
                         let val_esc = value_escapes.entry(*value).or_insert(EscapeState::NoEscape);
                         if obj_esc > *val_esc {
                             *val_esc = obj_esc;
@@ -173,8 +178,13 @@ fn analyze_and_mutate_function_escape(
                         }
                     }
                     Op::Copy(src) => {
-                        let src_esc = value_escapes.get(src).copied().unwrap_or(EscapeState::NoEscape);
-                        let dst_esc = value_escapes.entry(instr.result).or_insert(EscapeState::NoEscape);
+                        let src_esc = value_escapes
+                            .get(src)
+                            .copied()
+                            .unwrap_or(EscapeState::NoEscape);
+                        let dst_esc = value_escapes
+                            .entry(instr.result)
+                            .or_insert(EscapeState::NoEscape);
                         if src_esc > *dst_esc {
                             *dst_esc = src_esc;
                             changed = true;
@@ -202,14 +212,19 @@ fn analyze_and_mutate_function_escape(
     let mut skipped = Vec::new();
 
     for &alloc in &allocations {
-        let escape = value_escapes.get(&alloc).copied().unwrap_or(EscapeState::GlobalEscape);
+        let escape = value_escapes
+            .get(&alloc)
+            .copied()
+            .unwrap_or(EscapeState::GlobalEscape);
         if escape == EscapeState::NoEscape {
             non_escaping_allocations.push(alloc);
             promoted_locals.push(format!("%{}", alloc.0));
         } else {
             let reason = match escape {
                 EscapeState::ArgEscape => "passed to callee argument",
-                EscapeState::GlobalEscape => "escapes function frame (returned, stored globally, or impure callee)",
+                EscapeState::GlobalEscape => {
+                    "escapes function frame (returned, stored globally, or impure callee)"
+                }
                 EscapeState::NoEscape => "unknown",
             };
             skipped.push((format!("%{}", alloc.0), reason.to_string()));

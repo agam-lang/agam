@@ -267,12 +267,18 @@ fn main() -> i32 {
         let mut engine = AstMutationEngine::new(999);
         for _ in 0..50 {
             let expr = engine.generate_expression(4);
-            let fn_src = format!("fn test_fuzz_expr() -> i32 {{\n    let x = 10;\n    let res = {expr};\n    return 0;\n}}\n");
+            let fn_src = format!(
+                "fn test_fuzz_expr() -> i32 {{\n    let x = 10;\n    let res = {expr};\n    return 0;\n}}\n"
+            );
             let outcome = CompilerPipelineFuzzer::test_source(&fn_src);
             // Must never panic/crash
             match outcome {
-                PipelineFuzzOutcome::Success | PipelineFuzzOutcome::ParseError { .. } | PipelineFuzzOutcome::SemanticError { .. } => {}
-                PipelineFuzzOutcome::Panic { message } => assert!(false, "Parser panicked on grammar derivation: {}", message),
+                PipelineFuzzOutcome::Success
+                | PipelineFuzzOutcome::ParseError { .. }
+                | PipelineFuzzOutcome::SemanticError { .. } => {}
+                PipelineFuzzOutcome::Panic { message } => {
+                    assert!(false, "Parser panicked on grammar derivation: {}", message)
+                }
             }
         }
     }

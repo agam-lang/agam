@@ -60,13 +60,14 @@ pub struct Regex {
 impl Regex {
     /// Compile a regex pattern string into a verified DFA/NFA engine.
     pub fn compile(pattern: &str) -> Result<Self, RegexError> {
-        InternalRegex::new(pattern).map(|inner| Self { inner }).map_err(|e| {
-            RegexError {
+        InternalRegex::new(pattern)
+            .map(|inner| Self { inner })
+            .map_err(|e| RegexError {
                 cause: format!("Invalid regular expression syntax: {}", e),
                 context: format!("Pattern '{}' failed regular expression validation", pattern),
-                remedy: "Verify escape sequences, unclosed delimiters, and character classes".to_string(),
-            }
-        })
+                remedy: "Verify escape sequences, unclosed delimiters, and character classes"
+                    .to_string(),
+            })
     }
 
     /// Check if the regular expression matches any portion of `text`.

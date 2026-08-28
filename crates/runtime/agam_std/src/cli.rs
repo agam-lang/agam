@@ -123,7 +123,10 @@ impl App {
             return Err(CliError::new(
                 CliErrorKind::InvalidDefinition,
                 format!("Duplicate short flag '-{}'", short),
-                format!("Short flag '-{}' was already defined on application '{}'", short, self.name),
+                format!(
+                    "Short flag '-{}' was already defined on application '{}'",
+                    short, self.name
+                ),
                 "Assign a unique short character flag to each argument",
             ));
         }
@@ -131,7 +134,10 @@ impl App {
             return Err(CliError::new(
                 CliErrorKind::InvalidDefinition,
                 format!("Duplicate long argument name '--{}'", long),
-                format!("Argument '--{}' was already defined on application '{}'", long, self.name),
+                format!(
+                    "Argument '--{}' was already defined on application '{}'",
+                    long, self.name
+                ),
                 "Assign a unique long name to each argument",
             ));
         }
@@ -149,17 +155,15 @@ impl App {
 
     /// Register a boolean flag (switch) with short flag, long name, and description.
     /// Returns `Err(CliError)` if the short or long flag is already registered.
-    pub fn flag(
-        &mut self,
-        short: char,
-        long: &str,
-        desc: &str,
-    ) -> Result<&mut Self, CliError> {
+    pub fn flag(&mut self, short: char, long: &str, desc: &str) -> Result<&mut Self, CliError> {
         if self.seen_shorts.contains(&short) {
             return Err(CliError::new(
                 CliErrorKind::InvalidDefinition,
                 format!("Duplicate short flag '-{}'", short),
-                format!("Short flag '-{}' was already defined on application '{}'", short, self.name),
+                format!(
+                    "Short flag '-{}' was already defined on application '{}'",
+                    short, self.name
+                ),
                 "Assign a unique short character flag to each switch",
             ));
         }
@@ -167,7 +171,10 @@ impl App {
             return Err(CliError::new(
                 CliErrorKind::InvalidDefinition,
                 format!("Duplicate long flag name '--{}'", long),
-                format!("Flag '--{}' was already defined on application '{}'", long, self.name),
+                format!(
+                    "Flag '--{}' was already defined on application '{}'",
+                    long, self.name
+                ),
                 "Assign a unique long name to each switch",
             ));
         }
@@ -294,7 +301,10 @@ mod tests {
         assert!(r1.is_ok());
 
         let r2 = app.flag('i', "interactive", "Interactive mode");
-        assert!(r2.is_err(), "Duplicate short flag '-i' must return Err(CliError)");
+        assert!(
+            r2.is_err(),
+            "Duplicate short flag '-i' must return Err(CliError)"
+        );
         if let Err(e) = r2 {
             assert_eq!(e.kind, CliErrorKind::InvalidDefinition);
         }
@@ -307,7 +317,10 @@ mod tests {
         assert!(r1.is_ok());
 
         let r2 = app.arg('x', "input", "Another input file", false);
-        assert!(r2.is_err(), "Duplicate long name '--input' must return Err(CliError)");
+        assert!(
+            r2.is_err(),
+            "Duplicate long name '--input' must return Err(CliError)"
+        );
         if let Err(e) = r2 {
             assert_eq!(e.kind, CliErrorKind::InvalidDefinition);
         }
@@ -320,11 +333,7 @@ mod tests {
         let _ = app.arg('o', "output", "Output binary path", true);
         let _ = app.flag('v', "verbose", "Verbose diagnostics");
 
-        let args = vec![
-            "-o".to_string(),
-            "dist/bin".to_string(),
-            "-v".to_string(),
-        ];
+        let args = vec!["-o".to_string(), "dist/bin".to_string(), "-v".to_string()];
         let parsed = app.parse_from(&args);
         assert!(parsed.is_ok());
         if let Ok(p) = parsed {

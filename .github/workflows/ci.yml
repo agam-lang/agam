@@ -49,8 +49,12 @@ jobs:
       - name: Install Rust Nightly with Miri
         uses: dtolnay/rust-toolchain@nightly
         with:
-          components: miri
+          components: miri, rust-src
       - name: Run Miri on agam_runtime
-        run: cargo miri test -p agam_runtime --lib -- simd::tests
+        run: cargo miri test -p agam_runtime --lib -- simd::tests actor::tests
+        env:
+          MIRIFLAGS: "-Zmiri-disable-isolation"
       - name: Run Miri on agam_ffi
         run: cargo miri test -p agam_ffi --lib
+        env:
+          MIRIFLAGS: "-Zmiri-disable-isolation"

@@ -1,10 +1,10 @@
 //! Headless compiler session pipeline orchestrator.
 
-use std::path::PathBuf;
+use crate::config::SessionConfig;
 use agam_ast::Module;
 use agam_errors::{Diagnostic, Label, SourceId};
 use agam_mir::ir::MirModule;
-use crate::config::SessionConfig;
+use std::path::PathBuf;
 
 #[derive(Debug)]
 pub struct CompiledArtifact {
@@ -27,7 +27,11 @@ impl CompilerSession {
     }
 
     /// Parse source string into AST module.
-    pub fn parse_source(&mut self, source: &str, source_id: SourceId) -> Result<Module, Vec<Diagnostic>> {
+    pub fn parse_source(
+        &mut self,
+        source: &str,
+        source_id: SourceId,
+    ) -> Result<Module, Vec<Diagnostic>> {
         let tokens = agam_lexer::tokenize(source, source_id);
 
         match agam_parser::parse(tokens, source_id) {

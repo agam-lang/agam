@@ -86,12 +86,16 @@ impl DateTime {
 
     /// Construct a UTC `DateTime` from a Unix timestamp in seconds.
     pub fn from_timestamp_secs(secs: i64) -> Option<Self> {
-        Utc.timestamp_opt(secs, 0).single().map(|dt| Self { inner: dt })
+        Utc.timestamp_opt(secs, 0)
+            .single()
+            .map(|dt| Self { inner: dt })
     }
 
     /// Construct a UTC `DateTime` from a Unix timestamp in milliseconds.
     pub fn from_timestamp_millis(millis: i64) -> Option<Self> {
-        Utc.timestamp_millis_opt(millis).single().map(|dt| Self { inner: dt })
+        Utc.timestamp_millis_opt(millis)
+            .single()
+            .map(|dt| Self { inner: dt })
     }
 
     /// Format this date/time as an ISO-8601 (RFC 3339) string.

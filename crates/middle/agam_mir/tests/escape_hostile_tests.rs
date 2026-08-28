@@ -4,7 +4,9 @@
 
 use std::collections::HashMap;
 
-use agam_mir::ir::{BasicBlock, BlockId, Instruction, MirFunction, MirModule, MirParam, Op, Terminator, ValueId};
+use agam_mir::ir::{
+    BasicBlock, BlockId, Instruction, MirFunction, MirModule, MirParam, Op, Terminator, ValueId,
+};
 use agam_mir::opt::escape::{self, CalleePurityInfo, EscapeState};
 use agam_mir::verifier::MirVerifier;
 use agam_sema::symbol::TypeId;
@@ -88,10 +90,14 @@ fn test_hostile_recursive_return_escape() {
         struct_layouts: HashMap::new(),
     };
 
-    let (escape_res, promo_res) = escape::run_escape_and_promote(&mut module, &CalleePurityInfo::default());
+    let (escape_res, promo_res) =
+        escape::run_escape_and_promote(&mut module, &CalleePurityInfo::default());
 
     // Invariant: Must NOT promote v_local because it escapes through return in b_base
-    assert_eq!(promo_res.total_promoted, 0, "Escaping recursive allocation must decline promotion");
+    assert_eq!(
+        promo_res.total_promoted, 0,
+        "Escaping recursive allocation must decline promotion"
+    );
     let fn_summary_opt = escape_res.functions.get("recursive_alloc");
     assert!(fn_summary_opt.is_some(), "missing summary");
     if let Some(fn_summary) = fn_summary_opt {
@@ -163,7 +169,8 @@ fn test_hostile_escaping_object_store() {
         struct_layouts: HashMap::new(),
     };
 
-    let (escape_res, promo_res) = escape::run_escape_and_promote(&mut module, &CalleePurityInfo::default());
+    let (escape_res, promo_res) =
+        escape::run_escape_and_promote(&mut module, &CalleePurityInfo::default());
 
     // Both container and inner payload must decline promotion
     assert_eq!(promo_res.total_promoted, 0);
@@ -227,7 +234,8 @@ fn test_hostile_effect_boundary_crossing() {
         struct_layouts: HashMap::new(),
     };
 
-    let (escape_res, promo_res) = escape::run_escape_and_promote(&mut module, &CalleePurityInfo::default());
+    let (escape_res, promo_res) =
+        escape::run_escape_and_promote(&mut module, &CalleePurityInfo::default());
 
     // Effect boundary escapes globally to the runtime handler
     assert_eq!(promo_res.total_promoted, 0);
@@ -307,7 +315,8 @@ fn test_happy_path_temporary_promotion() {
         struct_layouts: HashMap::new(),
     };
 
-    let (escape_res, promo_res) = escape::run_escape_and_promote(&mut module, &CalleePurityInfo::default());
+    let (escape_res, promo_res) =
+        escape::run_escape_and_promote(&mut module, &CalleePurityInfo::default());
 
     // Both temporary structs are non-escaping and promoted to stack!
     assert_eq!(promo_res.total_promoted, 2);

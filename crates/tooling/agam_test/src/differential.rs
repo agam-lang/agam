@@ -28,8 +28,8 @@ pub fn compile_to_mir(src: &str) -> Result<agam_mir::ir::MirModule, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agam_codegen::llvm_emitter::emit_llvm;
     use crate::run_source;
+    use agam_codegen::llvm_emitter::emit_llvm;
 
     #[test]
     fn test_differential_arithmetic_and_control_flow() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,7 +57,10 @@ fn test_compute_range() -> bool:
             llvm_ir.contains("@agam_compute(") || llvm_ir.contains("@compute("),
             "LLVM must emit compute function signature"
         );
-        assert!(llvm_ir.contains("add ") || llvm_ir.contains("add nsw "), "LLVM must emit addition");
+        assert!(
+            llvm_ir.contains("add ") || llvm_ir.contains("add nsw "),
+            "LLVM must emit addition"
+        );
         Ok(())
     }
 

@@ -632,7 +632,10 @@ fn parse_enum_decl(rest: &str) -> Result<(CEnumDecl, &str), BindgenError> {
             let val_str = v_clean[eq_pos + 1..].trim();
             let val = val_str.parse::<i64>().map_err(|_| {
                 BindgenError::new(
-                    format!("Invalid integer value '{}' for enum variant '{}'", val_str, v_name),
+                    format!(
+                        "Invalid integer value '{}' for enum variant '{}'",
+                        val_str, v_name
+                    ),
                     format!("Failed to parse enum variant value in '{}'", enum_name),
                     "Use valid integer literals for enum variant assignments",
                 )

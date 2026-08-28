@@ -1249,9 +1249,14 @@ impl AgamJit {
                     pointer_type,
                 )
             }
-            Op::Syscall { .. } => {
-                Ok(default_value(builder, JitType::Int { bits: 64, signed: true }, pointer_type))
-            }
+            Op::Syscall { .. } => Ok(default_value(
+                builder,
+                JitType::Int {
+                    bits: 64,
+                    signed: true,
+                },
+                pointer_type,
+            )),
         }
     }
 

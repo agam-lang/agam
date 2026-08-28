@@ -648,21 +648,34 @@ pub(crate) fn run_cli() {
 
         Command::Explain { code, lattice } => {
             if let Some(target) = lattice {
-                println!("\x1b[1;36mSandhi Trait & Type Lattice Hierarchy\x1b[0m (`{}`):", target);
+                println!(
+                    "\x1b[1;36mSandhi Trait & Type Lattice Hierarchy\x1b[0m (`{}`):",
+                    target
+                );
                 println!("  ├── ⊤ (Universal Top / Unconstrained)");
                 println!("  ├── Trait Bounds: [Eq, Ord, Clone, Send, Sync]");
-                println!("  └── Coherence: SMT-verified acyclic (Cooper-Harvey-Kennedy & Sandhi SMT)");
+                println!(
+                    "  └── Coherence: SMT-verified acyclic (Cooper-Harvey-Kennedy & Sandhi SMT)"
+                );
             } else if let Some(code) = code {
                 match agam_errors::explain_code(&code) {
                     Some(explanation) => {
-                        println!("\x1b[1;36mError Explanation [{}]\x1b[0m:\n{}", code, explanation);
+                        println!(
+                            "\x1b[1;36mError Explanation [{}]\x1b[0m:\n{}",
+                            code, explanation
+                        );
                     }
                     None => {
-                        println!("\x1b[1;33mNote\x1b[0m: No detailed explanation found for code `{}`. All Agam errors follow Nyāya structure (cause, context, remedy).", code);
+                        println!(
+                            "\x1b[1;33mNote\x1b[0m: No detailed explanation found for code `{}`. All Agam errors follow Nyāya structure (cause, context, remedy).",
+                            code
+                        );
                     }
                 }
             } else {
-                eprintln!("\x1b[1;31merror\x1b[0m: Specify an error code (e.g., `agamc explain E0001`) or `--lattice <name>`");
+                eprintln!(
+                    "\x1b[1;31merror\x1b[0m: Specify an error code (e.g., `agamc explain E0001`) or `--lattice <name>`"
+                );
                 process::exit(1);
             }
         }
@@ -972,7 +985,13 @@ pub(crate) fn run_cli() {
             };
 
             let spec = agam_pkg::DependencySpec {
-                version: version.or_else(|| if path.is_none() { Some("0.1.0".into()) } else { None }),
+                version: version.or_else(|| {
+                    if path.is_none() {
+                        Some("0.1.0".into())
+                    } else {
+                        None
+                    }
+                }),
                 path: path.map(|p| p.to_string_lossy().to_string()),
                 ..Default::default()
             };
@@ -990,7 +1009,10 @@ pub(crate) fn run_cli() {
 
             let toml_str = toml::to_string_pretty(&manifest).unwrap_or_default();
             if let Err(e) = std::fs::write(&manifest_path, toml_str) {
-                eprintln!("\x1b[1;31merror\x1b[0m: failed to write `{}`: {e}", manifest_path.display());
+                eprintln!(
+                    "\x1b[1;31merror\x1b[0m: failed to write `{}`: {e}",
+                    manifest_path.display()
+                );
                 process::exit(1);
             }
 
@@ -1085,7 +1107,11 @@ pub(crate) fn run_cli() {
             }
         }
 
-        Command::Bench { files, filter, warmup } => {
+        Command::Bench {
+            files,
+            filter,
+            warmup,
+        } => {
             let files = match agam_pkg::expand_agam_inputs(files) {
                 Ok(files) => files,
                 Err(e) => {
@@ -1094,7 +1120,10 @@ pub(crate) fn run_cli() {
                 }
             };
 
-            println!("\x1b[1;36mrunning\x1b[0m {} benchmark suite(s)...", files.len());
+            println!(
+                "\x1b[1;36mrunning\x1b[0m {} benchmark suite(s)...",
+                files.len()
+            );
             let harness = agam_test::bench::BenchmarkHarness::new(agam_test::bench::BenchConfig {
                 warmup_iterations: warmup,
                 min_measurement_time: std::time::Duration::from_millis(50),
@@ -1123,21 +1152,39 @@ pub(crate) fn run_cli() {
 
                 println!(
                     "bench {}: {:>10.2} ns/iter (median: {:>10.2} ns, stddev: {:>8.2} ns, {:>10.0} ops/sec)",
-                    result.name, result.mean_time_ns, result.median_time_ns, result.std_dev_ns, result.ops_per_sec
+                    result.name,
+                    result.mean_time_ns,
+                    result.median_time_ns,
+                    result.std_dev_ns,
+                    result.ops_per_sec
                 );
             }
         }
 
-        Command::Doc { path, output, open, json } => {
+        Command::Doc {
+            path,
+            output,
+            open,
+            json,
+        } => {
             let root_path = path.unwrap_or_else(|| PathBuf::from("."));
             let out_dir = output.unwrap_or_else(|| PathBuf::from("target/doc"));
             let _ = std::fs::create_dir_all(&out_dir);
 
-            println!("\x1b[1;36mgenerating\x1b[0m documentation for `{}`...", root_path.display());
+            println!(
+                "\x1b[1;36mgenerating\x1b[0m documentation for `{}`...",
+                root_path.display()
+            );
             if json {
-                println!("documentation index written to `{}/search-index.json`", out_dir.display());
+                println!(
+                    "documentation index written to `{}/search-index.json`",
+                    out_dir.display()
+                );
             } else {
-                println!("documentation generated at `{}/index.html`", out_dir.display());
+                println!(
+                    "documentation generated at `{}/index.html`",
+                    out_dir.display()
+                );
                 if open {
                     println!("opening documentation in default browser...");
                 }
@@ -1166,7 +1213,11 @@ pub(crate) fn run_cli() {
                             total_warnings += 1;
                             eprintln!(
                                 "\x1b[1;33mwarning[{}]\x1b[0m: {} in `{}` (span {}:{})",
-                                d.code, d.message, file.display(), d.span.start, d.span.end
+                                d.code,
+                                d.message,
+                                file.display(),
+                                d.span.start,
+                                d.span.end
                             );
                             if let Some(sugg) = d.suggestion {
                                 eprintln!("  \x1b[1;36mhelp\x1b[0m: {sugg}");
@@ -1179,7 +1230,10 @@ pub(crate) fn run_cli() {
             if total_warnings > 0 {
                 println!("\x1b[1;33mlint\x1b[0m: found {total_warnings} warning(s).");
             } else {
-                println!("\x1b[1;32mlint\x1b[0m: 0 warnings found across {} file(s).", inputs.len());
+                println!(
+                    "\x1b[1;32mlint\x1b[0m: 0 warnings found across {} file(s).",
+                    inputs.len()
+                );
             }
         }
 
@@ -1215,7 +1269,11 @@ pub(crate) fn run_cli() {
                 for adv in &report.vulnerabilities_found {
                     eprintln!(
                         "\x1b[1;31m[{}]\x1b[0m {} in `{}` (vulnerable: {}, patch: {})",
-                        adv.severity, adv.title, adv.package, adv.vulnerable_version_range, adv.patched_version
+                        adv.severity,
+                        adv.title,
+                        adv.package,
+                        adv.vulnerable_version_range,
+                        adv.patched_version
                     );
                 }
             }
@@ -1244,7 +1302,9 @@ pub(crate) fn run_cli() {
             let manifest = match &session.manifest {
                 Some(m) => m,
                 None => {
-                    eprintln!("\x1b[1;31merror\x1b[0m: no `agam.toml` manifest found in this directory");
+                    eprintln!(
+                        "\x1b[1;31merror\x1b[0m: no `agam.toml` manifest found in this directory"
+                    );
                     process::exit(1);
                 }
             };
@@ -1265,7 +1325,10 @@ pub(crate) fn run_cli() {
             let formatted = serde_json::to_string_pretty(&sbom_json).unwrap_or_default();
             if let Some(out_path) = output {
                 if let Err(e) = std::fs::write(&out_path, &formatted) {
-                    eprintln!("\x1b[1;31merror\x1b[0m: failed to write `{}`: {e}", out_path.display());
+                    eprintln!(
+                        "\x1b[1;31merror\x1b[0m: failed to write `{}`: {e}",
+                        out_path.display()
+                    );
                     process::exit(1);
                 }
                 println!("SBOM written to `{}`", out_path.display());
@@ -1290,7 +1353,8 @@ pub(crate) fn run_cli() {
                 }
             };
 
-            let vendor_dir = output.unwrap_or_else(|| session.layout.root.join(".agam").join("vendor"));
+            let vendor_dir =
+                output.unwrap_or_else(|| session.layout.root.join(".agam").join("vendor"));
             match agam_pkg::VendorManager::vendor_lockfile(&lockfile, &vendor_dir) {
                 Ok(report) => {
                     println!(
@@ -1332,7 +1396,10 @@ pub(crate) fn run_cli() {
 
         Command::Doctest { path } => {
             let target_path = path.unwrap_or_else(|| PathBuf::from("."));
-            println!("\x1b[1;36mrunning doctests\x1b[0m for `{}`...", target_path.display());
+            println!(
+                "\x1b[1;36mrunning doctests\x1b[0m for `{}`...",
+                target_path.display()
+            );
             println!("0 doctests run, 0 passed, 0 failed");
         }
 

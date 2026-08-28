@@ -543,13 +543,19 @@ mod tests {
     #[test]
     fn sandbox_guard_watchdog_signals_timeout() {
         let policy = SandboxPolicy {
-            timeout_ms: 200, // Very short timeout.
+            timeout_ms: 100, // Short timeout.
             ..SandboxPolicy::default()
         };
         let guard = SandboxGuard::acquire(&policy).expect("sandbox should acquire");
-        // Wait for the watchdog to fire.
-        std::thread::sleep(Duration::from_millis(400));
-        assert!(guard.is_timed_out());
+        let mut timed_out = false;
+        for _ in 0..50 {
+            if guard.is_timed_out() {
+                timed_out = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(timed_out, "Sandbox guard watchdog should trigger timeout");
         drop(guard);
     }
 

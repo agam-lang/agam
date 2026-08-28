@@ -118,9 +118,10 @@ impl PalTcpListener {
 
     /// Accept a pending non-blocking incoming TCP connection.
     pub fn accept(&self) -> Result<(PalTcpStream, SocketAddr), PalNetError> {
-        let (stream, peer_addr) = self.inner.accept().map_err(|e| {
-            PalNetError::from_io("Failed to accept non-blocking TCP connection", e)
-        })?;
+        let (stream, peer_addr) = self
+            .inner
+            .accept()
+            .map_err(|e| PalNetError::from_io("Failed to accept non-blocking TCP connection", e))?;
 
         stream.set_nonblocking(true).map_err(|e| {
             PalNetError::from_io("Failed to set accepted TCP stream to non-blocking mode", e)
@@ -258,9 +259,9 @@ impl PalTcpStream {
 
     /// Set non-blocking mode on the stream.
     pub fn set_nonblocking(&self, nonblocking: bool) -> Result<(), PalNetError> {
-        self.inner
-            .set_nonblocking(nonblocking)
-            .map_err(|e| PalNetError::from_io("Failed to configure non-blocking state on TCP stream", e))
+        self.inner.set_nonblocking(nonblocking).map_err(|e| {
+            PalNetError::from_io("Failed to configure non-blocking state on TCP stream", e)
+        })
     }
 
     /// Return the raw OS handle for registration in an `EventDemuxer`.
@@ -358,9 +359,9 @@ impl PalUdpSocket {
 
     /// Set non-blocking mode on the UDP socket.
     pub fn set_nonblocking(&self, nonblocking: bool) -> Result<(), PalNetError> {
-        self.inner
-            .set_nonblocking(nonblocking)
-            .map_err(|e| PalNetError::from_io("Failed to configure non-blocking state on UDP socket", e))
+        self.inner.set_nonblocking(nonblocking).map_err(|e| {
+            PalNetError::from_io("Failed to configure non-blocking state on UDP socket", e)
+        })
     }
 
     /// Return the raw OS handle for registration in an `EventDemuxer`.
@@ -396,8 +397,8 @@ impl PalUdpSocket {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use crate::pal::event::PollTimeout;
+    use std::time::Duration;
 
     #[test]
     fn test_tcp_listener_bind_and_local_addr() {
@@ -434,11 +435,15 @@ mod tests {
         let listener_token = Token(1);
         let client_token = Token(2);
 
-        let reg_listener = listener.register_with(&mut demuxer, listener_token, EventInterest::READABLE);
+        let reg_listener =
+            listener.register_with(&mut demuxer, listener_token, EventInterest::READABLE);
         assert!(reg_listener.is_ok());
 
         let mut events = Vec::new();
-        let poll_res = demuxer.poll(&mut events, PollTimeout::Duration(Duration::from_millis(100)));
+        let poll_res = demuxer.poll(
+            &mut events,
+            PollTimeout::Duration(Duration::from_millis(100)),
+        );
         assert!(poll_res.is_ok());
 
         let (mut server_stream, _) = match listener.accept() {
@@ -447,7 +452,8 @@ mod tests {
         };
 
         let server_token = Token(3);
-        let reg_server = server_stream.register_with(&mut demuxer, server_token, EventInterest::READABLE);
+        let reg_server =
+            server_stream.register_with(&mut demuxer, server_token, EventInterest::READABLE);
         assert!(reg_server.is_ok());
 
         let reg_client = client.register_with(&mut demuxer, client_token, EventInterest::READABLE);
@@ -458,7 +464,10 @@ mod tests {
         let write_res = client.write(test_payload);
         assert!(write_res.is_ok());
 
-        let poll2_res = demuxer.poll(&mut events, PollTimeout::Duration(Duration::from_millis(200)));
+        let poll2_res = demuxer.poll(
+            &mut events,
+            PollTimeout::Duration(Duration::from_millis(200)),
+        );
         assert!(poll2_res.is_ok());
 
         let mut recv_buf = [0u8; 64];
@@ -501,7 +510,10 @@ mod tests {
         assert!(send_res.is_ok());
 
         let mut events = Vec::new();
-        let poll_res = demuxer.poll(&mut events, PollTimeout::Duration(Duration::from_millis(200)));
+        let poll_res = demuxer.poll(
+            &mut events,
+            PollTimeout::Duration(Duration::from_millis(200)),
+        );
         assert!(poll_res.is_ok());
 
         let mut recv_buf = [0u8; 64];

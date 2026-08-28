@@ -343,11 +343,14 @@ impl Tensor {
 
     /// Fused multiply-add: `out = self * other + bias`.
     pub fn fma(&self, other: &Tensor, bias: &Tensor) -> Tensor {
-        self.try_fma(other, bias).unwrap_or_else(|_| Tensor::zeros(&self.shape))
+        self.try_fma(other, bias)
+            .unwrap_or_else(|_| Tensor::zeros(&self.shape))
     }
 
     /// Export tensor contiguous data to a 64-byte hardware cacheline-aligned buffer.
-    pub fn to_aligned_buffer(&self) -> Result<agam_runtime::simd::AlignedBuffer<f64, 64>, TensorError> {
+    pub fn to_aligned_buffer(
+        &self,
+    ) -> Result<agam_runtime::simd::AlignedBuffer<f64, 64>, TensorError> {
         agam_runtime::simd::AlignedBuffer::from_slice(&self.data).map_err(|_| {
             TensorError::DataLengthMismatch {
                 expected: self.numel(),
@@ -357,7 +360,10 @@ impl Tensor {
     }
 
     /// Construct a tensor from a 64-byte hardware aligned buffer.
-    pub fn from_aligned_buffer(shape: &[usize], buf: &agam_runtime::simd::AlignedBuffer<f64, 64>) -> Result<Self, TensorError> {
+    pub fn from_aligned_buffer(
+        shape: &[usize],
+        buf: &agam_runtime::simd::AlignedBuffer<f64, 64>,
+    ) -> Result<Self, TensorError> {
         let expected: usize = shape.iter().product();
         if buf.len() != expected {
             return Err(TensorError::DataLengthMismatch {

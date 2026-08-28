@@ -78,7 +78,10 @@ pub fn chunks<T: Clone>(items: &[T], chunk_size: usize) -> Vec<Vec<T>> {
 
 /// Pair corresponding elements from two slices into a vector of tuples.
 pub fn zip<A: Clone, B: Clone>(a: &[A], b: &[B]) -> Vec<(A, B)> {
-    a.iter().zip(b.iter()).map(|(x, y)| (x.clone(), y.clone())).collect()
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| (x.clone(), y.clone()))
+        .collect()
 }
 
 /// Cycle over items repeatedly up to `count` elements.
