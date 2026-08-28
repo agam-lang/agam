@@ -1,12 +1,14 @@
 name: CI
+
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+
 jobs:
   coherence-guard:
-    name: "Coherence & Unwrap Ratchet Guard"
+    name: "Coherence & Literature Citation Guard"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,5 +19,23 @@ jobs:
       - name: Run CI Coherence Guard
         run: python scripts/ci_coherence_guard.py
 
-  build:
-    uses: agam-lang/.github/.github/workflows/rust-ci.yml@main
+  workspace-test-matrix:
+    name: "Test (${{ matrix.os }})"
+    needs: coherence-guard
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Workspace Cargo Check
+        run: cargo check --workspace --all-targets
+      - name: Workspace Cargo Test
+        run: cargo test --workspace
+      - name: Cargo Formatting Check
+        run: cargo fmt --all -- --check

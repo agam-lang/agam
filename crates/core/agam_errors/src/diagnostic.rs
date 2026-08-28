@@ -30,6 +30,30 @@ impl fmt::Display for DiagnosticLevel {
     }
 }
 
+#[cfg(test)]
+fn test_diagnostic_level_display() {
+    assert_eq!(DiagnosticLevel::Error.to_string(), "error");
+    assert_eq!(DiagnosticLevel::Warning.to_string(), "warning");
+    assert_eq!(DiagnosticLevel::Note.to_string(), "note");
+    assert_eq!(DiagnosticLevel::Ice.to_string(), "internal compiler error");
+}
+
+/// Look up human-readable explanation and formal Nyāya grounding for an error code.
+pub fn explain_code(code: &str) -> Option<&'static str> {
+    match code.trim().to_uppercase().as_str() {
+        "E0001" | "E001" => Some(
+            "E0001: Type Mismatch\n  • Fact: Expression produces type T1 where T2 was expected.\n  • Reason: Agam requires explicit type conversions to prevent silent precision loss.\n  • Fix: Cast the expression using `as T2` or match the expected function signature.\n  • Law: Type Soundness (Sandhi Lattice Invariant).",
+        ),
+        "E0010" | "E010" => Some(
+            "E0010: Unresolved Identifier\n  • Fact: Symbol name not found in the active lexical scope.\n  • Reason: Variable, function, or trait was not declared or imported before use.\n  • Fix: Declare the identifier with `let` or import the defining module.\n  • Law: Lexical Scope Resolution Invariant.",
+        ),
+        "E0034" | "E034" => Some(
+            "E0034: Borrow-Check / Use After Move Violation\n  • Fact: Value accessed after ownership was moved to another scope or callee.\n  • Reason: Linear/affine ownership prevents multiple exclusive owners of heap resources.\n  • Fix: Clone the value before moving, or pass by shared borrow `&T`.\n  • Law: Zero-Aliasing Memory Safety Guarantee.",
+        ),
+        _ => None,
+    }
+}
+
 /// A label attached to a diagnostic, highlighting a specific source location.
 #[derive(Debug, Clone)]
 pub struct Label {

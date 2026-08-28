@@ -261,4 +261,56 @@ fn main() -> i32 {
         let syntax_err_src = "fn broken( { let x = ; }";
         assert!(CompilerPipelineFuzzer::verify_determinism(syntax_err_src));
     }
+
+    #[test]
+    fn test_grammar_derivation_fuzzing() {
+        let mut engine = AstMutationEngine::new(999);
+        for _ in 0..50 {
+            let expr = engine.generate_expression(4);
+            let fn_src = format!("fn test_fuzz_expr() -> i32 {{\n    let x = 10;\n    let res = {expr};\n    return 0;\n}}\n");
+            let outcome = CompilerPipelineFuzzer::test_source(&fn_src);
+            // Must never panic/crash
+            match outcome {
+                PipelineFuzzOutcome::Success | PipelineFuzzOutcome::ParseError { .. } | PipelineFuzzOutcome::SemanticError { .. } => {}
+                PipelineFuzzOutcome::Panic { message } => assert!(false, "Parser panicked on grammar derivation: {}", message),
+            }
+        }
+    }
+
+    #[test]
+    fn test_dual_syntax_parity_compilation() {
+        let advance_syntax = r#"
+fn compute_sum(n: i32) -> i32 {
+    let mut total: i32 = 0;
+    let mut i: i32 = 0;
+    while i < n {
+        total = total + i;
+        i = i + 1;
+    }
+    return total;
+}
+fn main() -> i32 {
+    return compute_sum(10);
+}
+"#;
+
+        let base_syntax = r#"
+fn compute_sum(n: i32) -> i32:
+    let mut total: i32 = 0
+    let mut i: i32 = 0
+    while i < n:
+        total = total + i
+        i = i + 1
+    return total
+
+fn main() -> i32:
+    return compute_sum(10)
+"#;
+
+        let out_advance = CompilerPipelineFuzzer::test_source(advance_syntax);
+        let out_base = CompilerPipelineFuzzer::test_source(base_syntax);
+
+        assert_eq!(out_advance, PipelineFuzzOutcome::Success);
+        assert_eq!(out_base, PipelineFuzzOutcome::Success);
+    }
 }

@@ -104,6 +104,14 @@ fn analyze_and_mutate_function_escape(
                     allocations.insert(instr.result);
                     value_escapes.insert(instr.result, EscapeState::NoEscape);
                 }
+                Op::Call { callee, .. }
+                    if callee.starts_with("AlignedBuffer::")
+                        || callee.starts_with("Tensor::")
+                        || callee.contains("alloc") =>
+                {
+                    allocations.insert(instr.result);
+                    value_escapes.insert(instr.result, EscapeState::NoEscape);
+                }
                 _ => {}
             }
         }
@@ -319,6 +327,66 @@ mod tests {
             assert_eq!(
                 fn_summary.value_escapes.get(&v_alloc),
                 Some(&EscapeState::GlobalEscape)
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_escaping_tensor_aligned_buffer_is_promoted() {
+        let b0 = crate::ir::BlockId(0);
+        let v_buf = ValueId(0);
+        let v_idx = ValueId(1);
+        let v_val = ValueId(2);
+
+        let mut module = MirModule {
+            functions: vec![MirFunction {
+                name: "simd_temp_compute".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: TypeId(0),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v_buf,
+                            ty: TypeId(10),
+                            op: Op::Call {
+                                callee: "AlignedBuffer::with_capacity".into(),
+                                args: vec![],
+                            },
+                        },
+                        Instruction {
+                            result: v_idx,
+                            ty: TypeId(1),
+                            op: Op::ConstInt(0),
+                        },
+                        Instruction {
+                            result: v_val,
+                            ty: TypeId(2),
+                            op: Op::GetIndex {
+                                object: v_buf,
+                                index: v_idx,
+                            },
+                        },
+                    ],
+                    terminator: Terminator::Return(v_val), // returns element, buffer stays in frame
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
+        };
+
+        let (escape, promotion) = run_escape_and_promote(&mut module, &CalleePurityInfo::default());
+        assert_eq!(promotion.total_promoted, 1);
+        let fn_summary_opt = escape.functions.get("simd_temp_compute");
+        assert!(fn_summary_opt.is_some(), "missing function summary");
+        if let Some(fn_summary) = fn_summary_opt {
+            assert_eq!(
+                fn_summary.value_escapes.get(&v_buf),
+                Some(&EscapeState::NoEscape)
             );
         }
     }

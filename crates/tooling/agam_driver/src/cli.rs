@@ -277,6 +277,16 @@ pub(crate) enum Command {
         allow_type: Vec<String>,
     },
 
+    /// Explain error codes or inspect the Sandhi type lattice
+    Explain {
+        /// Diagnostic error code to explain (e.g. E0001, E0010, E0034)
+        code: Option<String>,
+
+        /// Inspect the Sandhi type lattice hierarchy for a function or trait
+        #[arg(long)]
+        lattice: Option<String>,
+    },
+
     /// Type-check without generating code (fast feedback)
     Check {
         /// Source file(s) to check

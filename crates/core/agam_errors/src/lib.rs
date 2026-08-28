@@ -12,7 +12,7 @@ pub mod report;
 pub mod sarif;
 pub mod span;
 
-pub use diagnostic::{Diagnostic, DiagnosticLevel, ErrorCode, Label, NyayaProof};
+pub use diagnostic::{Diagnostic, DiagnosticLevel, ErrorCode, Label, NyayaProof, explain_code};
 pub use hankel::{HankelMatrix, solve_hankel_determinant};
 pub use report::DiagnosticEmitter;
 pub use sarif::{SarifLog, to_sarif, to_sarif_json};
