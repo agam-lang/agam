@@ -427,31 +427,18 @@ mod tests {
             Err(_) => return,
         };
 
-        let mut demuxer = match EventDemuxer::new() {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-
-        let listener_token = Token(1);
-        let client_token = Token(2);
-
-        let reg_listener =
-            listener.register_with(&mut demuxer, listener_token, EventInterest::READABLE);
-        assert!(reg_listener.is_ok());
-
-        let mut events = Vec::new();
-        let poll_res = demuxer.poll(
-            &mut events,
-            PollTimeout::Duration(Duration::from_millis(100)),
-        );
-        assert!(poll_res.is_ok());
-
         let (mut server_stream, _) = match listener.accept() {
             Ok(pair) => pair,
             Err(_) => return,
         };
 
+        let mut demuxer = match EventDemuxer::new() {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+
         let server_token = Token(3);
+        let client_token = Token(2);
         let reg_server =
             server_stream.register_with(&mut demuxer, server_token, EventInterest::READABLE);
         assert!(reg_server.is_ok());
@@ -464,6 +451,7 @@ mod tests {
         let write_res = client.write(test_payload);
         assert!(write_res.is_ok());
 
+        let mut events = Vec::new();
         let poll2_res = demuxer.poll(
             &mut events,
             PollTimeout::Duration(Duration::from_millis(200)),
@@ -479,7 +467,6 @@ mod tests {
 
         let _ = client.deregister_from(&mut demuxer);
         let _ = server_stream.deregister_from(&mut demuxer);
-        let _ = listener.deregister_from(&mut demuxer);
     }
 
     #[test]
@@ -536,12 +523,16 @@ mod tests {
             Err(_) => return,
         };
         assert!(listener.set_reuse_addr(true).is_ok());
+        let bound = listener.local_addr();
 
-        let client = match PalTcpStream::connect(listener.local_addr()) {
+        let handle = std::thread::spawn(move || listener.accept());
+
+        let client = match PalTcpStream::connect(bound) {
             Ok(c) => c,
             Err(_) => return,
         };
         assert!(client.set_nodelay(true).is_ok());
         assert!(client.set_nonblocking(true).is_ok());
+        let _ = handle.join();
     }
 }

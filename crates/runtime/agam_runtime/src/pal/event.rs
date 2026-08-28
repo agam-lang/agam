@@ -836,14 +836,16 @@ mod tests {
             Err(_) => return,
         };
 
+        let handle = std::thread::spawn(move || listener.accept());
+
         let mut sender = match TcpStream::connect(addr) {
             Ok(s) => s,
             Err(_) => return,
         };
 
-        let (receiver, _) = match listener.accept() {
-            Ok(pair) => pair,
-            Err(_) => return,
+        let (receiver, _) = match handle.join() {
+            Ok(Ok(pair)) => pair,
+            _ => return,
         };
 
         let mut demuxer = match EventDemuxer::new() {
