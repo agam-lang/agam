@@ -3857,3 +3857,43 @@ fn test_cli_bindgen_subcommand_generates_agam_file() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn test_cli_e2e_build_and_run_real_source_file() {
+    let source_code = "fn compute_dot(x1: i32, y1: i32, x2: i32, y2: i32) -> i32:\n    return (x1 * x2) + (y1 * y2)\n\nfn main() -> i32:\n    let res = compute_dot(3, 4, 5, 6)\n    println(res)\n    return 0\n";
+
+    let request = HeadlessExecutionRequest {
+        source: source_code.into(),
+        filename: "e2e_main.agam".into(),
+        backend: HeadlessExecutionBackend::Jit,
+        ..HeadlessExecutionRequest::default()
+    };
+
+    let response = execute_headless_request(&request, false);
+    assert!(response.success, "E2E execution failed: {response:?}");
+    assert_eq!(response.exit_code, Some(0));
+    assert!(response.stdout.contains("39"));
+    assert!(response.stderr.is_empty());
+}
+
+#[test]
+fn test_cli_explain_error_code_and_lattice() {
+    let explanation_e1 = agam_errors::explain_code("E0001");
+    assert!(explanation_e1.is_some());
+    if let Some(exp) = explanation_e1 {
+        assert!(exp.contains("Type Mismatch"));
+        assert!(exp.contains("Sandhi Lattice"));
+    }
+
+    let explanation_e10 = agam_errors::explain_code("E0010");
+    assert!(explanation_e10.is_some());
+    if let Some(exp) = explanation_e10 {
+        assert!(exp.contains("Unresolved Identifier"));
+    }
+
+    let explanation_e34 = agam_errors::explain_code("E0034");
+    assert!(explanation_e34.is_some());
+    if let Some(exp) = explanation_e34 {
+        assert!(exp.contains("Borrow-Check"));
+    }
+}

@@ -1,0 +1,27 @@
+[package]
+name = "agam-fuzz"
+version = "0.1.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+agam_parser = { path = "../crates/core/agam_parser" }
+agam_lexer = { path = "../crates/core/agam_lexer" }
+agam_errors = { path = "../crates/core/agam_errors" }
+agam_ffi = { path = "../crates/runtime/agam_ffi" }
+
+[[bin]]
+name = "fuzz_parser"
+path = "fuzz_targets/fuzz_parser.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_bindgen"
+path = "fuzz_targets/fuzz_bindgen.rs"
+test = false
+doc = false

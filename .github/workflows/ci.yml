@@ -39,3 +39,18 @@ jobs:
         run: cargo test --workspace
       - name: Cargo Formatting Check
         run: cargo fmt --all -- --check
+
+  miri-ub-verification:
+    name: "Miri UB Verification (agam_runtime & agam_ffi)"
+    needs: coherence-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Nightly with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Run Miri on agam_runtime
+        run: cargo miri test -p agam_runtime --lib -- simd::tests
+      - name: Run Miri on agam_ffi
+        run: cargo miri test -p agam_ffi --lib
