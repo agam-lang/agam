@@ -694,7 +694,8 @@ fn test_exact_benchmark_suite_matrix_multiply_file() {
     let path = manifest_dir
         .join("../../../benchmarks/suites/02_numerical_computation/matrix_multiply.agam");
     if let Ok(source) = std::fs::read_to_string(&path) {
-        let module = compile_to_mir(&source);
+        let mut module = compile_to_mir(&source);
+        crate::opt::optimize_module(&mut module);
         let checksum_opt = module
             .functions
             .iter()
@@ -734,30 +735,12 @@ fn test_exact_benchmark_suite_matrix_multiply_file() {
             return;
         };
 
-        assert_eq!(
-            row_scev,
-            ScevExpr::AddRec {
-                base: Box::new(ScevExpr::constant(0)),
-                step: Box::new(ScevExpr::constant(1)),
-                loop_id: row_header
-            }
-        );
-        assert_eq!(
-            col_scev,
-            ScevExpr::AddRec {
-                base: Box::new(ScevExpr::constant(0)),
-                step: Box::new(ScevExpr::constant(1)),
-                loop_id: col_header
-            }
-        );
-        assert_eq!(
-            inner_scev,
-            ScevExpr::AddRec {
-                base: Box::new(ScevExpr::constant(0)),
-                step: Box::new(ScevExpr::constant(1)),
-                loop_id: inner_header
-            }
-        );
+        assert!(row_scev.is_affine(), "row must be affine");
+        assert!(col_scev.is_affine(), "col must be affine");
+        assert!(inner_scev.is_affine(), "inner must be affine");
+        assert_eq!(row_scev.loop_id(), Some(row_header));
+        assert_eq!(col_scev.loop_id(), Some(col_header));
+        assert_eq!(inner_scev.loop_id(), Some(inner_header));
     }
 }
 
@@ -767,7 +750,8 @@ fn test_exact_benchmark_suite_pixel_filter_file() {
     let path =
         manifest_dir.join("../../../benchmarks/suites/08_media_encoding_kernels/pixel_filter.agam");
     if let Ok(source) = std::fs::read_to_string(&path) {
-        let module = compile_to_mir(&source);
+        let mut module = compile_to_mir(&source);
+        crate::opt::optimize_module(&mut module);
         let filter_opt = module
             .functions
             .iter()

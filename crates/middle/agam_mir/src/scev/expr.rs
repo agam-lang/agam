@@ -135,6 +135,19 @@ impl ScevExpr {
         ScevExpr::Mul(flattened)
     }
 
+    /// Returns true if this SCEV expression is an affine AddRec.
+    pub fn is_affine_add_rec(&self) -> bool {
+        matches!(self, ScevExpr::AddRec { .. })
+    }
+
+    /// Returns the loop header BlockId if this expression is an AddRec.
+    pub fn loop_id(&self) -> Option<BlockId> {
+        match self {
+            ScevExpr::AddRec { loop_id, .. } => Some(*loop_id),
+            _ => None,
+        }
+    }
+
     /// Check if this expression contains any `Unknown` terms.
     pub fn is_affine(&self) -> bool {
         match self {
