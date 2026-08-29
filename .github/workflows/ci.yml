@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   coherence-guard:
     name: "Coherence & Literature Citation Guard"
@@ -33,6 +37,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
       - name: Workspace Cargo Check
         run: cargo check --workspace --all-targets
       - name: Workspace Cargo Test
@@ -83,6 +89,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
 
       # Linux: install Xvfb + Mesa software Vulkan/OpenGL drivers
       - name: Setup Headless Display (Linux)

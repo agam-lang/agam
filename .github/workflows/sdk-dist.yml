@@ -9,6 +9,10 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -167,6 +171,7 @@ jobs:
         with:
           name: sdk-${{ matrix.host_platform }}
           if-no-files-found: error
+          retention-days: 7
           path: |
             dist/sdk/agam-sdk-${{ matrix.host_platform }}.${{ matrix.archive_ext }}
             dist/sdk/agam-sdk-${{ matrix.host_platform }}.${{ matrix.archive_ext }}.sha256
