@@ -61,5 +61,16 @@ pub(crate) use pipeline::*;
 pub(crate) use repl::*;
 
 fn main() {
-    dispatch::run_cli();
+    const STACK_SIZE: usize = 16 * 1024 * 1024;
+    let builder = std::thread::Builder::new()
+        .name("agamc-main".into())
+        .stack_size(STACK_SIZE);
+
+    let handler = builder
+        .spawn(dispatch::run_cli)
+        .expect("failed to spawn main compiler thread");
+
+    if let Err(panic) = handler.join() {
+        std::panic::resume_unwind(panic);
+    }
 }

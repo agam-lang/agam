@@ -1534,6 +1534,7 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.advance();
+                self.skip_struct_whitespace();
                 if self.peek_kind() == TokenKind::RParen {
                     self.advance();
                     Ok(Expr {
@@ -1543,14 +1544,20 @@ impl Parser {
                     })
                 } else {
                     let first = self.parse_expression(0)?;
+                    self.skip_struct_whitespace();
                     if self.eat(TokenKind::Comma) {
+                        self.skip_struct_whitespace();
                         let mut elements = vec![first];
                         while self.peek_kind() != TokenKind::RParen && !self.at_end() {
                             elements.push(self.parse_expression(0)?);
-                            if !self.eat(TokenKind::Comma) {
+                            self.skip_struct_whitespace();
+                            if self.eat(TokenKind::Comma) {
+                                self.skip_struct_whitespace();
+                            } else {
                                 break;
                             }
                         }
+                        self.skip_struct_whitespace();
                         self.expect(TokenKind::RParen)?;
                         Ok(Expr {
                             id,
@@ -1558,6 +1565,7 @@ impl Parser {
                             kind: ExprKind::TupleLiteral(elements),
                         })
                     } else {
+                        self.skip_struct_whitespace();
                         self.expect(TokenKind::RParen)?;
                         Ok(first)
                     }
@@ -1565,13 +1573,18 @@ impl Parser {
             }
             TokenKind::LBracket => {
                 self.advance();
+                self.skip_struct_whitespace();
                 let mut elements = Vec::new();
                 while self.peek_kind() != TokenKind::RBracket && !self.at_end() {
                     elements.push(self.parse_expression(0)?);
-                    if !self.eat(TokenKind::Comma) {
+                    self.skip_struct_whitespace();
+                    if self.eat(TokenKind::Comma) {
+                        self.skip_struct_whitespace();
+                    } else {
                         break;
                     }
                 }
+                self.skip_struct_whitespace();
                 self.expect(TokenKind::RBracket)?;
                 Ok(Expr {
                     id,

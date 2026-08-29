@@ -284,8 +284,20 @@ pub struct GuiEventLoop {
 impl GuiEventLoop {
     /// Create a new platform event loop.
     pub fn new() -> GuiResult<Self> {
-        let event_loop = EventLoop::new().map_err(|e| map_os_error(&e))?;
-        Ok(Self { event_loop })
+        #[cfg(target_os = "windows")]
+        {
+            use winit::platform::windows::EventLoopBuilderExtWindows;
+            let event_loop = EventLoop::builder()
+                .with_any_thread(true)
+                .build()
+                .map_err(|e| map_os_error(&e))?;
+            Ok(Self { event_loop })
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let event_loop = EventLoop::new().map_err(|e| map_os_error(&e))?;
+            Ok(Self { event_loop })
+        }
     }
 
     /// Run the application event loop with the given initial window configuration.
