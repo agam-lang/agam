@@ -315,6 +315,7 @@ def main():
     print(f"{'Workload':<20} | {'Agam JIT':<10} | {'Agam LLVM':<10} | {'Agam C':<10} | {'C++ -O3':<10} | {'Rust -O':<10} | {'Go':<10} | {'Python':<10} | {'Agam vs Py':<11}")
     print("=" * 140)
 
+    results = []
     for name, suite in WORKLOADS:
         agm_file = SUITES_ROOT / suite / f"{name}.agam"
         cpp_file = SUITES_ROOT / suite / "comparisons" / f"{name}.cpp"
