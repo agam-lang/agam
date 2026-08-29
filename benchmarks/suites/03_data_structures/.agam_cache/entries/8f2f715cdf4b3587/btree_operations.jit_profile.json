@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "backend": "jit",
+  "runs": 2,
+  "total_calls": 109,
+  "total_hits": 36,
+  "total_stores": 10,
+  "functions": [
+    {
+      "name": "branch_walk",
+      "runs": 2,
+      "total_calls": 109,
+      "total_hits": 36,
+      "total_stores": 10,
+      "last_entries": 5,
+      "profile": {
+        "unique_keys": 6,
+        "hottest_key_hits": 20,
+        "avg_reuse_distance": 3,
+        "max_reuse_distance": 46,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "i64_const",
+      "runs": 2,
+      "total_calls": 0,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 0,
+        "hottest_key_hits": 0,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    }
+  ]
+}

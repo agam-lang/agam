@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "f6814b247d29da25",
+  "key": {
+    "source_hash": "ab9a1451d6c1b71a",
+    "semantic_hash": "f353413dc000191d",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\03_data_structures\\ring_buffer.agam",
+  "artifact_name": "ring_buffer.jit_profile.json",
+  "bytes": 1148,
+  "created_unix_ms": 1787985024500,
+  "last_used_unix_ms": 1787985024500
+}

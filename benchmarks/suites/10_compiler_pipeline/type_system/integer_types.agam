@@ -1,0 +1,9 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+// Test: i32 and i64 integer types.
+fn main() -> i32 {
+    let a: i32 = 100;
+    let b: i64 = i64_const(200);
+    print_int(b);
+    return a - 100;
+}

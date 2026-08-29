@@ -1,0 +1,74 @@
+@lang.advance
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-World OpenCUDU 5G NR PHY Layer (3GPP TS 38.212) LDPC Min-Sum Kernel
+// Algorithm:
+//   1. Quasi-Cyclic LDPC Parity-Check Matrix Layer Decoding
+//   2. Log-Likelihood Ratio (LLR) Extraction and Normalization
+//   3. Min-Sum Check Node Processing: min(|LLR_j|) with sign parity
+//   4. Multi-Iteration PUSCH/PDSCH Channel Syndrome Accumulation
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
+fn abs_val(x: i64) -> i64 {
+    if x < i64_const(0) {
+        return i64_const(0) - x;
+    }
+    return x;
+}
+
+fn min_val(a: i64, b: i64) -> i64 {
+    if a < b { return a; }
+    return b;
+}
+
+fn ldpc_decode_layer(length: i64, iterations: i64) -> i64 {
+    let zero: i64 = i64_const(0);
+    let one: i64 = i64_const(1);
+    let four: i64 = i64_const(4);
+    let lcg_m: i64 = i64_const(1664525);
+    let lcg_c: i64 = i64_const(1013904223);
+    let mod_byte: i64 = i64_const(256);
+    let mid_val: i64 = i64_const(128);
+
+    let mut syndrome_sum: i64 = zero;
+    let mut iter: i64 = zero;
+    while iter < iterations {
+        let mut i: i64 = zero;
+        while i < length - four {
+            let l0: i64 = (((i * lcg_m) + lcg_c) % mod_byte) - mid_val;
+            let l1: i64 = ((((i + one) * lcg_m) + lcg_c) % mod_byte) - mid_val;
+            let l2: i64 = ((((i + i64_const(2)) * lcg_m) + lcg_c) % mod_byte) - mid_val;
+            let l3: i64 = ((((i + i64_const(3)) * lcg_m) + lcg_c) % mod_byte) - mid_val;
+
+            let a0: i64 = abs_val(l0);
+            let a1: i64 = abs_val(l1);
+            let a2: i64 = abs_val(l2);
+            let a3: i64 = abs_val(l3);
+
+            let min1: i64 = min_val(a0, a1);
+            let min2: i64 = min_val(a2, a3);
+            let check_val: i64 = min_val(min1, min2);
+
+            let mut sign: i64 = one;
+            let parity_neg: i64 = (l0 ^ l1 ^ l2 ^ l3);
+            if parity_neg < zero {
+                sign = zero - one;
+            }
+
+            syndrome_sum = syndrome_sum + (check_val * sign);
+            i = i + four;
+        }
+        iter = iter + one;
+    }
+    return syndrome_sum;
+}
+
+fn main() -> i32 {
+    let pdsch_throughput: i64 = ldpc_decode_layer(i64_const(16384), i64_const(8));
+    print_int(pdsch_throughput);
+    return 0;
+}

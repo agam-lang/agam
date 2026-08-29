@@ -1,0 +1,59 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn ray_sphere_intersect(rays: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    
+    let sx: i64 = i64_const(500);
+    let sy: i64 = i64_const(500);
+    let sz: i64 = i64_const(1000);
+    let radius: i64 = i64_const(300);
+    let r2: i64 = radius * radius;
+    
+    let r: i64 = i64_const(0);
+    while r < rays {
+        let ox: i64 = ((r * i64_const(17)) % i64_const(2000)) - i64_const(1000);
+        let oy: i64 = ((r * i64_const(31)) % i64_const(2000)) - i64_const(1000);
+        let oz: i64 = i64_const(-1000);
+        
+        let dx: i64 = ((r * i64_const(13)) % i64_const(100)) - i64_const(50);
+        let dy: i64 = ((r * i64_const(19)) % i64_const(100)) - i64_const(50);
+        let dz: i64 = i64_const(100);
+        
+        let inv_len: i64 = i64_const(10000) / (dx*dx + dy*dy + dz*dz + i64_const(1));
+        dx = (dx * inv_len) / i64_const(100);
+        dy = (dy * inv_len) / i64_const(100);
+        dz = (dz * inv_len) / i64_const(100);
+        
+        let ocx: i64 = ox - sx;
+        let ocy: i64 = oy - sy;
+        let ocz: i64 = oz - sz;
+        
+        let b: i64 = i64_const(2) * (ocx * dx + ocy * dy + ocz * dz);
+        let c: i64 = (ocx * ocx + ocy * ocy + ocz * ocz) - r2;
+        
+        let discriminant: i64 = (b * b) - (i64_const(4) * c);
+        
+        let hit: i64 = i64_const(0);
+        if discriminant >= i64_const(0) {
+            let t1: i64 = (-b - discriminant/i64_const(100)) / i64_const(2);
+            let t2: i64 = (-b + discriminant/i64_const(100)) / i64_const(2);
+            if t1 > i64_const(0) || t2 > i64_const(0) {
+                hit = i64_const(1);
+                checksum = (checksum * i64_const(31) + t1 + t2) % i64_const(1000000007);
+            }
+        }
+        
+        if hit == i64_const(0) {
+            checksum = (checksum * i64_const(37) + i64_const(1)) % i64_const(1000000007);
+        }
+        r = r + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(ray_sphere_intersect(i64_const(8192)));
+    return 0;
+}

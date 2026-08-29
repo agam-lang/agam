@@ -1,0 +1,12 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: mutable variable reassignment.
+fn main() -> i32 {
+    let x: i64 = i64_const(1);
+    x = x + i64_const(10);
+    x = x * i64_const(2);
+    x = x - i64_const(3);
+    print_int(x);
+    return 0;
+}

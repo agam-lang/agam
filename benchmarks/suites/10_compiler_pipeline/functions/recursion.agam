@@ -1,0 +1,9 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: recursive function calls.
+fn fib(n: i64) -> i64 {
+    if n < i64_const(2) { return n; }
+    return fib(n - i64_const(1)) + fib(n - i64_const(2));
+}
+fn main() -> i32 { print_int(fib(i64_const(10))); return 0; }

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "721f2a380bed623f",
+  "key": {
+    "source_hash": "989460823f0fd911",
+    "semantic_hash": "7e5c358fba8bf840",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\11_ray_tracing\\ray_sphere_intersect.agam",
+  "artifact_name": "ray_sphere_intersect.jit_profile.json",
+  "bytes": 1152,
+  "created_unix_ms": 1787985143055,
+  "last_used_unix_ms": 1787985143055
+}

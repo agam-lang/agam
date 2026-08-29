@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "9a4c3e8601d7e0c4",
+  "key": {
+    "source_hash": "871c09aef171af0d",
+    "semantic_hash": "bcdcfd7e0ff9f243",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\08_media_encoding_kernels\\graphics_magick.agam",
+  "artifact_name": "graphics_magick.jit_profile.json",
+  "bytes": 2185,
+  "created_unix_ms": 1787985089548,
+  "last_used_unix_ms": 1787985089548
+}

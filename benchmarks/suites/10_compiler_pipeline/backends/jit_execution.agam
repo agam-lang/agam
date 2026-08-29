@@ -1,0 +1,5 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: verify program runs in JIT mode.
+fn main() -> i32 { print_int(i64_const(55)); return 0; }

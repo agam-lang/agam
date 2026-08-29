@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "backend": "jit",
+  "runs": 2,
+  "total_calls": 4343254,
+  "total_hits": 4331394,
+  "total_stores": 358,
+  "functions": [
+    {
+      "name": "abs_val",
+      "runs": 2,
+      "total_calls": 4343252,
+      "total_hits": 4331394,
+      "total_stores": 358,
+      "last_entries": 179,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 322,
+        "avg_reuse_distance": 312,
+        "max_reuse_distance": 1524982,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "astar_pathfinding",
+      "runs": 2,
+      "total_calls": 2,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 1,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "i64_const",
+      "runs": 2,
+      "total_calls": 0,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 0,
+        "hottest_key_hits": 0,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    }
+  ]
+}

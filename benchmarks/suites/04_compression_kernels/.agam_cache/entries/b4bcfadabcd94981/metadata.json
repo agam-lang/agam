@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "b4bcfadabcd94981",
+  "key": {
+    "source_hash": "c4b9bde0a8d3fa5c",
+    "semantic_hash": "89898da4333d162e",
+    "backend": "Llvm",
+    "opt_level": 3,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=missing;llvm_wsl_allowed=false;llvm_clang=clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
+  },
+  "artifact_kind": "LlvmIr",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\04_compression_kernels\\rle_codec.agam",
+  "artifact_name": "temp_bench_agam_llvm.ll",
+  "bytes": 40125,
+  "created_unix_ms": 1787936807011,
+  "last_used_unix_ms": 1787937107361
+}

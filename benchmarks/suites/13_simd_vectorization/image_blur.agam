@@ -1,0 +1,38 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn image_blur(size: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    
+    let y: i64 = i64_const(1);
+    while y < size - i64_const(1) {
+        let x: i64 = i64_const(1);
+        while x < size - i64_const(1) {
+            let p00: i64 = (((y - i64_const(1)) * size + (x - i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p01: i64 = (((y - i64_const(1)) * size + x) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p02: i64 = (((y - i64_const(1)) * size + (x + i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            
+            let p10: i64 = ((y * size + (x - i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p11: i64 = ((y * size + x) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p12: i64 = ((y * size + (x + i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            
+            let p20: i64 = (((y + i64_const(1)) * size + (x - i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p21: i64 = (((y + i64_const(1)) * size + x) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p22: i64 = (((y + i64_const(1)) * size + (x + i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            
+            let sum: i64 = p00 + i64_const(2)*p01 + p02 + i64_const(2)*p10 + i64_const(4)*p11 + i64_const(2)*p12 + p20 + i64_const(2)*p21 + p22;
+            let blur: i64 = sum / i64_const(16);
+            
+            checksum = (checksum * i64_const(31) + blur) % i64_const(1000000007);
+            x = x + i64_const(1);
+        }
+        y = y + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(image_blur(i64_const(256)));
+    return 0;
+}

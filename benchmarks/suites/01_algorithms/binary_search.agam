@@ -1,0 +1,33 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
+fn binary_search(limit: i64, target: i64) -> i64 {
+    let zero: i64 = i64_const(0);
+    let one: i64 = i64_const(1);
+    let two: i64 = i64_const(2);
+    let three: i64 = i64_const(3);
+    let seven: i64 = i64_const(7);
+    let low: i64 = zero;
+    let high: i64 = limit;
+    while low < high {
+        let mid: i64 = low + ((high - low) / two);
+        let value: i64 = (mid * three) + seven;
+        if value == target {
+            return mid;
+        }
+        if value < target {
+            low = mid + one;
+        } else {
+            high = mid;
+        }
+    }
+    return zero - one;
+}
+
+fn main() -> i32 {
+    print_int(binary_search(i64_const(10000000), i64_const(2999998)));
+    return 0;
+}

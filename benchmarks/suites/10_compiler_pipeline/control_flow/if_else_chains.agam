@@ -1,0 +1,27 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: if/else chains with complex nesting.
+fn classify(n: i64) -> i64 {
+    let result: i64 = i64_const(3);
+    if n < i64_const(0) {
+        result = i64_const(-1);
+    } else {
+        if n == i64_const(0) {
+            result = i64_const(0);
+        } else {
+            if n < i64_const(10) {
+                result = i64_const(1);
+            } else {
+                if n < i64_const(100) {
+                    result = i64_const(2);
+                }
+            }
+        }
+    }
+    return result;
+}
+fn main() -> i32 {
+    print_int(classify(i64_const(-5)) + classify(i64_const(0)) + classify(i64_const(7)) + classify(i64_const(50)) + classify(i64_const(200)));
+    return 0;
+}

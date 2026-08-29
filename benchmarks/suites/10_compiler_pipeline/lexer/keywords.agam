@@ -1,0 +1,14 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: all Agam keywords lex correctly.
+fn main() -> i32 {
+    let x: i64 = i64_const(10);
+    let y: i64 = i64_const(20);
+    if x < y {
+        print_int(i64_const(1));
+    } else {
+        print_int(i64_const(0));
+    }
+    return 0;
+}

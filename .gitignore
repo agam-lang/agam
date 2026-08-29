@@ -24,6 +24,11 @@ Thumbs.db
 # Agam compiler outputs
 *.o
 *.exe
+*.lib
+*.pdb
+*.ll
+*.c.tmp
+temp_*
 /.agam_cache/
 /dist/
 /CLAUDE.local.md

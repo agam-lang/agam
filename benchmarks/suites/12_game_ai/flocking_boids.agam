@@ -1,0 +1,77 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn flocking_boids(boids: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let frames: i64 = i64_const(30);
+    
+    let f: i64 = i64_const(0);
+    while f < frames {
+        let center_mass_sum: i64 = i64_const(0);
+        
+        let i: i64 = i64_const(0);
+        while i < boids {
+            let px: i64 = ((i * i64_const(17) + f * i64_const(7)) % i64_const(1000));
+            let py: i64 = ((i * i64_const(19) + f * i64_const(11)) % i64_const(1000));
+            let vx: i64 = ((i * i64_const(23)) % i64_const(20)) - i64_const(10);
+            let vy: i64 = ((i * i64_const(29)) % i64_const(20)) - i64_const(10);
+            
+            let sep_x: i64 = i64_const(0); let sep_y: i64 = i64_const(0);
+            let align_x: i64 = i64_const(0); let align_y: i64 = i64_const(0);
+            let coh_x: i64 = i64_const(0); let coh_y: i64 = i64_const(0);
+            let neighbors: i64 = i64_const(0);
+            
+            let j: i64 = i64_const(0);
+            while j < boids {
+                if i != j {
+                    let ox: i64 = ((j * i64_const(17) + f * i64_const(7)) % i64_const(1000));
+                    let oy: i64 = ((j * i64_const(19) + f * i64_const(11)) % i64_const(1000));
+                    let ovx: i64 = ((j * i64_const(23)) % i64_const(20)) - i64_const(10);
+                    let ovy: i64 = ((j * i64_const(29)) % i64_const(20)) - i64_const(10);
+                    
+                    let dx: i64 = px - ox;
+                    let dy: i64 = py - oy;
+                    let dist_sq: i64 = dx*dx + dy*dy;
+                    
+                    if dist_sq < i64_const(2500) { // radius i64_const(50)
+                        neighbors = neighbors + i64_const(1);
+                        if dist_sq < i64_const(400) { // separation i64_const(20)
+                            sep_x = sep_x + dx;
+                            sep_y = sep_y + dy;
+                        }
+                        align_x = align_x + ovx;
+                        align_y = align_y + ovy;
+                        coh_x = coh_x + ox;
+                        coh_y = coh_y + oy;
+                    }
+                }
+                j = j + i64_const(1);
+            }
+            
+            let new_vx: i64 = vx;
+            let new_vy: i64 = vy;
+            
+            if neighbors > i64_const(0) {
+                align_x = (align_x / neighbors) - vx;
+                align_y = (align_y / neighbors) - vy;
+                coh_x = (coh_x / neighbors) - px;
+                coh_y = (coh_y / neighbors) - py;
+                
+                new_vx = vx + (sep_x * i64_const(5) + align_x * i64_const(2) + coh_x * i64_const(1)) / i64_const(100);
+                new_vy = vy + (sep_y * i64_const(5) + align_y * i64_const(2) + coh_y * i64_const(1)) / i64_const(100);
+            }
+            
+            center_mass_sum = (center_mass_sum + new_vx + new_vy) % i64_const(1000000007);
+            i = i + i64_const(1);
+        }
+        checksum = (checksum * i64_const(31) + center_mass_sum) % i64_const(1000000007);
+        f = f + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(flocking_boids(i64_const(512)));
+    return 0;
+}

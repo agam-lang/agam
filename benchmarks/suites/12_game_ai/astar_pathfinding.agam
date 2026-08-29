@@ -1,0 +1,79 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn abs_val(v: i64) -> i64 {
+    if v < i64_const(0) { return -v; }
+    return v;
+}
+
+fn astar_pathfinding(grid_size: i64) -> i64 {
+    let max_nodes: i64 = i64_const(10000);
+    let checksum: i64 = i64_const(0);
+    
+    let path_finds: i64 = i64_const(0);
+    while path_finds < i64_const(100) {
+        let start_x: i64 = (path_finds * i64_const(17)) % grid_size;
+        let start_y: i64 = (path_finds * i64_const(19)) % grid_size;
+        let goal_x: i64 = (grid_size - i64_const(1)) - (path_finds * i64_const(23)) % grid_size;
+        let goal_y: i64 = (grid_size - i64_const(1)) - (path_finds * i64_const(29)) % grid_size;
+        
+        let nodes_expanded: i64 = i64_const(0);
+        let curr_x: i64 = start_x;
+        let curr_y: i64 = start_y;
+        
+        let path_len: i64 = i64_const(0);
+        
+        while (curr_x != goal_x || curr_y != goal_y) && nodes_expanded < max_nodes {
+            nodes_expanded = nodes_expanded + i64_const(1);
+            
+            let best_next_x: i64 = curr_x;
+            let best_next_y: i64 = curr_y;
+            let best_f: i64 = i64_const(999999999);
+            
+            let dy: i64 = i64_const(-1);
+            while dy <= i64_const(1) {
+                let dx: i64 = i64_const(-1);
+                while dx <= i64_const(1) {
+                    if dx != i64_const(0) || dy != i64_const(0) {
+                        let nx: i64 = curr_x + dx;
+                        let ny: i64 = curr_y + dy;
+                        
+                        if nx >= i64_const(0) && nx < grid_size && ny >= i64_const(0) && ny < grid_size {
+                            if (nx * i64_const(31) + ny * i64_const(37)) % i64_const(100) >= i64_const(20) {
+                                let g: i64 = path_len + i64_const(10);
+                                if dx != i64_const(0) && dy != i64_const(0) { g = g + i64_const(4); } // diagonal cost ~i64_const(14)
+                                let h: i64 = (abs_val(nx - goal_x) + abs_val(ny - goal_y)) * i64_const(10);
+                                let f: i64 = g + h;
+                                
+                                if f < best_f {
+                                    best_f = f;
+                                    best_next_x = nx;
+                                    best_next_y = ny;
+                                }
+                            }
+                        }
+                    }
+                    dx = dx + i64_const(1);
+                }
+                dy = dy + i64_const(1);
+            }
+            
+            if best_next_x == curr_x && best_next_y == curr_y {
+                nodes_expanded = max_nodes; // stuck
+            } else {
+                curr_x = best_next_x;
+                curr_y = best_next_y;
+                path_len = path_len + i64_const(10);
+            }
+        }
+        checksum = (checksum * i64_const(31) + path_len + nodes_expanded) % i64_const(1000000007);
+        path_finds = path_finds + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(astar_pathfinding(i64_const(100)));
+    return 0;
+}

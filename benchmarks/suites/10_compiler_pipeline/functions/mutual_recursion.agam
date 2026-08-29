@@ -1,0 +1,13 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: mutual recursion between two functions.
+fn is_even(n: i64) -> i64 {
+    if n == i64_const(0) { return i64_const(1); }
+    return is_odd(n - i64_const(1));
+}
+fn is_odd(n: i64) -> i64 {
+    if n == i64_const(0) { return i64_const(0); }
+    return is_even(n - i64_const(1));
+}
+fn main() -> i32 { print_int(is_even(i64_const(10)) + is_odd(i64_const(7))); return 0; }

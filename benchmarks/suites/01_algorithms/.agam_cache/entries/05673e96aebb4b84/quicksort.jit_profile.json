@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "backend": "jit",
+  "runs": 2,
+  "total_calls": 17714,
+  "total_hits": 0,
+  "total_stores": 0,
+  "functions": [
+    {
+      "name": "i64_const",
+      "runs": 2,
+      "total_calls": 0,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 0,
+        "hottest_key_hits": 0,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "partition_cost",
+      "runs": 2,
+      "total_calls": 5904,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "quicksort_cost",
+      "runs": 2,
+      "total_calls": 11810,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    }
+  ]
+}

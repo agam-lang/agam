@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "e524b264d430187a",
+  "key": {
+    "source_hash": "eb11259417c61217",
+    "semantic_hash": "ae1cd1745e7ae06f",
+    "backend": "Llvm",
+    "opt_level": 3,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=native;llvm_wsl_allowed=false;llvm_clang=C:\\Program Files\\LLVM\\bin\\clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
+  },
+  "artifact_kind": "NativeBinary",
+  "source_path": "benchmarks/suites/15_special_functions/special_functions_csv.agam",
+  "artifact_name": "temp_agam_csv.exe",
+  "bytes": 167936,
+  "created_unix_ms": 1787682983906,
+  "last_used_unix_ms": 1787682983906
+}

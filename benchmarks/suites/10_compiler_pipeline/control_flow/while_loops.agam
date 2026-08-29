@@ -1,0 +1,11 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: while loop with accumulator.
+fn main() -> i32 {
+    let sum: i64 = i64_const(0);
+    let i: i64 = i64_const(1);
+    while i <= i64_const(100) { sum = sum + i; i = i + i64_const(1); }
+    print_int(sum);
+    return 0;
+}

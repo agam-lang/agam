@@ -1,0 +1,16 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn autodiff_trace(steps: i64) -> i64 {
+    let value: i64 = i64_const(7);
+    let gradient: i64 = i64_const(1);
+    let step: i64 = i64_const(0);
+    while step < steps {
+        gradient = gradient + ((value * i64_const(3)) % i64_const(17));
+        value = value + gradient;
+        step = step + i64_const(1);
+    }
+    return value + gradient;
+}
+fn main() -> i32 { print_int(autodiff_trace(i64_const(5000000))); return 0; }

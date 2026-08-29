@@ -1,0 +1,100 @@
+@lang.advance
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-World GraphicsMagick (http://www.graphicsmagick.org/) Image Kernel
+// Algorithm:
+//   1. 3x3 Discrete Gaussian Sharpen Convolution Filter (magick/convolve.c)
+//      Kernel: [-1, -2, -1; -2, 13, -2; -1, -2, -1] normalized
+//   2. Fast RGB-to-HWB Color Space Transformation (magick/color.c)
+//      W = min(R,G,B), B_val = 255 - max(R,G,B), Hue sector calculation
+//   3. Swirl Coordinate Distortion Mapping (magick/fx.c)
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn min3(a: i64, b: i64, c: i64) -> i64 {
+    let mut m: i64 = a;
+    if b < m { m = b; }
+    if c < m { m = c; }
+    return m;
+}
+
+fn max3(a: i64, b: i64, c: i64) -> i64 {
+    let mut m: i64 = a;
+    if b > m { m = b; }
+    if c > m { m = c; }
+    return m;
+}
+
+fn graphics_magick_pipeline(dim: i64) -> i64 {
+    let mut checksum: i64 = i64_const(0);
+
+    // 1. Process 2D image grid with 3x3 Gaussian Sharpen Convolution
+    let mut y: i64 = i64_const(1);
+    while y < dim - i64_const(1) {
+        let mut x: i64 = i64_const(1);
+        while x < dim - i64_const(1) {
+            // Synthesize RGB values from procedural test pattern (magick texture generator)
+            let r_c: i64 = (x * y * i64_const(17)) % i64_const(256);
+            let g_c: i64 = (x * y * i64_const(31)) % i64_const(256);
+            let b_c: i64 = (x * y * i64_const(47)) % i64_const(256);
+
+            let r_top: i64 = (x * (y - i64_const(1)) * i64_const(17)) % i64_const(256);
+            let r_bot: i64 = (x * (y + i64_const(1)) * i64_const(17)) % i64_const(256);
+            let r_left: i64 = ((x - i64_const(1)) * y * i64_const(17)) % i64_const(256);
+            let r_right: i64 = ((x + i64_const(1)) * y * i64_const(17)) % i64_const(256);
+
+            let r_tl: i64 = ((x - i64_const(1)) * (y - i64_const(1)) * i64_const(17)) % i64_const(256);
+            let r_tr: i64 = ((x + i64_const(1)) * (y - i64_const(1)) * i64_const(17)) % i64_const(256);
+            let r_bl: i64 = ((x - i64_const(1)) * (y + i64_const(1)) * i64_const(17)) % i64_const(256);
+            let r_br: i64 = ((x + i64_const(1)) * (y + i64_const(1)) * i64_const(17)) % i64_const(256);
+
+            // Gaussian Sharpen Kernel: [-1 -2 -1; -2 13 -2; -1 -2 -1]
+            let cross_term: i64 = (r_top * i64_const(2)) + (r_bot * i64_const(2)) + (r_left * i64_const(2)) + (r_right * i64_const(2));
+            let diag_term: i64 = r_tl + r_tr + r_bl + r_br;
+            let conv_r: i64 = (r_c * i64_const(13)) - cross_term - diag_term;
+
+            let mut sharp_r: i64 = conv_r;
+            if sharp_r < i64_const(0) { sharp_r = i64_const(0); }
+            if sharp_r > i64_const(255) { sharp_r = i64_const(255); }
+
+            // 2. RGB-to-HWB Color Space Transformation (magick/color.c)
+            let w_val: i64 = min3(sharp_r, g_c, b_c);
+            let v_val: i64 = max3(sharp_r, g_c, b_c);
+            let b_val: i64 = i64_const(255) - v_val;
+
+            let delta: i64 = v_val - w_val;
+            let mut hue: i64 = i64_const(0);
+            if delta > i64_const(0) {
+                if v_val == sharp_r {
+                    hue = ((g_c - b_c) * i64_const(60)) / delta;
+                } else if v_val == g_c {
+                    hue = i64_const(120) + (((b_c - sharp_r) * i64_const(60)) / delta);
+                } else {
+                    hue = i64_const(240) + (((sharp_r - g_c) * i64_const(60)) / delta);
+                }
+                if hue < i64_const(0) { hue = hue + i64_const(360); }
+            }
+
+            // 3. Swirl Coordinate Distortion Weighting
+            let dx: i64 = x - (dim / i64_const(2));
+            let dy: i64 = y - (dim / i64_const(2));
+            let r_sq: i64 = (dx * dx) + (dy * dy);
+            let swirl_factor: i64 = r_sq % i64_const(360);
+
+            let pixel_metric: i64 = sharp_r + (w_val * i64_const(2)) + (b_val * i64_const(3)) + hue + swirl_factor;
+            checksum = (checksum + pixel_metric) % i64_const(1000000007);
+
+            x = x + i64_const(1);
+        }
+        y = y + i64_const(1);
+    }
+
+    return checksum;
+}
+
+fn main() -> i32 {
+    let res: i64 = graphics_magick_pipeline(i64_const(256));
+    print_int(res);
+    return 0;
+}

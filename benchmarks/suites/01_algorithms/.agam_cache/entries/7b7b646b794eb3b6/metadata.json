@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "7b7b646b794eb3b6",
+  "key": {
+    "source_hash": "104a2baea49d0bb4",
+    "semantic_hash": "f64bc2c2d7691231",
+    "backend": "C",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "CSource",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\01_algorithms\\edit_distance.agam",
+  "artifact_name": "temp_bench_agam_c.c",
+  "bytes": 18156,
+  "created_unix_ms": 1787936702608,
+  "last_used_unix_ms": 1787937002109
+}

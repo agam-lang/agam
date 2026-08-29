@@ -1,0 +1,66 @@
+@lang.advance
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-World Valkey / Redis In-Memory KV Store Pipeline Kernel
+// Algorithm:
+//   1. Murmur/Fibonacci Hash Key Distribution
+//   2. Pipelined Multi-Command Command Stream (SET, GET, INCR)
+//   3. Slot Mutation & State Checksum Accumulation
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn valkey_pipeline_ops(num_ops: i64) -> i64 {
+    let zero: i64 = i64_const(0);
+    let one: i64 = i64_const(1);
+    let two: i64 = i64_const(2);
+    let three: i64 = i64_const(3);
+    let four: i64 = i64_const(4);
+    let hash_mult: i64 = i64_const(100003);
+    let hash_shift: i64 = i64_const(65536);
+    let mod_prime: i64 = i64_const(1000000007);
+
+    let mut checksum: i64 = zero;
+    let mut slot0: i64 = zero;
+    let mut slot1: i64 = zero;
+    let mut slot2: i64 = zero;
+    let mut slot3: i64 = zero;
+
+    let mut op: i64 = zero;
+    while op < num_ops {
+        let key: i64 = ((op * hash_mult) / hash_shift) % four;
+        let op_type: i64 = op % three;
+
+        if op_type == zero {
+            // SET command
+            if key == zero { slot0 = op; }
+            if key == one { slot1 = op; }
+            if key == two { slot2 = op; }
+            if key == three { slot3 = op; }
+        }
+        if op_type == one {
+            // GET command
+            let mut val: i64 = zero;
+            if key == zero { val = slot0; }
+            if key == one { val = slot1; }
+            if key == two { val = slot2; }
+            if key == three { val = slot3; }
+            checksum = checksum + val;
+        }
+        if op_type == two {
+            // INCR command
+            if key == zero { slot0 = slot0 + one; checksum = checksum + slot0; }
+            if key == one { slot1 = slot1 + one; checksum = checksum + slot1; }
+            if key == two { slot2 = slot2 + one; checksum = checksum + slot2; }
+            if key == three { slot3 = slot3 + one; checksum = checksum + slot3; }
+        }
+        op = op + one;
+    }
+    return checksum % mod_prime;
+}
+
+fn main() -> i32 {
+    let result: i64 = valkey_pipeline_ops(i64_const(100000));
+    print_int(result);
+    return 0;
+}

@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "backend": "jit",
+  "runs": 1,
+  "total_calls": 100400711,
+  "total_hits": 2780281,
+  "total_stores": 57,
+  "functions": [
+    {
+      "name": "evaluate_fourier_1000_hash",
+      "runs": 1,
+      "total_calls": 1,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 1,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "evaluate_hypergeometric_1000_hash",
+      "runs": 1,
+      "total_calls": 1,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 1,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "f64_const",
+      "runs": 1,
+      "total_calls": 0,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 0,
+        "hottest_key_hits": 0,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "i64_const",
+      "runs": 1,
+      "total_calls": 0,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 0,
+        "hottest_key_hits": 0,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "trig_cos",
+      "runs": 1,
+      "total_calls": 33826000,
+      "total_hits": 1077291,
+      "total_stores": 5,
+      "last_entries": 5,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 1041017,
+        "avg_reuse_distance": 456,
+        "max_reuse_distance": 56462,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "trig_sin",
+      "runs": 1,
+      "total_calls": 66574709,
+      "total_hits": 1702990,
+      "total_stores": 52,
+      "last_entries": 52,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 1046016,
+        "avg_reuse_distance": 3063,
+        "max_reuse_distance": 55655,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    }
+  ]
+}

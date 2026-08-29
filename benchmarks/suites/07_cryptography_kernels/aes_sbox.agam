@@ -1,0 +1,51 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn aes_sbox_val(input: i64) -> i64 {
+    let x: i64 = input & i64_const(255);
+    let inv: i64 = i64_const(1);
+    let i: i64 = i64_const(0);
+    while i < i64_const(7) {
+        inv = (inv * x) % i64_const(257);
+        if inv > i64_const(255) {
+            inv = inv ^ i64_const(283);
+        }
+        i = i + i64_const(1);
+    }
+    inv = inv & i64_const(255);
+    let rot1: i64 = (inv << i64_const(1)) & i64_const(255);
+    let rot2: i64 = (inv << i64_const(2)) & i64_const(255);
+    let rot3: i64 = (inv << i64_const(3)) & i64_const(255);
+    let rot4: i64 = (inv << i64_const(4)) & i64_const(255);
+    let result: i64 = inv ^ rot1 ^ rot2 ^ rot3 ^ rot4 ^ i64_const(99);
+    return result & i64_const(255);
+}
+
+fn aes_checksum(blocks: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let b: i64 = i64_const(0);
+    while b < blocks {
+        let state: i64 = i64_const(0);
+        let byte_idx: i64 = i64_const(0);
+        while byte_idx < i64_const(16) {
+            let input_byte: i64 = (b * i64_const(16) + byte_idx) * i64_const(1103515245) + i64_const(12345);
+            let sub: i64 = aes_sbox_val(input_byte & i64_const(255));
+            let shifted: i64 = sub ^ ((byte_idx * i64_const(3)) & i64_const(255));
+            let mixed: i64 = shifted * i64_const(2);
+            if mixed > i64_const(255) {
+                mixed = mixed ^ i64_const(283);
+            }
+            state = (state * i64_const(31) + mixed) % i64_const(1000000007);
+            byte_idx = byte_idx + i64_const(1);
+        }
+        checksum = (checksum * i64_const(37) + state) % i64_const(1000000007);
+        b = b + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(aes_checksum(i64_const(512)));
+    return 0;
+}

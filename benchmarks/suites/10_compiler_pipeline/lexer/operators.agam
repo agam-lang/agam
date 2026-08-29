@@ -1,0 +1,13 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: arithmetic, comparison, and assignment operators.
+fn main() -> i32 {
+    let a: i64 = i64_const(10) + i64_const(5);
+    let b: i64 = a - i64_const(3);
+    let c: i64 = b * i64_const(2);
+    let d: i64 = c / i64_const(4);
+    let e: i64 = d % i64_const(3);
+    print_int(e);
+    return 0;
+}

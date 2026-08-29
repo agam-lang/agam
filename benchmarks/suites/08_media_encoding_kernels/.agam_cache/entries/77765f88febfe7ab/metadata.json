@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "77765f88febfe7ab",
+  "key": {
+    "source_hash": "d6e5b402fcc0f9e7",
+    "semantic_hash": "318eb60bc2a6e255",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\08_media_encoding_kernels\\real_flac_encoder.agam",
+  "artifact_name": "real_flac_encoder.jit_profile.json",
+  "bytes": 2167,
+  "created_unix_ms": 1787985108648,
+  "last_used_unix_ms": 1787985108648
+}

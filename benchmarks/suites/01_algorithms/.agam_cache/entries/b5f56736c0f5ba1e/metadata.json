@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "b5f56736c0f5ba1e",
+  "key": {
+    "source_hash": "aedcfc15c3632327",
+    "semantic_hash": "d2c5bd5602f6edfa",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\01_algorithms\\binary_search.agam",
+  "artifact_name": "binary_search.jit_profile.json",
+  "bytes": 1145,
+  "created_unix_ms": 1787984958777,
+  "last_used_unix_ms": 1787984958777
+}

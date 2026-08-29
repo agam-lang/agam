@@ -1,0 +1,47 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
+fn render_scene_hits(rays_per_pixel: i64, width: i64, height: i64) -> i64 {
+    let zero: i64 = i64_const(0);
+    let one: i64 = i64_const(1);
+    let two: i64 = i64_const(2);
+    let four: i64 = i64_const(4);
+    let five: i64 = i64_const(5);
+    let twenty_five: i64 = i64_const(25);
+    let hundred: i64 = i64_const(100);
+
+    let mut hit_count: i64 = zero;
+    let mut y: i64 = zero;
+    while y < height {
+        let mut x: i64 = zero;
+        while x < width {
+            let mut r: i64 = zero;
+            while r < rays_per_pixel {
+                let dx: i64 = x - (width / two);
+                let dy: i64 = y - (height / two);
+                let dz: i64 = hundred;
+
+                let b: i64 = (zero - five) * dz;
+                let c: i64 = twenty_five - four;
+                let disc: i64 = (b * b) - ((dx * dx + dy * dy + dz * dz) * c);
+
+                if disc >= zero {
+                    hit_count = hit_count + one;
+                }
+                r = r + one;
+            }
+            x = x + one;
+        }
+        y = y + one;
+    }
+    return hit_count;
+}
+
+fn main() -> i32 {
+    let hits: i64 = render_scene_hits(i64_const(16), i64_const(128), i64_const(128));
+    print_int(hits);
+    return 0;
+}

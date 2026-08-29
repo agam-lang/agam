@@ -1,0 +1,15 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: variable scoping — inner block vars don't leak.
+fn main() -> i32 {
+    let x: i64 = i64_const(10);
+    let i: i64 = i64_const(0);
+    while i < i64_const(3) {
+        let y: i64 = x + i;
+        x = y;
+        i = i + i64_const(1);
+    }
+    print_int(x);
+    return 0;
+}

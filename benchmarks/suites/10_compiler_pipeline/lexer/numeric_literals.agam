@@ -1,0 +1,11 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: integer literal parsing (decimal).
+fn main() -> i32 {
+    let small: i64 = i64_const(42);
+    let medium: i64 = i64_const(100000);
+    let large: i64 = i64_const(2147483647);
+    print_int(small + medium + large);
+    return 0;
+}

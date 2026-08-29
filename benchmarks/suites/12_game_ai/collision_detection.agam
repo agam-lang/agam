@@ -1,0 +1,50 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn collision_detection(entities: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let frames: i64 = i64_const(60);
+    
+    let f: i64 = i64_const(0);
+    while f < frames {
+        let collisions: i64 = i64_const(0);
+        
+        let i: i64 = i64_const(0);
+        while i < entities {
+            let x1: i64 = ((i * i64_const(17) + f * i64_const(13)) % i64_const(1000)) - i64_const(500);
+            let y1: i64 = ((i * i64_const(19) + f * i64_const(11)) % i64_const(1000)) - i64_const(500);
+            let r1: i64 = ((i * i64_const(23)) % i64_const(40)) + i64_const(10);
+            
+            let j: i64 = i + i64_const(1);
+            while j < entities {
+                let x2: i64 = ((j * i64_const(17) + f * i64_const(13)) % i64_const(1000)) - i64_const(500);
+                let y2: i64 = ((j * i64_const(19) + f * i64_const(11)) % i64_const(1000)) - i64_const(500);
+                let r2: i64 = ((j * i64_const(23)) % i64_const(40)) + i64_const(10);
+                
+                let dx: i64 = x2 - x1;
+                let dy: i64 = y2 - y1;
+                let dist_sq: i64 = dx * dx + dy * dy;
+                
+                let rad_sum: i64 = r1 + r2;
+                let rad_sum_sq: i64 = rad_sum * rad_sum;
+                
+                if dist_sq <= rad_sum_sq {
+                    collisions = collisions + i64_const(1);
+                    checksum = (checksum * i64_const(31) + i + j) % i64_const(1000000007);
+                }
+                
+                j = j + i64_const(1);
+            }
+            i = i + i64_const(1);
+        }
+        checksum = (checksum * i64_const(37) + collisions) % i64_const(1000000007);
+        f = f + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(collision_detection(i64_const(512)));
+    return 0;
+}

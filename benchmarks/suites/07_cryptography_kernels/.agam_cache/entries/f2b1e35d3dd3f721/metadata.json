@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "f2b1e35d3dd3f721",
+  "key": {
+    "source_hash": "22ad04494a75ecc0",
+    "semantic_hash": "ec1de70cadef784d",
+    "backend": "C",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "CSource",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\07_cryptography_kernels\\crc32_checksum.agam",
+  "artifact_name": "temp_bench_agam_c.c",
+  "bytes": 17736,
+  "created_unix_ms": 1787936845720,
+  "last_used_unix_ms": 1787937148747
+}

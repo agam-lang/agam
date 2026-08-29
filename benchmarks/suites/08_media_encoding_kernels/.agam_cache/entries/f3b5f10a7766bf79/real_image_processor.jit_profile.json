@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "backend": "jit",
+  "runs": 2,
+  "total_calls": 258066,
+  "total_hits": 64940,
+  "total_stores": 164,
+  "functions": [
+    {
+      "name": "graphics_magick_full_pipeline",
+      "runs": 2,
+      "total_calls": 2,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 1,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "i64_const",
+      "runs": 2,
+      "total_calls": 0,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 0,
+        "hottest_key_hits": 0,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "max3",
+      "runs": 2,
+      "total_calls": 129032,
+      "total_hits": 32470,
+      "total_stores": 82,
+      "last_entries": 13,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 809,
+        "avg_reuse_distance": 311,
+        "max_reuse_distance": 6760,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "min3",
+      "runs": 2,
+      "total_calls": 129032,
+      "total_hits": 32470,
+      "total_stores": 82,
+      "last_entries": 13,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 809,
+        "avg_reuse_distance": 311,
+        "max_reuse_distance": 6760,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    }
+  ]
+}

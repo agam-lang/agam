@@ -1,0 +1,61 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn distance_sq_3d(x1: i64, y1: i64, z1: i64, x2: i64, y2: i64, z2: i64) -> i64 {
+    let dx: i64 = x2 - x1;
+    let dy: i64 = y2 - y1;
+    let dz: i64 = z2 - z1;
+    return dx*dx + dy*dy + dz*dz;
+}
+
+fn nbody_simulation(bodies: i64) -> i64 {
+    let steps: i64 = i64_const(10);
+    let checksum: i64 = i64_const(0);
+    
+    let step: i64 = i64_const(0);
+    while step < steps {
+        let i: i64 = i64_const(0);
+        while i < bodies {
+            let px: i64 = ((i * i64_const(17) + step) % i64_const(2000)) - i64_const(1000);
+            let py: i64 = ((i * i64_const(19) + step) % i64_const(2000)) - i64_const(1000);
+            let pz: i64 = ((i * i64_const(23) + step) % i64_const(2000)) - i64_const(1000);
+            
+            let fx: i64 = i64_const(0);
+            let fy: i64 = i64_const(0);
+            let fz: i64 = i64_const(0);
+            
+            let j: i64 = i64_const(0);
+            while j < bodies {
+                if i != j {
+                    let ox: i64 = ((j * i64_const(17) + step) % i64_const(2000)) - i64_const(1000);
+                    let oy: i64 = ((j * i64_const(19) + step) % i64_const(2000)) - i64_const(1000);
+                    let oz: i64 = ((j * i64_const(23) + step) % i64_const(2000)) - i64_const(1000);
+                    
+                    let dx: i64 = ox - px;
+                    let dy: i64 = oy - py;
+                    let dz: i64 = oz - pz;
+                    
+                    let d_sq: i64 = dx*dx + dy*dy + dz*dz;
+                    if d_sq == i64_const(0) { d_sq = i64_const(1); }
+                    
+                    let inv_dist_cubed: i64 = i64_const(1000000) / (d_sq * d_sq); // Approximation
+                    
+                    fx = fx + dx * inv_dist_cubed;
+                    fy = fy + dy * inv_dist_cubed;
+                    fz = fz + dz * inv_dist_cubed;
+                }
+                j = j + i64_const(1);
+            }
+            checksum = (checksum * i64_const(31) + fx + fy + fz) % i64_const(1000000007);
+            i = i + i64_const(1);
+        }
+        step = step + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(nbody_simulation(i64_const(256)));
+    return 0;
+}

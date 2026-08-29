@@ -1,0 +1,37 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn mandelbrot_set(size: i64) -> i64 {
+    let max_iter: i64 = i64_const(100);
+    let checksum: i64 = i64_const(0);
+    
+    let py: i64 = i64_const(0);
+    while py < size {
+        let px: i64 = i64_const(0);
+        while px < size {
+            let x0: i64 = (px * i64_const(3500)) / size - i64_const(2500);
+            let y0: i64 = (py * i64_const(2000)) / size - i64_const(1000);
+            
+            let x: i64 = i64_const(0);
+            let y: i64 = i64_const(0);
+            let iter: i64 = i64_const(0);
+            
+            while x*x + y*y <= i64_const(4000000) && iter < max_iter {
+                let xtemp: i64 = (x*x - y*y) / i64_const(1000) + x0;
+                y = (i64_const(2)*x*y) / i64_const(1000) + y0;
+                x = xtemp;
+                iter = iter + i64_const(1);
+            }
+            checksum = (checksum * i64_const(31) + iter) % i64_const(1000000007);
+            px = px + i64_const(1);
+        }
+        py = py + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(mandelbrot_set(i64_const(256)));
+    return 0;
+}

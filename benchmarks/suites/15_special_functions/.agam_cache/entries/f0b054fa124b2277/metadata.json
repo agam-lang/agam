@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "f0b054fa124b2277",
+  "key": {
+    "source_hash": "20b448505fac8ef6",
+    "semantic_hash": "c3be3de5eec8a364",
+    "backend": "Llvm",
+    "opt_level": 3,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=native;llvm_wsl_allowed=false;llvm_clang=C:\\Program Files\\LLVM\\bin\\clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
+  },
+  "artifact_kind": "NativeBinary",
+  "source_path": "benchmarks/suites/15_special_functions/special_functions.agam",
+  "artifact_name": "temp_spec_llvm.exe",
+  "bytes": 169984,
+  "created_unix_ms": 1787682308451,
+  "last_used_unix_ms": 1787682308451
+}

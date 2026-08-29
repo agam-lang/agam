@@ -1,0 +1,26 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn tensor_volume_checksum(width: i64, height: i64, depth: i64) -> i64 {
+    let total: i64 = i64_const(0);
+    let z: i64 = i64_const(0);
+    while z < depth {
+        let y: i64 = i64_const(0);
+        while y < height {
+            let x: i64 = i64_const(0);
+            while x < width {
+                total = total + (((x * i64_const(31)) + (y * i64_const(17)) + (z * i64_const(13))) % i64_const(4093));
+                x = x + i64_const(1);
+            }
+            y = y + i64_const(1);
+        }
+        z = z + i64_const(1);
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(tensor_volume_checksum(i64_const(96), i64_const(96), i64_const(16)));
+    return 0;
+}

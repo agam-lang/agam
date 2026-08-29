@@ -1,0 +1,39 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
+fn is_prime(n: i64) -> i64 {
+    let zero: i64 = i64_const(0);
+    let one: i64 = i64_const(1);
+    let two: i64 = i64_const(2);
+    if n < two {
+        return 0;
+    }
+    let d: i64 = two;
+    while d * d <= n {
+        if n % d == zero {
+            return zero;
+        }
+        d = d + one;
+    }
+    return one;
+}
+
+fn prime_count(limit: i64) -> i64 {
+    let one: i64 = i64_const(1);
+    let two: i64 = i64_const(2);
+    let total: i64 = i64_const(0);
+    let n: i64 = two;
+    while n <= limit {
+        total = total + is_prime(n);
+        n = n + one;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(prime_count(i64_const(25000)));
+    return 0;
+}

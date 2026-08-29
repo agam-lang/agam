@@ -1,0 +1,5 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: verify program compiles and runs via C backend.
+fn main() -> i32 { print_int(i64_const(77)); return 0; }

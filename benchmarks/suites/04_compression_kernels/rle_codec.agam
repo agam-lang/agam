@@ -1,0 +1,44 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn rle_encode_checksum(data_size: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let encoded_len: i64 = i64_const(0);
+    let pos: i64 = i64_const(0);
+    while pos < data_size {
+        let current: i64 = (pos * i64_const(13) + i64_const(7)) % i64_const(64);
+        let run_len: i64 = i64_const(1);
+        while pos + run_len < data_size {
+            let next: i64 = ((pos + run_len) * i64_const(13) + i64_const(7)) % i64_const(64);
+            if next != current {
+                break;
+            }
+            run_len = run_len + i64_const(1);
+            if run_len >= i64_const(255) {
+                break;
+            }
+        }
+        checksum = (checksum * i64_const(31) + current * i64_const(17) + run_len * i64_const(11)) % i64_const(1000000007);
+        encoded_len = encoded_len + i64_const(2);
+        pos = pos + run_len;
+    }
+    let decode_check: i64 = i64_const(0);
+    let d: i64 = i64_const(0);
+    while d < encoded_len {
+        let sym: i64 = (d * i64_const(31) + i64_const(17)) % i64_const(256);
+        let count: i64 = (d * i64_const(11) + i64_const(7)) % i64_const(128) + i64_const(1);
+        let k: i64 = i64_const(0);
+        while k < count {
+            decode_check = (decode_check * i64_const(29) + sym) % i64_const(1000000007);
+            k = k + i64_const(1);
+        }
+        d = d + i64_const(2);
+    }
+    return (checksum + decode_check) % i64_const(1000000007);
+}
+
+fn main() -> i32 {
+    print_int(rle_encode_checksum(i64_const(8192)));
+    return 0;
+}

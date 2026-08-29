@@ -1,0 +1,58 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn dct_checksum(blocks: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let b: i64 = i64_const(0);
+    while b < blocks {
+        let input_sum: i64 = i64_const(0);
+        let output_sum: i64 = i64_const(0);
+        
+        let u: i64 = i64_const(0);
+        while u < i64_const(8) {
+            let v: i64 = i64_const(0);
+            while v < i64_const(8) {
+                let sum: i64 = i64_const(0);
+                let x: i64 = i64_const(0);
+                while x < i64_const(8) {
+                    let y: i64 = i64_const(0);
+                    while y < i64_const(8) {
+                        let pixel: i64 = ((b * i64_const(64) + x * i64_const(8) + y) * i64_const(17) + i64_const(13)) % i64_const(256);
+                        if u == i64_const(0) && v == i64_const(0) {
+                            input_sum = (input_sum + pixel) % i64_const(1000000007);
+                        }
+                        
+                        let cos_x: i64 = ((i64_const(2) * x + i64_const(1)) * u * i64_const(314159)) / i64_const(1600000);
+                        let cos_y: i64 = ((i64_const(2) * y + i64_const(1)) * v * i64_const(314159)) / i64_const(1600000);
+                        
+                        let cx: i64 = (i64_const(1000) * (i64_const(100) - (cos_x * cos_x) / i64_const(20000))) / i64_const(100);
+                        let cy: i64 = (i64_const(1000) * (i64_const(100) - (cos_y * cos_y) / i64_const(20000))) / i64_const(100);
+                        
+                        sum = sum + (pixel * cx * cy) / i64_const(1000000);
+                        y = y + i64_const(1);
+                    }
+                    x = x + i64_const(1);
+                }
+                
+                let cu: i64 = i64_const(1000);
+                if u == i64_const(0) { cu = i64_const(707); }
+                let cv: i64 = i64_const(1000);
+                if v == i64_const(0) { cv = i64_const(707); }
+                
+                let dct_val: i64 = (sum * cu * cv) / i64_const(4000000);
+                output_sum = (output_sum * i64_const(31) + (dct_val + i64_const(10000))) % i64_const(1000000007);
+                v = v + i64_const(1);
+            }
+            u = u + i64_const(1);
+        }
+        checksum = (checksum * i64_const(37) + input_sum + output_sum) % i64_const(1000000007);
+        b = b + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(dct_checksum(i64_const(64)));
+    return 0;
+}

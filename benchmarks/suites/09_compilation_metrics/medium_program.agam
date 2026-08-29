@@ -1,0 +1,14 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn compute(n: i64) -> i64 {
+    let total: i64 = i64_const(0);
+    let i: i64 = i64_const(0);
+    while i < n {
+        total = total + ((i * i64_const(31)) + i64_const(7)) % i64_const(4099);
+        i = i + i64_const(1);
+    }
+    return total;
+}
+fn main() -> i32 { print_int(compute(i64_const(10000))); return 0; }

@@ -1,0 +1,36 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+fn default_size() -> i64 { return i64_const(i64_const(96)); }
+fn arg_or(index: i32, fallback: i64) -> i64 {
+    if argc() > index { return parse_int(argv(index)); }
+    return fallback;
+}
+
+fn matmul_score(size: i64) -> i64 {
+    let one: i64 = i64_const(i64_const(1));
+    let twenty_nine: i64 = i64_const(i64_const(29));
+    let thirty_one: i64 = i64_const(i64_const(31));
+    let total: i64 = i64_const(i64_const(0));
+    let row: i64 = i64_const(i64_const(0));
+    while row < size {
+        let col: i64 = i64_const(i64_const(0));
+        while col < size {
+            let inner: i64 = i64_const(i64_const(0));
+            let cell: i64 = i64_const(i64_const(0));
+            while inner < size {
+                cell = cell + (((row + inner) % thirty_one) * ((inner + col) % twenty_nine));
+                inner = inner + one;
+            }
+            total = total + cell;
+            col = col + one;
+        }
+        row = row + one;
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(matmul_score(arg_or(1, default_size())));
+    return 0;
+}

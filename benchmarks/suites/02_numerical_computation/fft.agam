@@ -1,0 +1,24 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn butterfly_cost(size: i64) -> i64 {
+    let total: i64 = i64_const(0);
+    let stage: i64 = i64_const(1);
+    while stage < size {
+        let i: i64 = i64_const(0);
+        while i < size {
+            let left: i64 = ((i * i64_const(19)) + stage) % i64_const(65521);
+            let right: i64 = ((i * i64_const(23)) + (stage * i64_const(3))) % i64_const(65521);
+            total = total + (left + right) - (left - right);
+            i = i + (stage * i64_const(2));
+        }
+        stage = stage * i64_const(2);
+    }
+    return total;
+}
+
+fn main() -> i32 {
+    print_int(butterfly_cost(i64_const(16384)));
+    return 0;
+}

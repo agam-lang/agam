@@ -1,0 +1,11 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: arithmetic operators produce correct results.
+fn main() -> i32 {
+    let a: i64 = i64_const(15) + i64_const(27);
+    let b: i64 = i64_const(100) - i64_const(58);
+    let c: i64 = a * b;
+    print_int(c);
+    return 0;
+}

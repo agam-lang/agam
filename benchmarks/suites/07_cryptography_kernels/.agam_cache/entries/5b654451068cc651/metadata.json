@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "5b654451068cc651",
+  "key": {
+    "source_hash": "fd1262dad51d4389",
+    "semantic_hash": "29450f9acf2a67c7",
+    "backend": "Llvm",
+    "opt_level": 3,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=missing;llvm_wsl_allowed=false;llvm_clang=clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
+  },
+  "artifact_kind": "LlvmIr",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\07_cryptography_kernels\\sha256_hash.agam",
+  "artifact_name": "temp_bench_agam_llvm.ll",
+  "bytes": 44665,
+  "created_unix_ms": 1787936849805,
+  "last_used_unix_ms": 1787937153195
+}

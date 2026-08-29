@@ -1,0 +1,6 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: let bindings infer type from RHS correctly.
+fn get_value() -> i64 { return i64_const(42); }
+fn main() -> i32 { let x: i64 = get_value(); print_int(x); return 0; }

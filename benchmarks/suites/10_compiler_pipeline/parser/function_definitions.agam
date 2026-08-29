@@ -1,0 +1,7 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: function definitions with multiple params and return types.
+fn add(a: i64, b: i64) -> i64 { return a + b; }
+fn square(x: i64) -> i64 { return x * x; }
+fn main() -> i32 { print_int(add(square(i64_const(3)), square(i64_const(4)))); return 0; }

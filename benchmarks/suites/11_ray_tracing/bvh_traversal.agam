@@ -1,0 +1,88 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn max_val(a: i64, b: i64) -> i64 {
+    if a > b { return a; }
+    return b;
+}
+
+fn min_val(a: i64, b: i64) -> i64 {
+    if a < b { return a; }
+    return b;
+}
+
+fn non_zero_dir(value: i64) -> i64 {
+    if value >= i64_const(0) { return value + i64_const(1); }
+    return value - i64_const(1);
+}
+
+fn bvh_traversal(rays: i64) -> i64 {
+    let nodes: i64 = i64_const(256);
+    let checksum: i64 = i64_const(0);
+    
+    let r: i64 = i64_const(0);
+    while r < rays {
+        let ox: i64 = ((r * i64_const(17)) % i64_const(1000));
+        let oy: i64 = ((r * i64_const(31)) % i64_const(1000));
+        let oz: i64 = i64_const(-100);
+        
+        let dx: i64 = ((r * i64_const(13)) % i64_const(20)) - i64_const(10);
+        let dy: i64 = ((r * i64_const(19)) % i64_const(20)) - i64_const(10);
+        let dz: i64 = i64_const(100);
+        let dx_div: i64 = non_zero_dir(dx);
+        let dy_div: i64 = non_zero_dir(dy);
+        
+        let stack_size: i64 = i64_const(0);
+        let current_node: i64 = i64_const(0);
+        let hits: i64 = i64_const(0);
+        
+        let steps: i64 = i64_const(0);
+        while steps < i64_const(100) {
+            let min_x: i64 = (current_node * i64_const(7)) % i64_const(1000);
+            let max_x: i64 = min_x + i64_const(100);
+            let min_y: i64 = (current_node * i64_const(11)) % i64_const(1000);
+            let max_y: i64 = min_y + i64_const(100);
+            
+            let tmin_x_raw: i64 = (min_x - ox) * i64_const(100) / dx_div;
+            let tmax_x_raw: i64 = (max_x - ox) * i64_const(100) / dx_div;
+            let tmin_x: i64 = min_val(tmin_x_raw, tmax_x_raw);
+            let tmax_x: i64 = max_val(tmin_x_raw, tmax_x_raw);
+            
+            let tmin_y_raw: i64 = (min_y - oy) * i64_const(100) / dy_div;
+            let tmax_y_raw: i64 = (max_y - oy) * i64_const(100) / dy_div;
+            let tmin_y: i64 = min_val(tmin_y_raw, tmax_y_raw);
+            let tmax_y: i64 = max_val(tmin_y_raw, tmax_y_raw);
+            
+            let tmin: i64 = tmin_x;
+            if tmin_y > tmin { tmin = tmin_y; }
+            let tmax: i64 = tmax_x;
+            if tmax_y < tmax { tmax = tmax_y; }
+            
+            if tmax >= tmin && tmax > i64_const(0) {
+                if current_node % i64_const(3) == i64_const(0) {
+                    hits = hits + i64_const(1);
+                    stack_size = stack_size - i64_const(1);
+                    if stack_size < i64_const(0) { steps = i64_const(999); }
+                    current_node = (current_node * i64_const(2)) % nodes;
+                } else {
+                    stack_size = stack_size + i64_const(1);
+                    current_node = (current_node * i64_const(2) + i64_const(1)) % nodes;
+                }
+            } else {
+                stack_size = stack_size - i64_const(1);
+                if stack_size < i64_const(0) { steps = i64_const(999); }
+                current_node = (current_node + i64_const(1)) % nodes;
+            }
+            steps = steps + i64_const(1);
+        }
+        checksum = (checksum * i64_const(31) + hits) % i64_const(1000000007);
+        r = r + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(bvh_traversal(i64_const(4096)));
+    return 0;
+}

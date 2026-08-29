@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "d809ef268f376940",
+  "key": {
+    "source_hash": "06474174451d9320",
+    "semantic_hash": "8e382b02256f749c",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\01_algorithms\\fibonacci.agam",
+  "artifact_name": "fibonacci.jit_profile.json",
+  "bytes": 1642,
+  "created_unix_ms": 1787984990350,
+  "last_used_unix_ms": 1787984990350
+}

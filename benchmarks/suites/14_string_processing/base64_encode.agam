@@ -1,0 +1,36 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn base64_encode(length: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    
+    let iter: i64 = i64_const(0);
+    while iter < i64_const(100) {
+        let i: i64 = i64_const(0);
+        while i < length {
+            let b1: i64 = ((i * i64_const(17) + iter * i64_const(13)) % i64_const(256));
+            let b2: i64 = (((i+i64_const(1)) * i64_const(19) + iter * i64_const(7)) % i64_const(256));
+            let b3: i64 = (((i+i64_const(2)) * i64_const(23) + iter * i64_const(11)) % i64_const(256));
+            
+            let enc1: i64 = (b1 >> i64_const(2)) & i64_const(63);
+            let enc2: i64 = ((b1 & i64_const(3)) << i64_const(4)) | ((b2 >> i64_const(4)) & i64_const(15));
+            let enc3: i64 = ((b2 & i64_const(15)) << i64_const(2)) | ((b3 >> i64_const(6)) & i64_const(3));
+            let enc4: i64 = b3 & i64_const(63);
+            
+            checksum = (checksum * i64_const(31) + enc1) % i64_const(1000000007);
+            checksum = (checksum * i64_const(31) + enc2) % i64_const(1000000007);
+            checksum = (checksum * i64_const(31) + enc3) % i64_const(1000000007);
+            checksum = (checksum * i64_const(31) + enc4) % i64_const(1000000007);
+            
+            i = i + i64_const(3);
+        }
+        iter = iter + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(base64_encode(i64_const(10000)));
+    return 0;
+}

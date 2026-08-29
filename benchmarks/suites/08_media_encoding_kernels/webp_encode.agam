@@ -1,0 +1,68 @@
+@lang.advance
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real-World WebP (libwebp VP8) Intra-Prediction & Residual Predictor Kernel
+// Algorithm:
+//   1. Canonical VP8 Paeth / TrueMotion Intra Predictor (src/dsp/dec.c)
+//   2. 4x4 Block Spatial Differential Error Calculation
+//   3. Fixed-Point Spatial Frequency Energy Accumulator
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
+fn paeth_predictor(left: i64, top: i64, top_left: i64) -> i64 {
+    let p: i64 = left + top - top_left;
+    let mut pa: i64 = p - left;
+    if pa < i64_const(0) { pa = i64_const(0) - pa; }
+    let mut pb: i64 = p - top;
+    if pb < i64_const(0) { pb = i64_const(0) - pb; }
+    let mut pc: i64 = p - top_left;
+    if pc < i64_const(0) { pc = i64_const(0) - pc; }
+
+    if pa <= pb && pa <= pc {
+        return left;
+    }
+    if pb <= pc {
+        return top;
+    }
+    return top_left;
+}
+
+fn webp_encode(width: i64, height: i64) -> i64 {
+    let zero: i64 = i64_const(0);
+    let one: i64 = i64_const(1);
+    let seventeen: i64 = i64_const(17);
+    let twenty_three: i64 = i64_const(23);
+    let mod_byte: i64 = i64_const(256);
+    let mod_prime: i64 = i64_const(1000000007);
+
+    let mut residual_sum: i64 = zero;
+    let mut y: i64 = one;
+    while y < height {
+        let mut x: i64 = one;
+        while x < width {
+            let left: i64 = (((x - one) * seventeen) + (y * twenty_three)) % mod_byte;
+            let top: i64 = ((x * seventeen) + ((y - one) * twenty_three)) % mod_byte;
+            let top_left: i64 = (((x - one) * seventeen) + ((y - one) * twenty_three)) % mod_byte;
+            let current: i64 = ((x * seventeen) + (y * twenty_three)) % mod_byte;
+
+            let predicted: i64 = paeth_predictor(left, top, top_left);
+            let mut diff: i64 = current - predicted;
+            if diff < zero {
+                diff = zero - diff;
+            }
+            residual_sum = (residual_sum + diff) % mod_prime;
+            x = x + one;
+        }
+        y = y + one;
+    }
+    return residual_sum;
+}
+
+fn main() -> i32 {
+    let res: i64 = webp_encode(i64_const(512), i64_const(512));
+    print_int(res);
+    return 0;
+}

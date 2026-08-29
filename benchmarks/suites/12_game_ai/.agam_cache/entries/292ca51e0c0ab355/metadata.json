@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "292ca51e0c0ab355",
+  "key": {
+    "source_hash": "a3b09f7045f16f19",
+    "semantic_hash": "6d4063447c002088",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\12_game_ai\\collision_detection.agam",
+  "artifact_name": "collision_detection.jit_profile.json",
+  "bytes": 1151,
+  "created_unix_ms": 1787985155167,
+  "last_used_unix_ms": 1787985155167
+}

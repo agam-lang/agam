@@ -1,0 +1,47 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn distance_sq(x1: i64, y1: i64, z1: i64, x2: i64, y2: i64, z2: i64) -> i64 {
+    let dx: i64 = x2 - x1;
+    let dy: i64 = y2 - y1;
+    let dz: i64 = z2 - z1;
+    return dx*dx + dy*dy + dz*dz;
+}
+
+fn photon_mapping(photons: i64) -> i64 {
+    let queries: i64 = i64_const(1024);
+    let checksum: i64 = i64_const(0);
+    
+    let q: i64 = i64_const(0);
+    while q < queries {
+        let qx: i64 = (q * i64_const(17)) % i64_const(1000);
+        let qy: i64 = (q * i64_const(19)) % i64_const(1000);
+        let qz: i64 = (q * i64_const(23)) % i64_const(1000);
+        
+        let gathered: i64 = i64_const(0);
+        let radius_sq: i64 = i64_const(10000);
+        
+        let p: i64 = i64_const(0);
+        while p < photons {
+            let px: i64 = (p * i64_const(31)) % i64_const(1000);
+            let py: i64 = (p * i64_const(37)) % i64_const(1000);
+            let pz: i64 = (p * i64_const(41)) % i64_const(1000);
+            
+            let d2: i64 = distance_sq(qx, qy, qz, px, py, pz);
+            if d2 < radius_sq {
+                let power: i64 = i64_const(1000) - (d2 * i64_const(1000)) / radius_sq;
+                gathered = gathered + power;
+            }
+            p = p + i64_const(1);
+        }
+        checksum = (checksum * i64_const(31) + gathered) % i64_const(1000000007);
+        q = q + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(photon_mapping(i64_const(4096)));
+    return 0;
+}

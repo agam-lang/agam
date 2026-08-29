@@ -1,0 +1,15 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn branch_walk(depth: i64, fanout: i64) -> i64 {
+    if depth == i64_const(0) { return fanout; }
+    let total: i64 = i64_const(0);
+    let child: i64 = i64_const(0);
+    while child < fanout {
+        total = total + branch_walk(depth - i64_const(1), fanout - i64_const(1)) + child;
+        child = child + i64_const(1);
+    }
+    return total;
+}
+fn main() -> i32 { print_int(branch_walk(i64_const(5), i64_const(6))); return 0; }

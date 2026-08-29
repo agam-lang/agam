@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "8802ac89f92ca15a",
+  "key": {
+    "source_hash": "50e7d3769694f7e4",
+    "semantic_hash": "afa195e34a6c0367",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\04_compression_kernels\\huffman_coding.agam",
+  "artifact_name": "huffman_coding.jit_profile.json",
+  "bytes": 1148,
+  "created_unix_ms": 1787985040410,
+  "last_used_unix_ms": 1787985040410
+}

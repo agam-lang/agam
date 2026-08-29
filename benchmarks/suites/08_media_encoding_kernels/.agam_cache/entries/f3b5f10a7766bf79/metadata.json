@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "f3b5f10a7766bf79",
+  "key": {
+    "source_hash": "72a00a6d7f318cbe",
+    "semantic_hash": "d30a79f9ef919069",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\08_media_encoding_kernels\\real_image_processor.agam",
+  "artifact_name": "real_image_processor.jit_profile.json",
+  "bytes": 2190,
+  "created_unix_ms": 1787985109106,
+  "last_used_unix_ms": 1787985109106
+}

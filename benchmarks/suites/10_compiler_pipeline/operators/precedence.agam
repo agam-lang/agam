@@ -1,0 +1,10 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: operator precedence (multiply before add).
+fn main() -> i32 {
+    let a: i64 = i64_const(2) + i64_const(3) * i64_const(4);
+    let b: i64 = (i64_const(2) + i64_const(3)) * i64_const(4);
+    print_int(a * i64_const(1000) + b);
+    return 0;
+}

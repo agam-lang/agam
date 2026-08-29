@@ -1,0 +1,75 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn abs_diff(a: i64, b: i64) -> i64 {
+    if a > b { return a - b; }
+    return b - a;
+}
+
+fn motion_est_checksum(frames: i64) -> i64 {
+    let width: i64 = i64_const(64);
+    let height: i64 = i64_const(64);
+    let block_size: i64 = i64_const(8);
+    let search_range: i64 = i64_const(4);
+    let checksum: i64 = i64_const(0);
+    
+    let f: i64 = i64_const(0);
+    while f < frames {
+        let by: i64 = i64_const(0);
+        while by < height / block_size {
+            let bx: i64 = i64_const(0);
+            while bx < width / block_size {
+                let best_sad: i64 = i64_const(999999999);
+                let best_dy: i64 = i64_const(0);
+                let best_dx: i64 = i64_const(0);
+                
+                let dy: i64 = -search_range;
+                while dy <= search_range {
+                    let dx: i64 = -search_range;
+                    while dx <= search_range {
+                        let sad: i64 = i64_const(0);
+                        let r: i64 = i64_const(0);
+                        while r < block_size {
+                            let c: i64 = i64_const(0);
+                            while c < block_size {
+                                let cy: i64 = by * block_size + r;
+                                let cx: i64 = bx * block_size + c;
+                                let ry: i64 = cy + dy;
+                                let rx: i64 = cx + dx;
+                                
+                                let cur_pixel: i64 = ((f * width * height + cy * width + cx) * i64_const(17) + i64_const(13)) % i64_const(256);
+                                let ref_pixel: i64 = i64_const(0);
+                                if ry >= i64_const(0) && ry < height && rx >= i64_const(0) && rx < width {
+                                    ref_pixel = (((f - i64_const(1)) * width * height + ry * width + rx) * i64_const(17) + i64_const(13)) % i64_const(256);
+                                }
+                                
+                                sad = sad + abs_diff(cur_pixel, ref_pixel);
+                                c = c + i64_const(1);
+                            }
+                            r = r + i64_const(1);
+                        }
+                        
+                        if sad < best_sad {
+                            best_sad = sad;
+                            best_dy = dy;
+                            best_dx = dx;
+                        }
+                        dx = dx + i64_const(1);
+                    }
+                    dy = dy + i64_const(1);
+                }
+                checksum = (checksum * i64_const(31) + best_sad + best_dy * i64_const(17) + best_dx * i64_const(7)) % i64_const(1000000007);
+                bx = bx + i64_const(1);
+            }
+            by = by + i64_const(1);
+        }
+        f = f + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(motion_est_checksum(i64_const(8)));
+    return 0;
+}

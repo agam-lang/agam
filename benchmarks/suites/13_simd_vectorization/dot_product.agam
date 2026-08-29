@@ -1,0 +1,23 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn dot_product(size: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let sum: i64 = i64_const(0);
+    
+    let i: i64 = i64_const(0);
+    while i < size {
+        let a: i64 = ((i * i64_const(17) + i64_const(13)) % i64_const(256)) - i64_const(128);
+        let b: i64 = ((i * i64_const(19) + i64_const(7)) % i64_const(256)) - i64_const(128);
+        sum = sum + a * b;
+        i = i + i64_const(1);
+    }
+    checksum = sum;
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(dot_product(i64_const(65536)));
+    return 0;
+}

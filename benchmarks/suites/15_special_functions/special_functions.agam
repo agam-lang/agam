@@ -1,0 +1,155 @@
+@lang.advance
+
+fn i64_const(v: i64) -> i64 {
+    return v;
+}
+
+fn f64_const(v: f64) -> f64 {
+    return v;
+}
+
+// Quadrant-reduced precise sin and cos using Taylor polynomials
+fn trig_sin(x: f64) -> f64 {
+    let pi: f64 = 3.14159265358979323846;
+    let twopi: f64 = 6.28318530717958647692;
+    let halfpi: f64 = 1.57079632679489661923;
+
+    // Positive modulo
+    let mut val: f64 = x;
+    while val < 0.0 {
+        val = val + twopi;
+    }
+    while val >= twopi {
+        val = val - twopi;
+    }
+
+    let mut quad: i64 = 0;
+    if val >= halfpi {
+        if val >= (2.0 * halfpi) {
+            if val >= (3.0 * halfpi) {
+                quad = 3;
+                val = val - (3.0 * halfpi);
+            } else {
+                quad = 2;
+                val = val - (2.0 * halfpi);
+            }
+        } else {
+            quad = 1;
+            val = val - halfpi;
+        }
+    }
+
+    let t2: f64 = val * val;
+    let s: f64 = val * (1.0 + t2 * (-0.16666666666666666 + t2 * (0.008333333333333333 + t2 * (-0.0001984126984126984 + t2 * (0.000002755731922398589 + t2 * (-0.000000025052108385441718 + t2 * 0.00000000016059043836821614))))));
+    let c: f64 = 1.0 + t2 * (-0.5 + t2 * (0.041666666666666664 + t2 * (-0.001388888888888889 + t2 * (0.0000248015873015873 + t2 * (-0.0000002755731922398589 + t2 * 0.0000000020876756987868098)))));
+
+    if quad == 0 {
+        return s;
+    }
+    if quad == 1 {
+        return c;
+    }
+    if quad == 2 {
+        return 0.0 - s;
+    }
+    return 0.0 - c;
+}
+
+fn trig_cos(x: f64) -> f64 {
+    let halfpi: f64 = 1.57079632679489661923;
+    return trig_sin(x + halfpi);
+}
+
+fn fourier_energy_scaled(num_harmonics: i64, num_samples: i64) -> i64 {
+    let pi: f64 = 3.14159265358979323846;
+    let dx: f64 = (2.0 * pi) / (num_samples as f64);
+    let mut total_energy: f64 = 0.0;
+
+    let mut n: i64 = 0 - num_harmonics;
+    while n <= num_harmonics {
+        let mut sum_re: f64 = 0.0;
+        let mut sum_im: f64 = 0.0;
+        let mut k: i64 = 0;
+        while k < num_samples {
+            let x: f64 = (k as f64) * dx;
+            let fx: f64 = x * (2.0 * pi - x) * (x - pi);
+            let angle: f64 = (n as f64) * x;
+            let cos_a: f64 = trig_cos(angle);
+            let sin_a: f64 = trig_sin(angle);
+            sum_re = sum_re + (fx * cos_a);
+            sum_im = sum_im - (fx * sin_a);
+            k = k + 1;
+        }
+        let cre: f64 = sum_re / (num_samples as f64);
+        let cim: f64 = sum_im / (num_samples as f64);
+        total_energy = total_energy + (cre * cre) + (cim * cim);
+        n = n + 1;
+    }
+
+    return (total_energy * 100000.0) as i64;
+}
+
+fn hypergeometric_scaled(grid_size: i64, max_terms: i64) -> i64 {
+    let a: f64 = 0.5;
+    let b: f64 = 1.0;
+    let c: f64 = 2.0;
+    let mut total_re: f64 = 0.0;
+    let mut total_im: f64 = 0.0;
+    let mut total_terms: i64 = 0;
+    let tol2: f64 = 0.000000000000000000000000000001; // 1e-30
+
+    let mut ix: i64 = 0;
+    while ix < grid_size {
+        let zr: f64 = ((ix as f64) - 25.0) * 0.015;
+        let mut iy: i64 = 0;
+        while iy < grid_size {
+            let zi: f64 = ((iy as f64) - 25.0) * 0.015;
+
+            let mut term_re: f64 = 1.0;
+            let mut term_im: f64 = 0.0;
+            let mut sum_re: f64 = 1.0;
+            let mut sum_im: f64 = 0.0;
+
+            let mut n_used: i64 = max_terms;
+            let mut n: i64 = 1;
+            while n < max_terms {
+                let dn: f64 = n as f64;
+                let factor_scalar: f64 = ((a + dn - 1.0) * (b + dn - 1.0)) / ((c + dn - 1.0) * dn);
+                let fz_re: f64 = factor_scalar * zr;
+                let fz_im: f64 = factor_scalar * zi;
+
+                let new_t_re: f64 = (term_re * fz_re) - (term_im * fz_im);
+                let new_t_im: f64 = (term_re * fz_im) + (term_im * fz_re);
+                term_re = new_t_re;
+                term_im = new_t_im;
+
+                sum_re = sum_re + term_re;
+                sum_im = sum_im + term_im;
+
+                let mag2: f64 = (term_re * term_re) + (term_im * term_im);
+                if mag2 < tol2 {
+                    n_used = n;
+                    n = max_terms; // break
+                } else {
+                    n = n + 1;
+                }
+            }
+            total_terms = total_terms + n_used;
+            total_re = total_re + sum_re;
+            total_im = total_im + sum_im;
+            iy = iy + 1;
+        }
+        ix = ix + 1;
+    }
+
+    let chk: i64 = (total_re * 1000.0) as i64 + (total_im * 1000.0) as i64 + total_terms;
+    return chk;
+}
+
+fn main() -> i32 {
+    let chk_fourier: i64 = fourier_energy_scaled(i64_const(16), i64_const(1024));
+    let chk_hyper: i64 = hypergeometric_scaled(i64_const(50), i64_const(200));
+    let combined_checksum: i64 = ((chk_fourier * i64_const(1000003)) ^ chk_hyper);
+    print_int(combined_checksum);
+    return 0;
+}

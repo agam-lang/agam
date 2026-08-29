@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "259e6f393da52b1b",
+  "key": {
+    "source_hash": "9e85d167fc405ead",
+    "semantic_hash": "03693e7bf8e26169",
+    "backend": "Llvm",
+    "opt_level": 3,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=missing;llvm_wsl_allowed=false;llvm_clang=clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
+  },
+  "artifact_kind": "LlvmIr",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\07_cryptography_kernels\\chacha20_cipher.agam",
+  "artifact_name": "temp_bench_agam_llvm.ll",
+  "bytes": 50645,
+  "created_unix_ms": 1787936840266,
+  "last_used_unix_ms": 1787937141297
+}

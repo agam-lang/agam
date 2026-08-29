@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "backend": "jit",
+  "runs": 2,
+  "total_calls": 4000,
+  "total_hits": 0,
+  "total_stores": 0,
+  "functions": [
+    {
+      "name": "block",
+      "runs": 2,
+      "total_calls": 4000,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [
+          {
+            "index": 1,
+            "raw_bits": 128,
+            "matches": 2000
+          }
+        ],
+        "specialization_guard_hits": 2000,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [
+          {
+            "stable_values": [
+              {
+                "index": 1,
+                "raw_bits": 128,
+                "matches": 2000
+              }
+            ],
+            "guard_hits": 2000,
+            "guard_fallbacks": 0
+          }
+        ],
+        "specialization_hint": {
+          "StableArguments": {
+            "slots": [
+              1
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "i64_const",
+      "runs": 2,
+      "total_calls": 0,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 0,
+        "hottest_key_hits": 0,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    }
+  ]
+}

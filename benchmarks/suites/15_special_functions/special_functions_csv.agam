@@ -1,0 +1,187 @@
+@lang.advance
+
+fn i64_const(v: i64) -> i64 { return v; }
+
+fn trig_sin(x: f64) -> f64 {
+    let pi: f64 = 3.14159265358979323846;
+    let twopi: f64 = 6.28318530717958647692;
+    let halfpi: f64 = 1.57079632679489661923;
+
+    let mut val: f64 = x;
+    while val < 0.0 {
+        val = val + twopi;
+    }
+    while val >= twopi {
+        val = val - twopi;
+    }
+
+    let mut quad: i64 = 0;
+    if val >= halfpi {
+        if val >= (2.0 * halfpi) {
+            if val >= (3.0 * halfpi) {
+                quad = 3;
+                val = val - (3.0 * halfpi);
+            } else {
+                quad = 2;
+                val = val - (2.0 * halfpi);
+            }
+        } else {
+            quad = 1;
+            val = val - halfpi;
+        }
+    }
+
+    let t2: f64 = val * val;
+    let s: f64 = val * (1.0 + t2 * (-0.16666666666666666 + t2 * (0.008333333333333333 + t2 * (-0.0001984126984126984 + t2 * (0.000002755731922398589 + t2 * (-0.000000025052108385441718 + t2 * 0.00000000016059043836821614))))));
+    let c: f64 = 1.0 + t2 * (-0.5 + t2 * (0.041666666666666664 + t2 * (-0.001388888888888889 + t2 * (0.0000248015873015873 + t2 * (-0.0000002755731922398589 + t2 * 0.0000000020876756987868098)))));
+
+    if quad == 0 { return s; }
+    if quad == 1 { return c; }
+    if quad == 2 { return 0.0 - s; }
+    return 0.0 - c;
+}
+
+fn trig_cos(x: f64) -> f64 {
+    let halfpi: f64 = 1.57079632679489661923;
+    return trig_sin(x + halfpi);
+}
+
+// Print fixed-point float to stdout: integer.micro
+fn print_float_6dec(v: f64) {
+    let mut is_neg: i64 = 0;
+    let mut val: f64 = v;
+    if val < 0.0 {
+        is_neg = 1;
+        val = 0.0 - val;
+    }
+    let integer_part: i64 = val as i64;
+    let fractional_part: i64 = ((val - (integer_part as f64)) * 1000000.0) as i64;
+
+    if is_neg == 1 {
+        print_str("-");
+    }
+    print_int(integer_part);
+    print_str(".");
+    if fractional_part < 100000 { print_str("0"); }
+    if fractional_part < 10000 { print_str("0"); }
+    if fractional_part < 1000 { print_str("0"); }
+    if fractional_part < 100 { print_str("0"); }
+    if fractional_part < 10 { print_str("0"); }
+    print_int(fractional_part);
+}
+
+fn main() -> i32 {
+    let pi: f64 = 3.14159265358979323846;
+    let num_harmonics: i64 = 16;
+    let num_samples: i64 = 1024;
+    let num_points: i64 = 1000;
+
+    let dx: f64 = (2.0 * pi) / (num_samples as f64);
+    let d_eval: f64 = (2.0 * pi) / (num_points as f64);
+
+    print_str("index,type,input_re,input_im,output_re,output_im,terms\n");
+
+    // 1. 1000 Fourier points
+    let mut k_ev: i64 = 0;
+    while k_ev < num_points {
+        let x_ev: f64 = (k_ev as f64) * d_eval;
+        let mut re_recon: f64 = 0.0;
+        let mut im_recon: f64 = 0.0;
+
+        let mut n: i64 = 0 - num_harmonics;
+        while n <= num_harmonics {
+            let mut sum_re: f64 = 0.0;
+            let mut sum_im: f64 = 0.0;
+            let mut k: i64 = 0;
+            while k < num_samples {
+                let x: f64 = (k as f64) * dx;
+                let fx: f64 = x * (2.0 * pi - x) * (x - pi);
+                let angle: f64 = (n as f64) * x;
+                sum_re = sum_re + (fx * trig_cos(angle));
+                sum_im = sum_im - (fx * trig_sin(angle));
+                k = k + 1;
+            }
+            let cre: f64 = sum_re / (num_samples as f64);
+            let cim: f64 = sum_im / (num_samples as f64);
+            let ev_angle: f64 = (n as f64) * x_ev;
+            let e_re: f64 = trig_cos(ev_angle);
+            let e_im: f64 = trig_sin(ev_angle);
+            re_recon = re_recon + (cre * e_re) - (cim * e_im);
+            im_recon = im_recon + (cre * e_im) + (cim * e_re);
+            n = n + 1;
+        }
+
+        print_int(k_ev);
+        print_str(",fourier,");
+        print_float_6dec(x_ev);
+        print_str(",0.000000,");
+        print_float_6dec(re_recon);
+        print_str(",");
+        print_float_6dec(im_recon);
+        print_str(",33\n");
+
+        k_ev = k_ev + 1;
+    }
+
+    // 2. 1000 Hypergeometric points
+    let a: f64 = 0.5;
+    let b: f64 = 1.0;
+    let c: f64 = 2.0;
+    let max_terms: i64 = 200;
+    let tol2: f64 = 0.000000000000000000000000000001;
+
+    let mut hk: i64 = 0;
+    while hk < num_points {
+        let r: f64 = 0.05 + 0.85 * ((hk as f64) / (num_points as f64));
+        let theta: f64 = (hk as f64) * 2.399963229728653;
+        let zr: f64 = r * trig_cos(theta);
+        let zi: f64 = r * trig_sin(theta);
+
+        let mut term_re: f64 = 1.0;
+        let mut term_im: f64 = 0.0;
+        let mut sum_re: f64 = 1.0;
+        let mut sum_im: f64 = 0.0;
+        let mut n_used: i64 = max_terms;
+
+        let mut n: i64 = 1;
+        while n < max_terms {
+            let dn: f64 = n as f64;
+            let factor: f64 = ((a + dn - 1.0) * (b + dn - 1.0)) / ((c + dn - 1.0) * dn);
+            let fz_re: f64 = factor * zr;
+            let fz_im: f64 = factor * zi;
+
+            let new_t_re: f64 = (term_re * fz_re) - (term_im * fz_im);
+            let new_t_im: f64 = (term_re * fz_im) + (term_im * fz_re);
+            term_re = new_t_re;
+            term_im = new_t_im;
+
+            sum_re = sum_re + term_re;
+            sum_im = sum_im + term_im;
+
+            let mag2: f64 = (term_re * term_re) + (term_im * term_im);
+            if mag2 < tol2 {
+                n_used = n;
+                n = max_terms;
+            } else {
+                n = n + 1;
+            }
+        }
+
+        print_int(1000 + hk);
+        print_str(",hypergeometric,");
+        print_float_6dec(zr);
+        print_str(",");
+        print_float_6dec(zi);
+        print_str(",");
+        print_float_6dec(sum_re);
+        print_str(",");
+        print_float_6dec(sum_im);
+        print_str(",");
+        print_int(n_used);
+        print_str("\n");
+
+        hk = hk + 1;
+    }
+
+    return 0;
+}

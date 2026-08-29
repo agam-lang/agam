@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "e2c0bb34626e2ebe",
+  "key": {
+    "source_hash": "c8b5d5c52f267c37",
+    "semantic_hash": "d02b966494bbcb0a",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\01_algorithms\\prime_sieve.agam",
+  "artifact_name": "prime_sieve.jit_profile.json",
+  "bytes": 1652,
+  "created_unix_ms": 1787984992818,
+  "last_used_unix_ms": 1787984992818
+}

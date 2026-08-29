@@ -1,0 +1,33 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn block_sort_checksum(size: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let i: i64 = i64_const(0);
+    while i < size {
+        let rot_checksum: i64 = i64_const(0);
+        let r: i64 = i64_const(0);
+        while r < size {
+            let idx: i64 = (i + r) % size;
+            let val: i64 = (idx * i64_const(7) + i64_const(13)) % i64_const(256);
+            rot_checksum = (rot_checksum * i64_const(31) + val) % i64_const(1000000007);
+            r = r + i64_const(1);
+        }
+        checksum = (checksum + rot_checksum) % i64_const(1000000007);
+        i = i + i64_const(1);
+    }
+    let sorted_check: i64 = i64_const(0);
+    let j: i64 = i64_const(0);
+    while j < size {
+        let last_col: i64 = ((j + size - i64_const(1)) % size * i64_const(7) + i64_const(13)) % i64_const(256);
+        sorted_check = (sorted_check * i64_const(37) + last_col * (j + i64_const(1))) % i64_const(1000000007);
+        j = j + i64_const(1);
+    }
+    return (checksum + sorted_check) % i64_const(1000000007);
+}
+
+fn main() -> i32 {
+    print_int(block_sort_checksum(i64_const(256)));
+    return 0;
+}

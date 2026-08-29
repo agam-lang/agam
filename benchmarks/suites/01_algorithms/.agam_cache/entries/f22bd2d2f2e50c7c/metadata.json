@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "f22bd2d2f2e50c7c",
+  "key": {
+    "source_hash": "aedcfc15c3632327",
+    "semantic_hash": "d2c5bd5602f6edfa",
+    "backend": "C",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "CSource",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\01_algorithms\\binary_search.agam",
+  "artifact_name": "temp_bench_agam_c.c",
+  "bytes": 17658,
+  "created_unix_ms": 1787936697496,
+  "last_used_unix_ms": 1787936994892
+}

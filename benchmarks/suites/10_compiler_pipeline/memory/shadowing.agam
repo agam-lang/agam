@@ -1,0 +1,17 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: variable shadowing in nested scopes.
+fn main() -> i32 {
+    let x: i64 = i64_const(5);
+    let result: i64 = x;
+    let i: i64 = i64_const(0);
+    while i < i64_const(1) {
+        let x: i64 = i64_const(100);
+        result = result + x;
+        i = i + i64_const(1);
+    }
+    result = result + x;
+    print_int(result);
+    return 0;
+}

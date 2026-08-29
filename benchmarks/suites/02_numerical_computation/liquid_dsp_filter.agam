@@ -1,0 +1,27 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn liquid_dsp_fir(num_samples: i64, taps: i64) -> i64 {
+    let mut accumulator: i64 = i64_const(0);
+    let mut i: i64 = taps;
+    while i < num_samples {
+        let mut sample_acc: i64 = i64_const(0);
+        let mut k: i64 = i64_const(0);
+        while k < taps {
+            let input_val: i64 = ((i - k) * i64_const(37)) % i64_const(1000);
+            let coeff: i64 = (k * i64_const(13)) % i64_const(256);
+            sample_acc = sample_acc + input_val * coeff;
+            k = k + i64_const(1);
+        }
+        accumulator = (accumulator + sample_acc) % i64_const(1000000007);
+        i = i + i64_const(1);
+    }
+    return accumulator;
+}
+
+fn main() -> i32 {
+    let res: i64 = liquid_dsp_fir(i64_const(50000), i64_const(32));
+    print_int(res);
+    return 0;
+}

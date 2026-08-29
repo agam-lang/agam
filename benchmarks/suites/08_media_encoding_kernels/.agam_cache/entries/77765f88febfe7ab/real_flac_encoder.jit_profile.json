@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "backend": "jit",
+  "runs": 2,
+  "total_calls": 409850,
+  "total_hits": 0,
+  "total_stores": 3,
+  "functions": [
+    {
+      "name": "encode_flac_frame",
+      "runs": 2,
+      "total_calls": 50,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 25,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [
+          {
+            "index": 1,
+            "raw_bits": 4096,
+            "matches": 25
+          }
+        ],
+        "specialization_guard_hits": 25,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [
+          {
+            "stable_values": [
+              {
+                "index": 1,
+                "raw_bits": 4096,
+                "matches": 25
+              }
+            ],
+            "guard_hits": 25,
+            "guard_fallbacks": 0
+          }
+        ],
+        "specialization_hint": {
+          "StableArguments": {
+            "slots": [
+              1
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "estimate_rice_parameter",
+      "runs": 2,
+      "total_calls": 50,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 15,
+        "hottest_key_hits": 3,
+        "avg_reuse_distance": 71313,
+        "max_reuse_distance": 122955,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "flac_crc16_update",
+      "runs": 2,
+      "total_calls": 409750,
+      "total_hits": 0,
+      "total_stores": 3,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 2,
+        "avg_reuse_distance": 50,
+        "max_reuse_distance": 60,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    }
+  ]
+}

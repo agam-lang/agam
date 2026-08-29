@@ -1,0 +1,87 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn max_val(a: i64, b: i64) -> i64 {
+    if a > b { return a; }
+    return b;
+}
+
+fn min_val(a: i64, b: i64) -> i64 {
+    if a < b { return a; }
+    return b;
+}
+
+fn evaluate_board(state: i64) -> i64 {
+    let score: i64 = i64_const(0);
+    let i: i64 = i64_const(0);
+    while i < i64_const(9) {
+        let piece: i64 = (state >> (i * i64_const(2))) & i64_const(3);
+        if piece == i64_const(1) { score = score + i64_const(10); }
+        if piece == i64_const(2) { score = score - i64_const(10); }
+        i = i + i64_const(1);
+    }
+    return score;
+}
+
+fn minimax_max(state: i64, depth: i64) -> i64 {
+    if depth == i64_const(0) {
+        return evaluate_board(state);
+    }
+
+    let best_max_val: i64 = i64_const(-999999);
+    let max_index: i64 = i64_const(0);
+    while max_index < i64_const(9) {
+        if ((state >> (max_index * i64_const(2))) & i64_const(3)) == i64_const(0) {
+            let next_max_state: i64 = state | (i64_const(1) << (max_index * i64_const(2)));
+            let max_child_val: i64 = minimax_min(next_max_state, depth - i64_const(1));
+            best_max_val = max_val(best_max_val, max_child_val);
+        }
+        max_index = max_index + i64_const(1);
+    }
+    if best_max_val == i64_const(-999999) { return evaluate_board(state); }
+    return best_max_val;
+}
+
+fn minimax_min(state: i64, depth: i64) -> i64 {
+    if depth == i64_const(0) {
+        return evaluate_board(state);
+    }
+
+    let best_min_val: i64 = i64_const(999999);
+    let min_index: i64 = i64_const(0);
+    while min_index < i64_const(9) {
+        if ((state >> (min_index * i64_const(2))) & i64_const(3)) == i64_const(0) {
+            let next_min_state: i64 = state | (i64_const(2) << (min_index * i64_const(2)));
+            let min_child_val: i64 = minimax_max(next_min_state, depth - i64_const(1));
+            best_min_val = min_val(best_min_val, min_child_val);
+        }
+        min_index = min_index + i64_const(1);
+    }
+    if best_min_val == i64_const(999999) { return evaluate_board(state); }
+    return best_min_val;
+}
+
+fn minimax(state: i64, depth: i64, is_max: i64) -> i64 {
+    if is_max != i64_const(0) {
+        return minimax_max(state, depth);
+    }
+    return minimax_min(state, depth);
+}
+
+fn minimax_search(games: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let g: i64 = i64_const(0);
+    while g < games {
+        let initial_state: i64 = (g * i64_const(12345)) % i64_const(262144); // Randomish start state
+        let result: i64 = minimax(initial_state, i64_const(6), i64_const(1));
+        checksum = (checksum * i64_const(31) + result) % i64_const(1000000007);
+        g = g + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(minimax_search(i64_const(64)));
+    return 0;
+}

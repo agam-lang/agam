@@ -1,0 +1,55 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn audio_lpc_checksum(frames: i64) -> i64 {
+    let order: i64 = i64_const(10);
+    let frame_size: i64 = i64_const(256);
+    let checksum: i64 = i64_const(0);
+    
+    let f: i64 = i64_const(0);
+    while f < frames {
+        let max_r: i64 = i64_const(0);
+        let lag: i64 = i64_const(0);
+        while lag <= order {
+            let r: i64 = i64_const(0);
+            let i: i64 = i64_const(0);
+            while i < frame_size - lag {
+                let s1: i64 = ((f * frame_size + i) * i64_const(17) + i64_const(13)) % i64_const(65536) - i64_const(32768);
+                let s2: i64 = ((f * frame_size + i + lag) * i64_const(17) + i64_const(13)) % i64_const(65536) - i64_const(32768);
+                r = r + (s1 * s2) / i64_const(32768);
+                i = i + i64_const(1);
+            }
+            if r < i64_const(0) { r = -r; }
+            if r > max_r { max_r = r; }
+            checksum = (checksum * i64_const(31) + r) % i64_const(1000000007);
+            lag = lag + i64_const(1);
+        }
+        
+        let residual: i64 = i64_const(0);
+        let i_r: i64 = order;
+        while i_r < frame_size {
+            let pred: i64 = i64_const(0);
+            let j: i64 = i64_const(1);
+            while j <= order {
+                let s: i64 = ((f * frame_size + i_r - j) * i64_const(17) + i64_const(13)) % i64_const(65536) - i64_const(32768);
+                let coef: i64 = (j * i64_const(17)) % i64_const(100);
+                pred = pred + (s * coef) / i64_const(100);
+                j = j + i64_const(1);
+            }
+            let actual: i64 = ((f * frame_size + i_r) * i64_const(17) + i64_const(13)) % i64_const(65536) - i64_const(32768);
+            let diff: i64 = actual - pred;
+            if diff < i64_const(0) { diff = -diff; }
+            residual = residual + diff;
+            i_r = i_r + i64_const(1);
+        }
+        checksum = (checksum * i64_const(37) + residual + max_r) % i64_const(1000000007);
+        f = f + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(audio_lpc_checksum(i64_const(32)));
+    return 0;
+}

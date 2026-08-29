@@ -1,0 +1,111 @@
+@lang.advance
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Real GraphicsMagick Image Processor Filter Pipeline in Pure Agam
+// Reference: http://www.graphicsmagick.org/
+//
+// Pipeline:
+//   1. 3x3 Discrete 2D Gaussian Laplacian Spatial Sharpen Convolution
+//   2. Real-Time RGB-to-HWB (Hue, Whiteness, Blackness) Color Transform
+//   3. Non-Linear Polar Swirl Coordinate Distortion Mapping
+//   4. Gaussian Filter Normalization & Checksum Generation
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn i64_const(val: i64) -> i64 {
+    return val;
+}
+
+fn min3(a: i64, b: i64, c: i64) -> i64 {
+    let mut m: i64 = a;
+    if b < m { m = b; }
+    if c < m { m = c; }
+    return m;
+}
+
+fn max3(a: i64, b: i64, c: i64) -> i64 {
+    let mut m: i64 = a;
+    if b > m { m = b; }
+    if c > m { m = c; }
+    return m;
+}
+
+fn graphics_magick_full_pipeline(dim: i64) -> i64 {
+    let zero: i64 = i64_const(0);
+    let one: i64 = i64_const(1);
+    let two: i64 = i64_const(2);
+    let thirteen: i64 = i64_const(13);
+    let mod_byte: i64 = i64_const(256);
+    let mod_prime: i64 = i64_const(1000000007);
+
+    let mut checksum: i64 = zero;
+
+    // 1. Process 2D image grid with 3x3 Gaussian Sharpen Convolution
+    let mut y: i64 = one;
+    while y < dim - one {
+        let mut x: i64 = one;
+        while x < dim - one {
+            // Procedural test pattern generation (simulating image scanline buffer)
+            let r_c: i64 = (x * y * i64_const(17)) % mod_byte;
+            let g_c: i64 = (x * y * i64_const(31)) % mod_byte;
+            let b_c: i64 = (x * y * i64_const(47)) % mod_byte;
+
+            let r_top: i64 = (x * (y - one) * i64_const(17)) % mod_byte;
+            let r_bot: i64 = (x * (y + one) * i64_const(17)) % mod_byte;
+            let r_left: i64 = ((x - one) * y * i64_const(17)) % mod_byte;
+            let r_right: i64 = ((x + one) * y * i64_const(17)) % mod_byte;
+
+            let r_tl: i64 = ((x - one) * (y - one) * i64_const(17)) % mod_byte;
+            let r_tr: i64 = ((x + one) * (y - one) * i64_const(17)) % mod_byte;
+            let r_bl: i64 = ((x - one) * (y + one) * i64_const(17)) % mod_byte;
+            let r_br: i64 = ((x + one) * (y + one) * i64_const(17)) % mod_byte;
+
+            // Discrete Gaussian Sharpen Convolution: [-1 -2 -1; -2 13 -2; -1 -2 -1]
+            let cross_term: i64 = (r_top * two) + (r_bot * two) + (r_left * two) + (r_right * two);
+            let diag_term: i64 = r_tl + r_tr + r_bl + r_br;
+            let conv_r: i64 = (r_c * thirteen) - cross_term - diag_term;
+
+            let mut sharp_r: i64 = conv_r;
+            if sharp_r < zero { sharp_r = zero; }
+            if sharp_r > i64_const(255) { sharp_r = i64_const(255); }
+
+            // 2. RGB-to-HWB Color Space Transformation (magick/color.c)
+            let w_val: i64 = min3(sharp_r, g_c, b_c);
+            let v_val: i64 = max3(sharp_r, g_c, b_c);
+            let b_val: i64 = i64_const(255) - v_val;
+
+            let delta: i64 = v_val - w_val;
+            let mut hue: i64 = zero;
+            if delta > zero {
+                if v_val == sharp_r {
+                    hue = ((g_c - b_c) * i64_const(60)) / delta;
+                } else if v_val == g_c {
+                    hue = i64_const(120) + (((b_c - sharp_r) * i64_const(60)) / delta);
+                } else {
+                    hue = i64_const(240) + (((sharp_r - g_c) * i64_const(60)) / delta);
+                }
+                if hue < zero { hue = hue + i64_const(360); }
+            }
+
+            // 3. Swirl Coordinate Distortion Mapping (magick/fx.c)
+            let dx: i64 = x - (dim / two);
+            let dy: i64 = y - (dim / two);
+            let r_sq: i64 = (dx * dx) + (dy * dy);
+            let swirl_factor: i64 = r_sq % i64_const(360);
+
+            // Accumulate processed pixel metric
+            let pixel_metric: i64 = sharp_r + (w_val * two) + (b_val * i64_const(3)) + hue + swirl_factor;
+            checksum = (checksum + pixel_metric) % mod_prime;
+
+            x = x + one;
+        }
+        y = y + one;
+    }
+
+    return checksum;
+}
+
+fn main() -> i32 {
+    let res: i64 = graphics_magick_full_pipeline(i64_const(256));
+    print_int(res);
+    return 0;
+}

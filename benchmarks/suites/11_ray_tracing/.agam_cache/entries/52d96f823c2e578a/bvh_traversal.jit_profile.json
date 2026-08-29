@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "backend": "jit",
+  "runs": 2,
+  "total_calls": 49154,
+  "total_hits": 17275,
+  "total_stores": 204,
+  "functions": [
+    {
+      "name": "bvh_traversal",
+      "runs": 2,
+      "total_calls": 2,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 1,
+        "hottest_key_hits": 1,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "i64_const",
+      "runs": 2,
+      "total_calls": 0,
+      "total_hits": 0,
+      "total_stores": 0,
+      "last_entries": 0,
+      "profile": {
+        "unique_keys": 0,
+        "hottest_key_hits": 0,
+        "avg_reuse_distance": null,
+        "max_reuse_distance": null,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "max_val",
+      "runs": 2,
+      "total_calls": 16384,
+      "total_hits": 516,
+      "total_stores": 82,
+      "last_entries": 41,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 10,
+        "avg_reuse_distance": 2609,
+        "max_reuse_distance": 5998,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "min_val",
+      "runs": 2,
+      "total_calls": 16384,
+      "total_hits": 516,
+      "total_stores": 82,
+      "last_entries": 41,
+      "profile": {
+        "unique_keys": 64,
+        "hottest_key_hits": 10,
+        "avg_reuse_distance": 2609,
+        "max_reuse_distance": 5998,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    },
+    {
+      "name": "non_zero_dir",
+      "runs": 2,
+      "total_calls": 16384,
+      "total_hits": 16243,
+      "total_stores": 40,
+      "last_entries": 20,
+      "profile": {
+        "unique_keys": 20,
+        "hottest_key_hits": 410,
+        "avg_reuse_distance": 59,
+        "max_reuse_distance": 119,
+        "stable_values": [],
+        "specialization_guard_hits": 0,
+        "specialization_guard_fallbacks": 0,
+        "specialization_profiles": [],
+        "specialization_hint": "None"
+      }
+    }
+  ]
+}

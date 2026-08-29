@@ -1,0 +1,6 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: function signatures with multiple typed params.
+fn combine(a: i64, b: i64, c: i64) -> i64 { return a * i64_const(100) + b * i64_const(10) + c; }
+fn main() -> i32 { print_int(combine(i64_const(1), i64_const(2), i64_const(3))); return 0; }

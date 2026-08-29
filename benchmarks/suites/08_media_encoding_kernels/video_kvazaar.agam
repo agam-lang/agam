@@ -1,0 +1,41 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 {
+    return value;
+}
+
+fn kvazaar_intra_predict(block_size: i64) -> i64 {
+    let zero: i64 = i64_const(0);
+    let one: i64 = i64_const(1);
+    let seven: i64 = i64_const(7);
+    let thirteen: i64 = i64_const(13);
+    let seventeen: i64 = i64_const(17);
+    let thirty_one: i64 = i64_const(31);
+    let thirty_five: i64 = i64_const(35);
+    let mod_byte: i64 = i64_const(256);
+    let mod_prime: i64 = i64_const(1000000007);
+
+    let mut checksum: i64 = zero;
+    let mut mode: i64 = zero;
+    while mode < thirty_five {
+        let pred_val: i64 = mode * seven;
+        let mut y: i64 = zero;
+        while y < block_size {
+            let mut x: i64 = zero;
+            while x < block_size {
+                let pixel: i64 = ((x * thirteen) + (y * seventeen) + pred_val) % mod_byte;
+                checksum = ((checksum * thirty_one) + pixel) % mod_prime;
+                x = x + one;
+            }
+            y = y + one;
+        }
+        mode = mode + one;
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    let res: i64 = kvazaar_intra_predict(i64_const(32));
+    print_int(res);
+    return 0;
+}

@@ -1,0 +1,8 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: multiple helper functions calling each other.
+fn double(x: i64) -> i64 { return x * i64_const(2); }
+fn triple(x: i64) -> i64 { return x * i64_const(3); }
+fn add_doubled_tripled(a: i64, b: i64) -> i64 { return double(a) + triple(b); }
+fn main() -> i32 { print_int(add_doubled_tripled(i64_const(5), i64_const(3))); return 0; }

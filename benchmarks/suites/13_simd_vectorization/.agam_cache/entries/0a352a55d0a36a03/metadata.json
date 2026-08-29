@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "0a352a55d0a36a03",
+  "key": {
+    "source_hash": "8d4295943ff588f6",
+    "semantic_hash": "6d5b0a84bfc95dc5",
+    "backend": "Jit",
+    "opt_level": 0,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "jit_profile_v1;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
+  },
+  "artifact_kind": "ProfileJson",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\13_simd_vectorization\\nbody_simulation.agam",
+  "artifact_name": "nbody_simulation.jit_profile.json",
+  "bytes": 1148,
+  "created_unix_ms": 1787985175673,
+  "last_used_unix_ms": 1787985175673
+}

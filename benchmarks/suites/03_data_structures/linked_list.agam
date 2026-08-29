@@ -1,0 +1,16 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn pointer_chase(nodes: i64, rounds: i64) -> i64 {
+    let cursor: i64 = i64_const(1);
+    let checksum: i64 = i64_const(0);
+    let step: i64 = i64_const(0);
+    while step < rounds {
+        cursor = ((cursor * i64_const(1103515245)) + i64_const(12345)) % nodes;
+        checksum = checksum + cursor;
+        step = step + i64_const(1);
+    }
+    return checksum;
+}
+fn main() -> i32 { print_int(pointer_chase(i64_const(1000003), i64_const(8000000))); return 0; }

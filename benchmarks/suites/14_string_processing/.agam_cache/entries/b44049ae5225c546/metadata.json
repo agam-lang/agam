@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "b44049ae5225c546",
+  "key": {
+    "source_hash": "f0a281ba13c0f48a",
+    "semantic_hash": "7d37131c48e44384",
+    "backend": "Llvm",
+    "opt_level": 3,
+    "runtime_abi": 1,
+    "host_os": "windows",
+    "host_arch": "x86_64",
+    "host_pointer_width": 64,
+    "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=missing;llvm_wsl_allowed=false;llvm_clang=clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
+  },
+  "artifact_kind": "LlvmIr",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\14_string_processing\\json_parse.agam",
+  "artifact_name": "temp_bench_agam_llvm.ll",
+  "bytes": 43174,
+  "created_unix_ms": 1787936934097,
+  "last_used_unix_ms": 1787937241439
+}

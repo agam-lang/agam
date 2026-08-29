@@ -1,0 +1,50 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn lz77_compress_checksum(data_size: i64, window_size: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    let pos: i64 = i64_const(0);
+    while pos < data_size {
+        let best_len: i64 = i64_const(0);
+        let best_dist: i64 = i64_const(0);
+        let search_start: i64 = pos - window_size;
+        if search_start < i64_const(0) {
+            search_start = i64_const(0);
+        }
+        let s: i64 = search_start;
+        while s < pos {
+            let match_len: i64 = i64_const(0);
+            while pos + match_len < data_size {
+                let a: i64 = (s + match_len) * i64_const(7) + i64_const(13);
+                let b: i64 = (pos + match_len) * i64_const(7) + i64_const(13);
+                if a % i64_const(256) != b % i64_const(256) {
+                    break;
+                }
+                match_len = match_len + i64_const(1);
+                if match_len > i64_const(15) {
+                    break;
+                }
+            }
+            if match_len > best_len {
+                best_len = match_len;
+                best_dist = pos - s;
+            }
+            s = s + i64_const(1);
+        }
+        if best_len >= i64_const(3) {
+            checksum = (checksum * i64_const(31) + best_dist * i64_const(17) + best_len * i64_const(13)) % i64_const(1000000007);
+            pos = pos + best_len;
+        } else {
+            let literal: i64 = pos * i64_const(7) + i64_const(13);
+            checksum = (checksum * i64_const(31) + literal % i64_const(256)) % i64_const(1000000007);
+            pos = pos + i64_const(1);
+        }
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(lz77_compress_checksum(i64_const(512), i64_const(32)));
+    return 0;
+}

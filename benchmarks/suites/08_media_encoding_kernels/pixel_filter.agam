@@ -1,0 +1,47 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn clamp(val: i64) -> i64 {
+    if val < i64_const(0) { return i64_const(0); }
+    if val > i64_const(255) { return i64_const(255); }
+    return val;
+}
+
+fn pixel_filter_checksum(width: i64, height: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    
+    let y: i64 = i64_const(1);
+    while y < height - i64_const(1) {
+        let x: i64 = i64_const(1);
+        while x < width - i64_const(1) {
+            let p00: i64 = (((y - i64_const(1)) * width + (x - i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p01: i64 = (((y - i64_const(1)) * width + x) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p02: i64 = (((y - i64_const(1)) * width + (x + i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p10: i64 = ((y * width + (x - i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p11: i64 = ((y * width + x) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p12: i64 = ((y * width + (x + i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p20: i64 = (((y + i64_const(1)) * width + (x - i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p21: i64 = (((y + i64_const(1)) * width + x) * i64_const(17) + i64_const(13)) % i64_const(256);
+            let p22: i64 = (((y + i64_const(1)) * width + (x + i64_const(1))) * i64_const(17) + i64_const(13)) % i64_const(256);
+            
+            let blur: i64 = (p00 + i64_const(2)*p01 + p02 + i64_const(2)*p10 + i64_const(4)*p11 + i64_const(2)*p12 + p20 + i64_const(2)*p21 + p22) / i64_const(16);
+            
+            let sobel_x: i64 = -p00 + p02 - i64_const(2)*p10 + i64_const(2)*p12 - p20 + p22;
+            let sobel_y: i64 = -p00 - i64_const(2)*p01 - p02 + p20 + i64_const(2)*p21 + p22;
+            let sobel: i64 = sobel_x * sobel_x + sobel_y * sobel_y;
+            let edge: i64 = sobel / i64_const(100);
+            
+            let out: i64 = clamp(blur + edge);
+            checksum = (checksum * i64_const(31) + out) % i64_const(1000000007);
+            x = x + i64_const(1);
+        }
+        y = y + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(pixel_filter_checksum(i64_const(256), i64_const(256)));
+    return 0;
+}

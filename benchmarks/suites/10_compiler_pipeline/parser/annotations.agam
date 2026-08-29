@@ -1,0 +1,5 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: annotation parsing (@lang.advance is required).
+fn main() -> i32 { print_int(i64_const(99)); return 0; }

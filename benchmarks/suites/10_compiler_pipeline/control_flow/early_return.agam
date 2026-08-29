@@ -1,0 +1,13 @@
+@lang.advance
+fn i64_const(value: i64) -> i64 { return value; }
+
+// Test: early return from function and loop.
+fn find_first_divisible(limit: i64, divisor: i64) -> i64 {
+    let n: i64 = i64_const(1);
+    while n <= limit {
+        if n % divisor == i64_const(0) { return n; }
+        n = n + i64_const(1);
+    }
+    return i64_const(-1);
+}
+fn main() -> i32 { print_int(find_first_divisible(i64_const(100), i64_const(7))); return 0; }

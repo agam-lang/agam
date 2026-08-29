@@ -1,0 +1,47 @@
+@lang.advance
+
+fn i64_const(value: i64) -> i64 { return value; }
+
+fn html_escape(length: i64) -> i64 {
+    let checksum: i64 = i64_const(0);
+    
+    let iter: i64 = i64_const(0);
+    while iter < i64_const(100) {
+        let out_len: i64 = i64_const(0);
+        
+        let i: i64 = i64_const(0);
+        while i < length {
+            let c: i64 = ((i * i64_const(23) + iter * i64_const(11)) % i64_const(10));
+            // Simulate: i64_const(0): '<', i64_const(1): '>', i64_const(2): '&', i64_const(3): '"', i64_const(4): '\'', i64_const(5)-i64_const(9): normal char
+            
+            if c == i64_const(0) {
+                out_len = out_len + i64_const(4); // &lt;
+                checksum = (checksum * i64_const(31) + i64_const(60)) % i64_const(1000000007);
+            } else if c == i64_const(1) {
+                out_len = out_len + i64_const(4); // &gt;
+                checksum = (checksum * i64_const(31) + i64_const(62)) % i64_const(1000000007);
+            } else if c == i64_const(2) {
+                out_len = out_len + i64_const(5); // &amp;
+                checksum = (checksum * i64_const(31) + i64_const(38)) % i64_const(1000000007);
+            } else if c == i64_const(3) {
+                out_len = out_len + i64_const(6); // &quot;
+                checksum = (checksum * i64_const(31) + i64_const(34)) % i64_const(1000000007);
+            } else if c == i64_const(4) {
+                out_len = out_len + i64_const(5); // &#i64_const(39);
+                checksum = (checksum * i64_const(31) + i64_const(39)) % i64_const(1000000007);
+            } else {
+                out_len = out_len + i64_const(1);
+                checksum = (checksum * i64_const(31) + i64_const(97) + c) % i64_const(1000000007);
+            }
+            i = i + i64_const(1);
+        }
+        checksum = (checksum * i64_const(37) + out_len) % i64_const(1000000007);
+        iter = iter + i64_const(1);
+    }
+    return checksum;
+}
+
+fn main() -> i32 {
+    print_int(html_escape(i64_const(10000)));
+    return 0;
+}
