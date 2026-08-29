@@ -1,0 +1,60 @@
+//! # Agam Native GUI Counter Application
+//!
+//! Demonstrates:
+//! - State variables (`let mut count: i32 = 0`)
+//! - Declarative Flex Column/Row layout
+//! - Interactive push buttons with increment/decrement callbacks
+//! - Native typography and Fluent Dark theme
+
+@lang.advance
+@ui
+
+fn counter_app() -> Window {
+    let mut count: i32 = 0;
+
+    return Window {
+        title: "Agam Native Counter",
+        size: (360, 240),
+        child: Column {
+            gap: 16,
+            padding: 24,
+            cross_align: "Center",
+            main_align: "Center",
+            children: [
+                Card {
+                    padding: 16,
+                    background: "#252525",
+                    child: Column {
+                        gap: 8,
+                        cross_align: "Center",
+                        children: [
+                            Label { text: "CURRENT COUNT", size: 12, color: "#8C8C8C" },
+                            Label { text: "0", size: 36, weight: "Bold", color: "#FFFFFF" },
+                        ],
+                    },
+                },
+                Row {
+                    gap: 12,
+                    main_align: "Center",
+                    children: [
+                        Button {
+                            label: "− Decrement",
+                            background: "#3C3C3C",
+                            on_click: || { count -= 1; },
+                        },
+                        Button {
+                            label: "+ Increment",
+                            background: "#0078D4",
+                            on_click: || { count += 1; },
+                        },
+                        Button {
+                            label: "Reset",
+                            background: "#2A2A2A",
+                            on_click: || { count = 0; },
+                        },
+                    ],
+                },
+            ],
+        },
+    };
+}

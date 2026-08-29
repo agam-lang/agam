@@ -56,6 +56,37 @@ impl Parser {
             .unwrap_or(TokenKind::Eof)
     }
 
+    /// Check if the next token `{` is followed by struct field initializers, skipping newlines and comments.
+    fn looks_like_struct_literal(&self) -> bool {
+        if self.peek_kind() != TokenKind::LBrace {
+            return false;
+        }
+        let mut offset = 1;
+        while matches!(
+            self.peek_at(offset),
+            TokenKind::Newline | TokenKind::LineComment | TokenKind::BlockComment
+        ) {
+            offset += 1;
+        }
+        match self.peek_at(offset) {
+            TokenKind::RBrace => true,
+            TokenKind::Identifier | TokenKind::StringLiteral => {
+                let mut next_offset = offset + 1;
+                while matches!(
+                    self.peek_at(next_offset),
+                    TokenKind::Newline | TokenKind::LineComment | TokenKind::BlockComment
+                ) {
+                    next_offset += 1;
+                }
+                matches!(
+                    self.peek_at(next_offset),
+                    TokenKind::Colon | TokenKind::Comma | TokenKind::RBrace
+                )
+            }
+            _ => false,
+        }
+    }
+
     fn advance(&mut self) -> &Token {
         let tok = &self.tokens[self.pos.min(self.tokens.len() - 1)];
         if self.pos < self.tokens.len() {
@@ -1343,17 +1374,20 @@ impl Parser {
                 };
 
                 // Struct literal: Path { field: expr, ... }
-                if self.peek_kind() == TokenKind::LBrace
-                    && (self.peek_at(1) == TokenKind::Identifier
-                        || self.peek_at(1) == TokenKind::RBrace)
-                    && (self.peek_at(2) == TokenKind::Colon || self.peek_at(1) == TokenKind::RBrace)
-                {
+                if self.looks_like_struct_literal() {
                     self.advance(); // {
                     self.skip_newlines();
                     let mut fields = Vec::new();
-                    while self.peek_kind() == TokenKind::Identifier {
+                    while self.peek_kind() == TokenKind::Identifier
+                        || self.peek_kind() == TokenKind::StringLiteral
+                    {
                         let fname_tok = self.advance().clone();
-                        let fname = Ident::new(&fname_tok.lexeme, fname_tok.span);
+                        let fname_str = if fname_tok.kind == TokenKind::StringLiteral {
+                            fname_tok.lexeme[1..fname_tok.lexeme.len() - 1].to_string()
+                        } else {
+                            fname_tok.lexeme.clone()
+                        };
+                        let fname = Ident::new(&fname_str, fname_tok.span);
                         let value = if self.eat(TokenKind::Colon) {
                             self.parse_expression(0)?
                         } else {
@@ -1392,6 +1426,34 @@ impl Parser {
                         kind: ExprKind::PathExpr(path),
                     })
                 }
+            }
+            TokenKind::PipePipe => {
+                self.advance();
+                let params = Vec::new();
+                let mut return_type = None;
+                if self.eat(TokenKind::Arrow) {
+                    return_type = Some(Box::new(self.parse_type_expr()?));
+                }
+
+                let body = if self.peek_kind() == TokenKind::LBrace {
+                    let block = self.parse_block()?;
+                    Expr {
+                        id: self.node_id(),
+                        span: block.span,
+                        kind: ExprKind::BlockExpr(block),
+                    }
+                } else {
+                    self.parse_expression(0)?
+                };
+                Ok(Expr {
+                    id,
+                    span: tok.span,
+                    kind: ExprKind::Lambda {
+                        params,
+                        return_type,
+                        body: Box::new(body),
+                    },
+                })
             }
             TokenKind::Pipe => {
                 self.advance();

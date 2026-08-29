@@ -1,16 +1,14 @@
 @lang.advance
-// Agam Advance Mode - Hello World
+
+// Agam Advance Profile - Arithmetic & Function Call
+fn compute_average(a: i32, b: i32, c: i32, d: i32) -> i32 {
+    let total: i32 = a + b + c + d;
+    let avg: i32 = total / 4;
+    return avg;
+}
+
 fn main() -> i32 {
-    let name: String = "World";
-    println("Hello, " + name + "!");
-    
-    let scores: Array<i32> = [90, 85, 72, 95];
-    let mut total: i32 = 0;
-    for score in scores {
-        total += score;
-    }
-    
-    let avg: i32 = total / scores.len();
-    println("Average score: {}", avg);
+    let avg: i32 = compute_average(90, 85, 72, 95);
+    print_int(avg);
     return 0;
 }

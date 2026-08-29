@@ -1,0 +1,77 @@
+{
+  "nodes": [
+    {
+      "FillRect": {
+        "rect": {
+          "origin": {
+            "x": 0.0,
+            "y": 0.0
+          },
+          "width": 800.0,
+          "height": 600.0
+        },
+        "color": {
+          "r": 30,
+          "g": 30,
+          "b": 30,
+          "a": 255
+        }
+      }
+    },
+    {
+      "PushClip": {
+        "RoundedRect": {
+          "rect": {
+            "origin": {
+              "x": 50.0,
+              "y": 50.0
+            },
+            "width": 300.0,
+            "height": 200.0
+          },
+          "radius": 16.0
+        }
+      }
+    },
+    {
+      "FillRect": {
+        "rect": {
+          "origin": {
+            "x": 50.0,
+            "y": 50.0
+          },
+          "width": 300.0,
+          "height": 200.0
+        },
+        "color": {
+          "r": 45,
+          "g": 45,
+          "b": 45,
+          "a": 255
+        }
+      }
+    },
+    {
+      "FillRoundedRect": {
+        "rounded_rect": {
+          "rect": {
+            "origin": {
+              "x": 70.0,
+              "y": 70.0
+            },
+            "width": 120.0,
+            "height": 40.0
+          },
+          "radius": 8.0
+        },
+        "color": {
+          "r": 0,
+          "g": 0,
+          "b": 255,
+          "a": 255
+        }
+      }
+    },
+    "PopClip"
+  ]
+}

@@ -246,7 +246,7 @@ impl<'a, T: ?Sized> Drop for AsyncRwLockWriteGuard<'a, T> {
 
 /// An asynchronous condition variable enabling tasks to wait for specific predicates.
 pub struct AsyncCondvar {
-    waiters: Mutex<VecDeque<(Arc<AtomicBool>, Waker)>>,
+    waiters: Mutex<VecDeque<(Arc<AtomicBool>, Option<Waker>)>>,
 }
 
 impl AsyncCondvar {
@@ -258,44 +258,60 @@ impl AsyncCondvar {
 
     pub fn notify_one(&self) {
         let mut waiters = self.waiters.lock().unwrap();
-        if let Some((notified, waker)) = waiters.pop_front() {
+        if let Some((notified, maybe_waker)) = waiters.pop_front() {
             notified.store(true, Ordering::Release);
-            waker.wake();
+            if let Some(waker) = maybe_waker {
+                waker.wake();
+            }
         }
     }
 
     pub fn notify_all(&self) {
         let mut waiters = self.waiters.lock().unwrap();
-        for (notified, waker) in waiters.drain(..) {
+        for (notified, maybe_waker) in waiters.drain(..) {
             notified.store(true, Ordering::Release);
-            waker.wake();
+            if let Some(waker) = maybe_waker {
+                waker.wake();
+            }
         }
     }
 
     pub async fn wait<'a, T>(&self, guard: AsyncMutexGuard<'a, T>) -> AsyncMutexGuard<'a, T> {
         let mutex = guard.mutex;
+        let notified = Arc::new(AtomicBool::new(false));
+
+        // Enqueue BEFORE releasing the mutex guard
+        {
+            let mut waiters = self.waiters.lock().unwrap();
+            waiters.push_back((notified.clone(), None));
+        }
+
+        // Release mutex guard
         drop(guard);
 
-        let notified = Arc::new(AtomicBool::new(false));
         struct WaitFut<'a> {
             condvar: &'a AsyncCondvar,
             notified: Arc<AtomicBool>,
-            registered: bool,
         }
 
         impl<'a> StdFuture for WaitFut<'a> {
             type Output = ();
 
             fn poll(self: Pin<&mut Self>, cx: &mut StdContext<'_>) -> StdPoll<Self::Output> {
-                let this = unsafe { self.get_unchecked_mut() };
-                if this.notified.load(Ordering::Acquire) {
+                if self.notified.load(Ordering::Acquire) {
                     return StdPoll::Ready(());
                 }
 
-                if !this.registered {
-                    this.registered = true;
-                    let mut waiters = this.condvar.waiters.lock().unwrap();
-                    waiters.push_back((this.notified.clone(), cx.waker().clone()));
+                let mut waiters = self.condvar.waiters.lock().unwrap();
+                if self.notified.load(Ordering::Acquire) {
+                    return StdPoll::Ready(());
+                }
+
+                for (flag, waker_slot) in waiters.iter_mut() {
+                    if Arc::ptr_eq(flag, &self.notified) {
+                        *waker_slot = Some(cx.waker().clone());
+                        break;
+                    }
                 }
 
                 StdPoll::Pending
@@ -305,7 +321,6 @@ impl AsyncCondvar {
         WaitFut {
             condvar: self,
             notified,
-            registered: false,
         }
         .await;
 

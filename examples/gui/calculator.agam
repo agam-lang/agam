@@ -1,0 +1,108 @@
+//! # Agam Native GPU Calculator Application
+//!
+//! A desktop Fluent UI calculator written in pure Agam syntax:
+//! - Reactive state signals (`let mut display`, `let mut history`)
+//! - Declarative 4x5 KeypadGrid layout
+//! - Mouse and keyboard interaction
+
+@lang.advance
+@ui
+
+fn calculator_app() -> Window {
+    let mut display: String = "0";
+    let mut history: String = "";
+    let mut stored_value: f64 = 0.0;
+    let mut pending_op: String = "";
+    let mut start_new: bool = true;
+
+    return Window {
+        title: "Agam Calculator",
+        size: (440, 620),
+        child: Column {
+            gap: 12,
+            padding: 24,
+            children: [
+                // Display Screen Card
+                Card {
+                    padding: 18,
+                    background: "#1C1C1C",
+                    border_color: "#323232",
+                    child: Column {
+                        gap: 6,
+                        cross_align: "End",
+                        children: [
+                            Label { text: history, size: 13, color: "#8C8C8C" },
+                            Label { text: display, size: 36, weight: "Bold", color: "#FFFFFF" },
+                        ],
+                    },
+                },
+
+                // 4x5 Calculator Keypad Grid
+                Column {
+                    gap: 10,
+                    children: [
+                        // Row 0: Clear & Division
+                        Row {
+                            gap: 10,
+                            children: [
+                                Button { label: "C", on_click: || { display = "0"; history = ""; stored_value = 0.0; pending_op = ""; start_new = true; } },
+                                Button { label: "CE", on_click: || { display = "0"; start_new = true; } },
+                                Button { label: "%", on_click: || { display = percent_op(display); start_new = true; } },
+                                Button { label: "÷", background: "#303030", on_click: || { history = display + " ÷"; pending_op = "/"; stored_value = parse_f64(display); start_new = true; } },
+                            ],
+                        },
+
+                        // Row 1: 7, 8, 9, ×
+                        Row {
+                            gap: 10,
+                            children: [
+                                Button { label: "7", on_click: || { display = append_digit(display, "7", start_new); start_new = false; } },
+                                Button { label: "8", on_click: || { display = append_digit(display, "8", start_new); start_new = false; } },
+                                Button { label: "9", on_click: || { display = append_digit(display, "9", start_new); start_new = false; } },
+                                Button { label: "×", background: "#303030", on_click: || { history = display + " ×"; pending_op = "*"; stored_value = parse_f64(display); start_new = true; } },
+                            ],
+                        },
+
+                        // Row 2: 4, 5, 6, −
+                        Row {
+                            gap: 10,
+                            children: [
+                                Button { label: "4", on_click: || { display = append_digit(display, "4", start_new); start_new = false; } },
+                                Button { label: "5", on_click: || { display = append_digit(display, "5", start_new); start_new = false; } },
+                                Button { label: "6", on_click: || { display = append_digit(display, "6", start_new); start_new = false; } },
+                                Button { label: "−", background: "#303030", on_click: || { history = display + " −"; pending_op = "-"; stored_value = parse_f64(display); start_new = true; } },
+                            ],
+                        },
+
+                        // Row 3: 1, 2, 3, +
+                        Row {
+                            gap: 10,
+                            children: [
+                                Button { label: "1", on_click: || { display = append_digit(display, "1", start_new); start_new = false; } },
+                                Button { label: "2", on_click: || { display = append_digit(display, "2", start_new); start_new = false; } },
+                                Button { label: "3", on_click: || { display = append_digit(display, "3", start_new); start_new = false; } },
+                                Button { label: "+", background: "#303030", on_click: || { history = display + " +"; pending_op = "+"; stored_value = parse_f64(display); start_new = true; } },
+                            ],
+                        },
+
+                        // Row 4: ±, 0, ., =
+                        Row {
+                            gap: 10,
+                            children: [
+                                Button { label: "±", on_click: || { display = toggle_sign(display); } },
+                                Button { label: "0", on_click: || { display = append_digit(display, "0", start_new); start_new = false; } },
+                                Button { label: ".", on_click: || { display = append_decimal(display, start_new); start_new = false; } },
+                                Button { label: "=", background: "#0078D4", on_click: || {
+                                    let cur: f64 = parse_f64(display);
+                                    history = history + " " + display + " =";
+                                    display = evaluate(stored_value, pending_op, cur);
+                                    start_new = true;
+                                } },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+    };
+}

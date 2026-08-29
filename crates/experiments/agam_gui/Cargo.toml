@@ -1,0 +1,25 @@
+[package]
+name = "agam_gui"
+description = "Native GPU-accelerated declarative GUI engine with Agam-owned Fluent/HIG visual identity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+headless-test = []
+
+[dependencies]
+# Agam core & runtime
+agam_errors = { workspace = true }
+agam_runtime = { workspace = true }
+agam_std = { workspace = true }
+
+# Adopted 2D/GPU/Windowing infrastructure
+winit = { workspace = true }
+wgpu = { workspace = true }
+vello = { workspace = true }
+cosmic-text = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,52 @@
+@lang.base
+
+# Agam Language Calculator - Base Profile
+# Clean, readable syntax with full arithmetic and safety checks
+
+fn power(base: i32, exp: i32) -> i32:
+    if exp < 0:
+        return 0
+    let mut result: i32 = 1
+    let mut b: i32 = base
+    let mut e: i32 = exp
+    while e > 0:
+        if e % 2 == 1:
+            result = result * b
+        b = b * b
+        e = e / 2
+    return result
+
+fn calculate(lhs: i32, op: i32, rhs: i32) -> i32:
+    if op == 1:
+        return lhs + rhs
+    if op == 2:
+        return lhs - rhs
+    if op == 3:
+        return lhs * rhs
+    if op == 4:
+        if rhs == 0:
+            return -999999
+        return lhs / rhs
+    if op == 5:
+        if rhs == 0:
+            return -999999
+        return lhs % rhs
+    if op == 6:
+        return power(lhs, rhs)
+    return -999999
+
+fn main() -> i32:
+    # 1. (50 + 25) * 4 = 300
+    let sum_val: i32 = calculate(50, 1, 25)
+    let prod_val: i32 = calculate(sum_val, 3, 4)
+    print_int(prod_val)
+
+    # 2. 2^8 = 256
+    let pow_val: i32 = calculate(2, 6, 8)
+    print_int(pow_val)
+
+    # 3. 256 / 16 = 16
+    let div_val: i32 = calculate(pow_val, 4, 16)
+    print_int(div_val)
+
+    return 0

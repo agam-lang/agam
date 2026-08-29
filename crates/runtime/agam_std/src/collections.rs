@@ -344,7 +344,7 @@ impl<T: Hash + Eq + Clone> Counter<T> {
 
     pub fn most_common(&self, n: usize) -> Vec<(T, usize)> {
         let mut items: Vec<(T, usize)> = self.counts.iter().map(|(k, v)| (k.clone(), *v)).collect();
-        items.sort_by(|a, b| b.1.cmp(&a.1));
+        items.sort_by_key(|b| std::cmp::Reverse(b.1));
         items.truncate(n);
         items
     }

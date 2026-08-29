@@ -27,6 +27,7 @@ members = [
     "crates/experiments/agam_ffi",
     "crates/experiments/agam_notebook",
     "crates/experiments/agam_ui",
+    "crates/experiments/agam_gui",
     "crates/experiments/agam_game",
     "crates/experiments/agam_macro",
     "crates/experiments/agam_smt",
@@ -56,6 +57,12 @@ csv = "1.3"
 crc32fast = "1.4"
 httparse = "1.9"
 
+# GUI & 2D rendering dependencies (Adopted - RFC-gui-engine / WEEKLY-REVIEW-2026-08-29)
+winit = "0.30.13"
+wgpu = "29.0.3"
+vello = "0.10.0"
+cosmic-text = "0.19.0"
+
 # Internal crate dependencies
 agam_errors = { path = "crates/core/agam_errors" }
 agam_ast = { path = "crates/core/agam_ast" }
@@ -72,6 +79,7 @@ agam_std = { path = "crates/runtime/agam_std" }
 agam_ffi = { path = "crates/experiments/agam_ffi" }
 agam_notebook = { path = "crates/experiments/agam_notebook" }
 agam_ui = { path = "crates/experiments/agam_ui" }
+agam_gui = { path = "crates/experiments/agam_gui" }
 agam_game = { path = "crates/experiments/agam_game" }
 agam_pkg = { path = "crates/tooling/agam_pkg" }
 agam_fmt = { path = "crates/tooling/agam_fmt" }

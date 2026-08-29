@@ -62,3 +62,44 @@ jobs:
         run: cargo +nightly miri test -p agam_ffi --lib
         env:
           MIRIFLAGS: "-Zmiri-disable-isolation"
+
+  gui-headless-matrix:
+    name: "GUI Headless (${{ matrix.os }})"
+    needs: coherence-guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            headless: true
+          - os: macos-latest
+            headless: false
+          - os: windows-latest
+            headless: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Linux: install Xvfb + Mesa software Vulkan/OpenGL drivers
+      - name: Setup Headless Display (Linux)
+        if: matrix.headless
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb mesa-vulkan-drivers mesa-utils libxkbcommon-x11-0
+        shell: bash
+
+      - name: Run GUI Headless Tests
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          if [ "${{ matrix.headless }}" = "true" ]; then
+            xvfb-run -a cargo test -p agam_gui --features headless-test
+          else
+            cargo test -p agam_gui --features headless-test
+          fi
+        shell: bash

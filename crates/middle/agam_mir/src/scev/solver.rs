@@ -434,13 +434,7 @@ pub(crate) fn compute_constant_trip_count(
                 ((start - bound) / pos_step) + 1
             }
         }
-        MirBinOp::GtEq if step > 0 => {
-            if start < bound {
-                0
-            } else {
-                return None; // Infinite loop
-            }
-        }
+        MirBinOp::GtEq if step > 0 && start < bound => 0,
         _ => return None,
     };
 

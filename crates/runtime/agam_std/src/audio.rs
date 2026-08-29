@@ -144,11 +144,7 @@ impl AudioBuffer {
 
     #[inline]
     pub fn frame_count(&self) -> usize {
-        if self.channels > 0 {
-            self.samples.len() / self.channels
-        } else {
-            0
-        }
+        self.samples.len().checked_div(self.channels).unwrap_or(0)
     }
 
     #[inline]

@@ -1,0 +1,142 @@
+@lang.advance
+
+// Agam Language Calculator Engine
+// Implements robust arithmetic evaluation, powers, factorials, and error handling.
+
+// Operator codes:
+// 1 = Addition (+)
+// 2 = Subtraction (-)
+// 3 = Multiplication (*)
+// 4 = Division (/)
+// 5 = Modulo (%)
+// 6 = Power (^)
+// 7 = Factorial (!)
+// 8 = Absolute Value (abs)
+// 9 = Integer Square Root (sqrt)
+
+fn power(base: i32, exp: i32) -> i32 {
+    if exp < 0 {
+        return 0;
+    }
+    let mut result: i32 = 1;
+    let mut b: i32 = base;
+    let mut e: i32 = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            result = result * b;
+        }
+        b = b * b;
+        e = e / 2;
+    }
+    return result;
+}
+
+fn factorial(n: i32) -> i32 {
+    if n <= 1 {
+        return 1;
+    }
+    let mut res: i32 = 1;
+    let mut i: i32 = 2;
+    while i <= n {
+        res = res * i;
+        i = i + 1;
+    }
+    return res;
+}
+
+fn isqrt(n: i32) -> i32 {
+    if n < 0 {
+        return -1;
+    }
+    if n == 0 {
+        return 0;
+    }
+    let mut x: i32 = n;
+    let mut y: i32 = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    return x;
+}
+
+fn abs_val(n: i32) -> i32 {
+    if n < 0 {
+        return 0 - n;
+    }
+    return n;
+}
+
+fn calculate_binary(lhs: i32, op: i32, rhs: i32) -> i32 {
+    if op == 1 {
+        return lhs + rhs;
+    }
+    if op == 2 {
+        return lhs - rhs;
+    }
+    if op == 3 {
+        return lhs * rhs;
+    }
+    if op == 4 {
+        if rhs == 0 {
+            return -999999; // Error: division by zero
+        }
+        return lhs / rhs;
+    }
+    if op == 5 {
+        if rhs == 0 {
+            return -999999;
+        }
+        return lhs % rhs;
+    }
+    if op == 6 {
+        return power(lhs, rhs);
+    }
+    return -999999; // Unknown operator
+}
+
+fn calculate_unary(op: i32, val: i32) -> i32 {
+    if op == 7 {
+        return factorial(val);
+    }
+    if op == 8 {
+        return abs_val(val);
+    }
+    if op == 9 {
+        return isqrt(val);
+    }
+    return val;
+}
+
+fn run_calculator_demo() -> i32 {
+    // 1. Basic Arithmetic: (45 + 15) * 3 - 80 / 4
+    let step1: i32 = calculate_binary(45, 1, 15);       // 45 + 15 = 60
+    let step2: i32 = calculate_binary(step1, 3, 3);      // 60 * 3 = 180
+    let step3: i32 = calculate_binary(80, 4, 4);        // 80 / 4 = 20
+    let res1: i32 = calculate_binary(step2, 2, step3);  // 180 - 20 = 160
+    print_int(res1);
+
+    // 2. Power & Modulo: 2^10 % 1000
+    let pow_res: i32 = calculate_binary(2, 6, 10);      // 2^10 = 1024
+    let mod_res: i32 = calculate_binary(pow_res, 5, 1000); // 1024 % 1000 = 24
+    print_int(mod_res);
+
+    // 3. Unary Operations: 5! + sqrt(144) + abs(-42)
+    let fact5: i32 = calculate_unary(7, 5);             // 5! = 120
+    let sqrt144: i32 = calculate_unary(9, 144);         // sqrt(144) = 12
+    let abs_neg: i32 = calculate_unary(8, -42);         // abs(-42) = 42
+    let res2: i32 = fact5 + sqrt144 + abs_neg;          // 120 + 12 + 42 = 174
+    print_int(res2);
+
+    // 4. Safe Divide-by-Zero Handling
+    let div_zero: i32 = calculate_binary(100, 4, 0);    // -999999 (Error sentinel)
+    print_int(div_zero);
+
+    return res1 + mod_res + res2; // 160 + 24 + 174 = 358
+}
+
+fn main() -> i32 {
+    let checksum: i32 = run_calculator_demo();
+    print_int(checksum);
+    return 0;
+}

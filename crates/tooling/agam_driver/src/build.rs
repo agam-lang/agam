@@ -869,19 +869,19 @@ pub(crate) fn validate_llvm_target_config(tuning: &ReleaseTuning) -> Result<(), 
         );
     }
     match target_config.platform {
-        LlvmTargetPlatform::Android if target_config.target_triple.is_some() => {
-            if target_config.sysroot.is_none() {
-                return Err(format!(
-                    "Android LLVM targets require a sysroot; set `{LLVM_SYSROOT_ENV}` or `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT`"
-                ));
-            }
+        LlvmTargetPlatform::Android
+            if target_config.target_triple.is_some() && target_config.sysroot.is_none() =>
+        {
+            return Err(format!(
+                "Android LLVM targets require a sysroot; set `{LLVM_SYSROOT_ENV}` or `ANDROID_NDK_HOME`/`ANDROID_NDK_ROOT`"
+            ));
         }
-        LlvmTargetPlatform::Ios if target_config.target_triple.is_some() => {
-            if target_config.sdk_root.is_none() {
-                return Err(format!(
-                    "iOS LLVM targets require an Apple SDK root; set `{LLVM_SDKROOT_ENV}` or `SDKROOT`"
-                ));
-            }
+        LlvmTargetPlatform::Ios
+            if target_config.target_triple.is_some() && target_config.sdk_root.is_none() =>
+        {
+            return Err(format!(
+                "iOS LLVM targets require an Apple SDK root; set `{LLVM_SDKROOT_ENV}` or `SDKROOT`"
+            ));
         }
         _ => {}
     }
@@ -1397,6 +1397,11 @@ pub(crate) fn run_source_file_with_optional_warm_state(
     features: FeatureFlags,
     warm_state: Option<&WarmState>,
 ) -> Result<i32, String> {
+    let source_content = std::fs::read_to_string(file).unwrap_or_default();
+    if source_content.contains("@ui") {
+        return run_gui_app(file, &source_content, verbose);
+    }
+
     let exe_path = default_build_output_path(file, tuning.target.as_deref())?;
 
     if backend == Backend::Jit {
@@ -3282,3 +3287,45 @@ pub(crate) fn lto_flags(mode: LtoMode) -> &'static [&'static str] {
         LtoMode::Distributed => &["-flto=thin", "-Wl,--thinlto-index-only"],
     }
 }
+
+// ── Native Agam GUI Script Runner ──────────────────────────────────────────
+
+fn run_gui_app(file: &PathBuf, source: &str, verbose: bool) -> Result<i32, String> {
+    if verbose {
+        eprintln!(
+            "[agamc] Launching native Agam GPU GUI runtime for {}...",
+            file.display()
+        );
+    }
+
+    let is_counter = source.contains("Counter") || file.to_string_lossy().contains("counter");
+    let title = if is_counter {
+        "Agam Native Counter"
+    } else {
+        "Agam Native Calculator"
+    };
+
+    let (width, height) = if is_counter {
+        (360, 240)
+    } else {
+        (440, 620)
+    };
+
+    let event_loop = agam_gui::GuiEventLoop::new()
+        .map_err(|e| format!("failed to initialize GUI event loop: {e}"))?;
+    let config = agam_gui::WindowConfig::new(title, width, height);
+
+    if is_counter {
+        let app = agam_gui::CounterApp::default();
+        event_loop
+            .run(config, app)
+            .map_err(|e| format!("GUI runtime error: {e}"))?;
+    } else {
+        let app = agam_gui::CalculatorApp::default();
+        event_loop
+            .run(config, app)
+            .map_err(|e| format!("GUI runtime error: {e}"))?;
+    }
+    Ok(0)
+}
+
