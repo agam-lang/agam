@@ -384,7 +384,7 @@ pub fn emit_llvm_with_options(
     }
     let layouts = analyze_module(module);
     let call_cache_analysis = build_call_cache_analysis(module, &layouts, &options);
-    let call_cache_plan = call_cache_plan_from_analysis(&call_cache_analysis);
+    let call_cache_plan = call_cache_plan_from_analysis(module, &call_cache_analysis, &options);
     let mut emitter = LlvmEmitter::new(module, layouts, call_cache_plan, options);
     emitter.emit_module(module)
 }
@@ -844,18 +844,39 @@ fn call_cache_request_from_options(options: &LlvmEmitOptions) -> CallCacheReques
     }
 }
 
-fn call_cache_plan_from_analysis(analysis: &CallCacheAnalysis) -> CallCachePlan {
+fn call_cache_plan_from_analysis(
+    module: &MirModule,
+    analysis: &CallCacheAnalysis,
+    options: &LlvmEmitOptions,
+) -> CallCachePlan {
     let cacheable_functions: Vec<String> = analysis
         .functions
         .iter()
-        .filter_map(|function| function.mode.map(|_| function.name.clone()))
+        .filter_map(|function| {
+            if function.mode.is_none() {
+                return None;
+            }
+            let is_explicit = options.call_cache_only.contains(&function.name)
+                || options.call_cache_optimize_only.contains(&function.name);
+            if !is_explicit {
+                if let Some(f) = module.functions.iter().find(|f| f.name == function.name) {
+                    let total_instrs: usize = f.blocks.iter().map(|b| b.instructions.len()).sum();
+                    if f.blocks.len() <= 4 && total_instrs <= 16 {
+                        return None;
+                    }
+                }
+            }
+            Some(function.name.clone())
+        })
         .collect();
-    let cacheable_set = cacheable_functions.iter().cloned().collect();
+    let cacheable_set: HashSet<String> = cacheable_functions.iter().cloned().collect();
     let optimized_functions = analysis
         .functions
         .iter()
         .filter_map(|function| match function.mode {
-            Some(MirCallCacheMode::Optimize) => Some(function.name.clone()),
+            Some(MirCallCacheMode::Optimize) if cacheable_set.contains(&function.name) => {
+                Some(function.name.clone())
+            }
             _ => None,
         })
         .collect();

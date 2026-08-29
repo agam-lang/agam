@@ -200,13 +200,27 @@ def benchmark_agam_c_aot(agm_file, runs=5):
     return statistics.median(timings) if timings else None, output, None
 
 def benchmark_cpp(cpp_file, runs=5):
-    exe_file = ROOT / "temp_cpp_bench.exe"
+    exe_file = ROOT / ("temp_cpp_bench.exe" if os.name == "nt" else "temp_cpp_bench")
     if exe_file.exists():
         try: exe_file.unlink()
         except: pass
     
-    comp = "c++" if cpp_file.suffix == ".cpp" else "cc"
-    compile_cmd = [str(ZIG_BIN), comp, "-O3", str(cpp_file), "-o", str(exe_file)]
+    is_cpp = cpp_file.suffix == ".cpp"
+    cxx_bin = shutil.which("clang++") or shutil.which("g++") or shutil.which("c++")
+    cc_bin = shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")
+    
+    if is_cpp and cxx_bin:
+        compile_cmd = [cxx_bin, "-O3", str(cpp_file), "-o", str(exe_file)]
+    elif not is_cpp and cc_bin:
+        compile_cmd = [cc_bin, "-O3", str(cpp_file), "-o", str(exe_file), "-lm"]
+    elif ZIG_BIN.exists():
+        comp = "c++" if is_cpp else "cc"
+        compile_cmd = [str(ZIG_BIN), comp, "-O3", str(cpp_file), "-o", str(exe_file)]
+        if not is_cpp:
+            compile_cmd.append("-lm")
+    else:
+        return None, None, "No C/C++ compiler found"
+
     c_time, _, c_err, c_rc = run_cmd(compile_cmd)
     if c_rc != 0 or not exe_file.exists():
         return None, None, f"C++ compile error: {c_err}"
