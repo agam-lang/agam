@@ -707,7 +707,10 @@ mod tests {
     fn test_color_hex_parsing() {
         assert_eq!(Color::from_hex("#FF0000"), Ok(Color::RED));
         assert_eq!(Color::from_hex("00FF00"), Ok(Color::GREEN));
-        assert_eq!(Color::from_hex("#0000FF80"), Ok(Color::rgba(0, 0, 255, 128)));
+        assert_eq!(
+            Color::from_hex("#0000FF80"),
+            Ok(Color::rgba(0, 0, 255, 128))
+        );
         assert!(Color::from_hex("XYZ").is_err());
     }
 

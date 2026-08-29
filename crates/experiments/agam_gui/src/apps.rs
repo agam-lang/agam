@@ -225,11 +225,7 @@ fn format_number(val: f64) -> String {
 
     if val.fract().abs() < 1e-10 {
         let s = format!("{:.0}", val);
-        if s == "-0" {
-            "0".to_string()
-        } else {
-            s
-        }
+        if s == "-0" { "0".to_string() } else { s }
     } else {
         let s = format!("{:.8}", val);
         let trimmed = s.trim_end_matches('0').trim_end_matches('.');
@@ -274,30 +270,146 @@ pub struct CalcButton {
 }
 
 const BUTTONS: &[CalcButton] = &[
-    CalcButton { label: "C", action: ButtonAction::Clear, style: ButtonStyle::Action, col: 0, row: 0 },
-    CalcButton { label: "CE", action: ButtonAction::ClearEntry, style: ButtonStyle::Action, col: 1, row: 0 },
-    CalcButton { label: "%", action: ButtonAction::Percent, style: ButtonStyle::Action, col: 2, row: 0 },
-    CalcButton { label: "÷", action: ButtonAction::Op(Operator::Divide), style: ButtonStyle::Operator, col: 3, row: 0 },
-
-    CalcButton { label: "7", action: ButtonAction::Digit('7'), style: ButtonStyle::Number, col: 0, row: 1 },
-    CalcButton { label: "8", action: ButtonAction::Digit('8'), style: ButtonStyle::Number, col: 1, row: 1 },
-    CalcButton { label: "9", action: ButtonAction::Digit('9'), style: ButtonStyle::Number, col: 2, row: 1 },
-    CalcButton { label: "×", action: ButtonAction::Op(Operator::Multiply), style: ButtonStyle::Operator, col: 3, row: 1 },
-
-    CalcButton { label: "4", action: ButtonAction::Digit('4'), style: ButtonStyle::Number, col: 0, row: 2 },
-    CalcButton { label: "5", action: ButtonAction::Digit('5'), style: ButtonStyle::Number, col: 1, row: 2 },
-    CalcButton { label: "6", action: ButtonAction::Digit('6'), style: ButtonStyle::Number, col: 2, row: 2 },
-    CalcButton { label: "−", action: ButtonAction::Op(Operator::Subtract), style: ButtonStyle::Operator, col: 3, row: 2 },
-
-    CalcButton { label: "1", action: ButtonAction::Digit('1'), style: ButtonStyle::Number, col: 0, row: 3 },
-    CalcButton { label: "2", action: ButtonAction::Digit('2'), style: ButtonStyle::Number, col: 1, row: 3 },
-    CalcButton { label: "3", action: ButtonAction::Digit('3'), style: ButtonStyle::Number, col: 2, row: 3 },
-    CalcButton { label: "+", action: ButtonAction::Op(Operator::Add), style: ButtonStyle::Operator, col: 3, row: 3 },
-
-    CalcButton { label: "±", action: ButtonAction::ToggleSign, style: ButtonStyle::Action, col: 0, row: 4 },
-    CalcButton { label: "0", action: ButtonAction::Digit('0'), style: ButtonStyle::Number, col: 1, row: 4 },
-    CalcButton { label: ".", action: ButtonAction::Decimal, style: ButtonStyle::Number, col: 2, row: 4 },
-    CalcButton { label: "=", action: ButtonAction::Equals, style: ButtonStyle::Accent, col: 3, row: 4 },
+    CalcButton {
+        label: "C",
+        action: ButtonAction::Clear,
+        style: ButtonStyle::Action,
+        col: 0,
+        row: 0,
+    },
+    CalcButton {
+        label: "CE",
+        action: ButtonAction::ClearEntry,
+        style: ButtonStyle::Action,
+        col: 1,
+        row: 0,
+    },
+    CalcButton {
+        label: "%",
+        action: ButtonAction::Percent,
+        style: ButtonStyle::Action,
+        col: 2,
+        row: 0,
+    },
+    CalcButton {
+        label: "÷",
+        action: ButtonAction::Op(Operator::Divide),
+        style: ButtonStyle::Operator,
+        col: 3,
+        row: 0,
+    },
+    CalcButton {
+        label: "7",
+        action: ButtonAction::Digit('7'),
+        style: ButtonStyle::Number,
+        col: 0,
+        row: 1,
+    },
+    CalcButton {
+        label: "8",
+        action: ButtonAction::Digit('8'),
+        style: ButtonStyle::Number,
+        col: 1,
+        row: 1,
+    },
+    CalcButton {
+        label: "9",
+        action: ButtonAction::Digit('9'),
+        style: ButtonStyle::Number,
+        col: 2,
+        row: 1,
+    },
+    CalcButton {
+        label: "×",
+        action: ButtonAction::Op(Operator::Multiply),
+        style: ButtonStyle::Operator,
+        col: 3,
+        row: 1,
+    },
+    CalcButton {
+        label: "4",
+        action: ButtonAction::Digit('4'),
+        style: ButtonStyle::Number,
+        col: 0,
+        row: 2,
+    },
+    CalcButton {
+        label: "5",
+        action: ButtonAction::Digit('5'),
+        style: ButtonStyle::Number,
+        col: 1,
+        row: 2,
+    },
+    CalcButton {
+        label: "6",
+        action: ButtonAction::Digit('6'),
+        style: ButtonStyle::Number,
+        col: 2,
+        row: 2,
+    },
+    CalcButton {
+        label: "−",
+        action: ButtonAction::Op(Operator::Subtract),
+        style: ButtonStyle::Operator,
+        col: 3,
+        row: 2,
+    },
+    CalcButton {
+        label: "1",
+        action: ButtonAction::Digit('1'),
+        style: ButtonStyle::Number,
+        col: 0,
+        row: 3,
+    },
+    CalcButton {
+        label: "2",
+        action: ButtonAction::Digit('2'),
+        style: ButtonStyle::Number,
+        col: 1,
+        row: 3,
+    },
+    CalcButton {
+        label: "3",
+        action: ButtonAction::Digit('3'),
+        style: ButtonStyle::Number,
+        col: 2,
+        row: 3,
+    },
+    CalcButton {
+        label: "+",
+        action: ButtonAction::Op(Operator::Add),
+        style: ButtonStyle::Operator,
+        col: 3,
+        row: 3,
+    },
+    CalcButton {
+        label: "±",
+        action: ButtonAction::ToggleSign,
+        style: ButtonStyle::Action,
+        col: 0,
+        row: 4,
+    },
+    CalcButton {
+        label: "0",
+        action: ButtonAction::Digit('0'),
+        style: ButtonStyle::Number,
+        col: 1,
+        row: 4,
+    },
+    CalcButton {
+        label: ".",
+        action: ButtonAction::Decimal,
+        style: ButtonStyle::Number,
+        col: 2,
+        row: 4,
+    },
+    CalcButton {
+        label: "=",
+        action: ButtonAction::Equals,
+        style: ButtonStyle::Accent,
+        col: 3,
+        row: 4,
+    },
 ];
 
 // ── Complete High-Fidelity Vector Typography (A-Z, 0-9, Math Symbols) ──────
@@ -324,7 +436,11 @@ pub fn draw_vector_char(
 
     let draw_bar = |b: &mut SceneBuilder, bx: f64, by: f64, bw: f64, bh: f64| {
         let r = (stroke_w / 2.0).min(bw / 2.0).min(bh / 2.0);
-        b.fill_rounded_rect(Rect::new(bx, by, bw.max(stroke_w), bh.max(stroke_w)), r, color);
+        b.fill_rounded_rect(
+            Rect::new(bx, by, bw.max(stroke_w), bh.max(stroke_w)),
+            r,
+            color,
+        );
     };
 
     match c {
@@ -337,7 +453,13 @@ pub fn draw_vector_char(
         '1' => {
             draw_bar(builder, mid_x - stroke_w / 2.0, ry, stroke_w, rh);
             draw_bar(builder, rx + rw * 0.15, ry + rh * 0.2, rw * 0.35, stroke_w);
-            draw_bar(builder, rx + rw * 0.15, ry + rh - stroke_w, rw * 0.7, stroke_w);
+            draw_bar(
+                builder,
+                rx + rw * 0.15,
+                ry + rh - stroke_w,
+                rw * 0.7,
+                stroke_w,
+            );
         }
         '2' => {
             draw_bar(builder, rx, ry, rw, stroke_w);
@@ -349,7 +471,13 @@ pub fn draw_vector_char(
         '3' => {
             draw_bar(builder, rx, ry, rw, stroke_w);
             draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw * 0.2, mid_y - stroke_w / 2.0, rw * 0.8, stroke_w);
+            draw_bar(
+                builder,
+                rx + rw * 0.2,
+                mid_y - stroke_w / 2.0,
+                rw * 0.8,
+                stroke_w,
+            );
             draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
         }
         '4' => {
@@ -412,7 +540,13 @@ pub fn draw_vector_char(
             draw_bar(builder, rx, ry, stroke_w, rh);
             draw_bar(builder, rx, ry, rw * 0.75, stroke_w);
             draw_bar(builder, rx, ry + rh - stroke_w, rw * 0.75, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, ry + rh * 0.15, stroke_w, rh * 0.7);
+            draw_bar(
+                builder,
+                rx + rw - stroke_w,
+                ry + rh * 0.15,
+                stroke_w,
+                rh * 0.7,
+            );
         }
         'E' | 'e' => {
             draw_bar(builder, rx, ry, rw, stroke_w);
@@ -440,7 +574,13 @@ pub fn draw_vector_char(
         'I' | 'i' => {
             draw_bar(builder, mid_x - stroke_w / 2.0, ry, stroke_w, rh);
             draw_bar(builder, rx + rw * 0.2, ry, rw * 0.6, stroke_w);
-            draw_bar(builder, rx + rw * 0.2, ry + rh - stroke_w, rw * 0.6, stroke_w);
+            draw_bar(
+                builder,
+                rx + rw * 0.2,
+                ry + rh - stroke_w,
+                rw * 0.6,
+                stroke_w,
+            );
         }
         'J' | 'j' => {
             draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
@@ -450,7 +590,10 @@ pub fn draw_vector_char(
         'K' | 'k' => {
             draw_bar(builder, rx, ry, stroke_w, rh);
             let pts1 = vec![Point::new(rx + stroke_w, mid_y), Point::new(rx + rw, ry)];
-            let pts2 = vec![Point::new(rx + stroke_w, mid_y), Point::new(rx + rw, ry + rh)];
+            let pts2 = vec![
+                Point::new(rx + stroke_w, mid_y),
+                Point::new(rx + rw, ry + rh),
+            ];
             builder.stroke_polygon(pts1, color, stroke_w);
             builder.stroke_polygon(pts2, color, stroke_w);
         }
@@ -467,7 +610,10 @@ pub fn draw_vector_char(
         'N' | 'n' => {
             draw_bar(builder, rx, ry, stroke_w, rh);
             draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            let pts = vec![Point::new(rx + stroke_w, ry), Point::new(rx + rw - stroke_w, ry + rh)];
+            let pts = vec![
+                Point::new(rx + stroke_w, ry),
+                Point::new(rx + rw - stroke_w, ry + rh),
+            ];
             builder.stroke_polygon(pts, color, stroke_w * 1.1);
         }
         'O' | 'o' => {
@@ -526,8 +672,14 @@ pub fn draw_vector_char(
             draw_bar(builder, mid_x - stroke_w / 2.0, mid_y, stroke_w, rh / 2.0);
         }
         'X' | 'x' => {
-            let pts1 = vec![Point::new(rx + rw * 0.15, ry + rh * 0.15), Point::new(rx + rw * 0.85, ry + rh * 0.85)];
-            let pts2 = vec![Point::new(rx + rw * 0.85, ry + rh * 0.15), Point::new(rx + rw * 0.15, ry + rh * 0.85)];
+            let pts1 = vec![
+                Point::new(rx + rw * 0.15, ry + rh * 0.15),
+                Point::new(rx + rw * 0.85, ry + rh * 0.85),
+            ];
+            let pts2 = vec![
+                Point::new(rx + rw * 0.85, ry + rh * 0.15),
+                Point::new(rx + rw * 0.15, ry + rh * 0.85),
+            ];
             builder.stroke_polygon(pts1, color, stroke_w * 1.1);
             builder.stroke_polygon(pts2, color, stroke_w * 1.1);
         }
@@ -545,47 +697,137 @@ pub fn draw_vector_char(
             builder.stroke_polygon(pts, color, stroke_w * 1.1);
         }
         '+' => {
-            draw_bar(builder, rx + rw * 0.15, mid_y - stroke_w / 2.0, rw * 0.7, stroke_w);
-            draw_bar(builder, mid_x - stroke_w / 2.0, ry + rh * 0.15, stroke_w, rh * 0.7);
+            draw_bar(
+                builder,
+                rx + rw * 0.15,
+                mid_y - stroke_w / 2.0,
+                rw * 0.7,
+                stroke_w,
+            );
+            draw_bar(
+                builder,
+                mid_x - stroke_w / 2.0,
+                ry + rh * 0.15,
+                stroke_w,
+                rh * 0.7,
+            );
         }
         '-' | '−' => {
-            draw_bar(builder, rx + rw * 0.15, mid_y - stroke_w / 2.0, rw * 0.7, stroke_w);
+            draw_bar(
+                builder,
+                rx + rw * 0.15,
+                mid_y - stroke_w / 2.0,
+                rw * 0.7,
+                stroke_w,
+            );
         }
         '*' | '×' => {
-            let pts1 = vec![Point::new(rx + rw * 0.2, ry + rh * 0.2), Point::new(rx + rw * 0.8, ry + rh * 0.8)];
-            let pts2 = vec![Point::new(rx + rw * 0.8, ry + rh * 0.2), Point::new(rx + rw * 0.2, ry + rh * 0.8)];
+            let pts1 = vec![
+                Point::new(rx + rw * 0.2, ry + rh * 0.2),
+                Point::new(rx + rw * 0.8, ry + rh * 0.8),
+            ];
+            let pts2 = vec![
+                Point::new(rx + rw * 0.8, ry + rh * 0.2),
+                Point::new(rx + rw * 0.2, ry + rh * 0.8),
+            ];
             builder.stroke_polygon(pts1, color, stroke_w * 1.1);
             builder.stroke_polygon(pts2, color, stroke_w * 1.1);
         }
         '/' => {
-            let pts = vec![Point::new(rx + rw * 0.85, ry + rh * 0.15), Point::new(rx + rw * 0.15, ry + rh * 0.85)];
+            let pts = vec![
+                Point::new(rx + rw * 0.85, ry + rh * 0.15),
+                Point::new(rx + rw * 0.15, ry + rh * 0.85),
+            ];
             builder.stroke_polygon(pts, color, stroke_w * 1.1);
         }
         '÷' => {
-            draw_bar(builder, rx + rw * 0.15, mid_y - stroke_w / 2.0, rw * 0.7, stroke_w);
+            draw_bar(
+                builder,
+                rx + rw * 0.15,
+                mid_y - stroke_w / 2.0,
+                rw * 0.7,
+                stroke_w,
+            );
             let dot_size = stroke_w * 1.5;
-            draw_bar(builder, mid_x - dot_size / 2.0, ry + rh * 0.2, dot_size, dot_size);
-            draw_bar(builder, mid_x - dot_size / 2.0, ry + rh * 0.8 - dot_size, dot_size, dot_size);
+            draw_bar(
+                builder,
+                mid_x - dot_size / 2.0,
+                ry + rh * 0.2,
+                dot_size,
+                dot_size,
+            );
+            draw_bar(
+                builder,
+                mid_x - dot_size / 2.0,
+                ry + rh * 0.8 - dot_size,
+                dot_size,
+                dot_size,
+            );
         }
         '=' => {
-            draw_bar(builder, rx + rw * 0.15, mid_y - rh * 0.18, rw * 0.7, stroke_w);
-            draw_bar(builder, rx + rw * 0.15, mid_y + rh * 0.18, rw * 0.7, stroke_w);
+            draw_bar(
+                builder,
+                rx + rw * 0.15,
+                mid_y - rh * 0.18,
+                rw * 0.7,
+                stroke_w,
+            );
+            draw_bar(
+                builder,
+                rx + rw * 0.15,
+                mid_y + rh * 0.18,
+                rw * 0.7,
+                stroke_w,
+            );
         }
         '.' => {
             let dot_size = stroke_w * 1.6;
-            draw_bar(builder, mid_x - dot_size / 2.0, ry + rh - dot_size, dot_size, dot_size);
+            draw_bar(
+                builder,
+                mid_x - dot_size / 2.0,
+                ry + rh - dot_size,
+                dot_size,
+                dot_size,
+            );
         }
         '%' => {
             let dot = stroke_w * 1.2;
             draw_bar(builder, rx + rw * 0.15, ry + rh * 0.15, dot, dot);
-            draw_bar(builder, rx + rw * 0.85 - dot, ry + rh * 0.85 - dot, dot, dot);
-            let pts = vec![Point::new(rx + rw * 0.85, ry + rh * 0.15), Point::new(rx + rw * 0.15, ry + rh * 0.85)];
+            draw_bar(
+                builder,
+                rx + rw * 0.85 - dot,
+                ry + rh * 0.85 - dot,
+                dot,
+                dot,
+            );
+            let pts = vec![
+                Point::new(rx + rw * 0.85, ry + rh * 0.15),
+                Point::new(rx + rw * 0.15, ry + rh * 0.85),
+            ];
             builder.stroke_polygon(pts, color, stroke_w * 0.9);
         }
         '±' => {
-            draw_bar(builder, rx + rw * 0.15, mid_y - rh * 0.2, rw * 0.7, stroke_w);
-            draw_bar(builder, mid_x - stroke_w / 2.0, ry + rh * 0.1, stroke_w, rh * 0.45);
-            draw_bar(builder, rx + rw * 0.15, ry + rh - stroke_w * 1.2, rw * 0.7, stroke_w);
+            draw_bar(
+                builder,
+                rx + rw * 0.15,
+                mid_y - rh * 0.2,
+                rw * 0.7,
+                stroke_w,
+            );
+            draw_bar(
+                builder,
+                mid_x - stroke_w / 2.0,
+                ry + rh * 0.1,
+                stroke_w,
+                rh * 0.45,
+            );
+            draw_bar(
+                builder,
+                rx + rw * 0.15,
+                ry + rh - stroke_w * 1.2,
+                rw * 0.7,
+                stroke_w,
+            );
         }
         _ => {}
     }
@@ -822,9 +1064,26 @@ impl GuiApp for CalculatorApp {
                 builder.fill_rect(Rect::new(0.0, 0.0, w, 3.0), Color::rgb(0, 120, 212));
 
                 // Title Pill
-                builder.fill_rounded_rect(Rect::new(24.0, 16.0, 190.0, 28.0), 6.0, Color::rgb(32, 32, 32));
-                builder.fill_rounded_rect(Rect::new(33.5, 25.5, 9.0, 9.0), 4.5, Color::rgb(0, 120, 212));
-                draw_vector_text_left(&mut builder, "AGAM CALCULATOR", 50.0, 30.0, 7.0, 11.0, 1.6, Color::rgb(210, 210, 210));
+                builder.fill_rounded_rect(
+                    Rect::new(24.0, 16.0, 190.0, 28.0),
+                    6.0,
+                    Color::rgb(32, 32, 32),
+                );
+                builder.fill_rounded_rect(
+                    Rect::new(33.5, 25.5, 9.0, 9.0),
+                    4.5,
+                    Color::rgb(0, 120, 212),
+                );
+                draw_vector_text_left(
+                    &mut builder,
+                    "AGAM CALCULATOR",
+                    50.0,
+                    30.0,
+                    7.0,
+                    11.0,
+                    1.6,
+                    Color::rgb(210, 210, 210),
+                );
 
                 // Display Screen Card
                 let disp_rect = Rect::new(24.0, 56.0, w - 48.0, 120.0);
@@ -834,9 +1093,24 @@ impl GuiApp for CalculatorApp {
                 let right_x = disp_rect.origin.x + disp_rect.width - 20.0;
                 if !self.engine.history.is_empty() {
                     let hist_len = self.engine.history.len().max(1);
-                    let h_char_w = if hist_len > 28 { 6.0 } else if hist_len > 18 { 7.5 } else { 9.0 };
+                    let h_char_w = if hist_len > 28 {
+                        6.0
+                    } else if hist_len > 18 {
+                        7.5
+                    } else {
+                        9.0
+                    };
                     let h_char_h = h_char_w * 1.55;
-                    draw_vector_text(&mut builder, &self.engine.history, right_x, disp_rect.origin.y + 30.0, h_char_w, h_char_h, 1.6, Color::rgb(140, 140, 140));
+                    draw_vector_text(
+                        &mut builder,
+                        &self.engine.history,
+                        right_x,
+                        disp_rect.origin.y + 30.0,
+                        h_char_w,
+                        h_char_h,
+                        1.6,
+                        Color::rgb(140, 140, 140),
+                    );
                 }
 
                 let disp_len = self.engine.display.len().max(1);
@@ -852,8 +1126,21 @@ impl GuiApp for CalculatorApp {
                     (21.0, 40.0, 3.8)
                 };
 
-                let disp_color = if self.engine.has_error { Color::rgb(255, 90, 90) } else { Color::WHITE };
-                draw_vector_text(&mut builder, &self.engine.display, right_x, disp_rect.origin.y + 82.0, char_w, char_h, stroke_w, disp_color);
+                let disp_color = if self.engine.has_error {
+                    Color::rgb(255, 90, 90)
+                } else {
+                    Color::WHITE
+                };
+                draw_vector_text(
+                    &mut builder,
+                    &self.engine.display,
+                    right_x,
+                    disp_rect.origin.y + 82.0,
+                    char_w,
+                    char_h,
+                    stroke_w,
+                    disp_color,
+                );
 
                 // 4x5 Keypad Grid
                 let (grid_x, grid_y, grid_w, grid_h) = Self::get_grid_bounds(w, h);
@@ -875,12 +1162,20 @@ impl GuiApp for CalculatorApp {
                             } else if is_hovered {
                                 (Color::rgb(24, 140, 235), Color::WHITE, Color::WHITE)
                             } else {
-                                (Color::rgb(0, 120, 212), Color::rgb(0, 140, 240), Color::WHITE)
+                                (
+                                    Color::rgb(0, 120, 212),
+                                    Color::rgb(0, 140, 240),
+                                    Color::WHITE,
+                                )
                             }
                         }
                         ButtonStyle::Operator => {
                             if is_pressed {
-                                (Color::rgb(26, 26, 26), Color::rgb(0, 120, 212), Color::WHITE)
+                                (
+                                    Color::rgb(26, 26, 26),
+                                    Color::rgb(0, 120, 212),
+                                    Color::WHITE,
+                                )
                             } else if is_hovered {
                                 (Color::rgb(60, 60, 60), Color::rgb(85, 85, 85), Color::WHITE)
                             } else {
@@ -889,16 +1184,28 @@ impl GuiApp for CalculatorApp {
                         }
                         ButtonStyle::Action => {
                             if is_pressed {
-                                (Color::rgb(30, 30, 30), Color::rgb(0, 120, 212), Color::WHITE)
+                                (
+                                    Color::rgb(30, 30, 30),
+                                    Color::rgb(0, 120, 212),
+                                    Color::WHITE,
+                                )
                             } else if is_hovered {
                                 (Color::rgb(56, 56, 56), Color::rgb(80, 80, 80), Color::WHITE)
                             } else {
-                                (Color::rgb(44, 44, 44), Color::rgb(58, 58, 58), Color::LIGHT_GRAY)
+                                (
+                                    Color::rgb(44, 44, 44),
+                                    Color::rgb(58, 58, 58),
+                                    Color::LIGHT_GRAY,
+                                )
                             }
                         }
                         ButtonStyle::Number => {
                             if is_pressed {
-                                (Color::rgb(32, 32, 32), Color::rgb(0, 120, 212), Color::WHITE)
+                                (
+                                    Color::rgb(32, 32, 32),
+                                    Color::rgb(0, 120, 212),
+                                    Color::WHITE,
+                                )
                             } else if is_hovered {
                                 (Color::rgb(52, 52, 52), Color::rgb(75, 75, 75), Color::WHITE)
                             } else {
@@ -924,7 +1231,16 @@ impl GuiApp for CalculatorApp {
                     let ky = cy - b_char_h / 2.0;
 
                     for ch in btn_str.chars() {
-                        draw_vector_char(&mut builder, ch, kx, ky, b_char_w, b_char_h, b_stroke_w, text_color);
+                        draw_vector_char(
+                            &mut builder,
+                            ch,
+                            kx,
+                            ky,
+                            b_char_w,
+                            b_char_h,
+                            b_stroke_w,
+                            text_color,
+                        );
                         kx += b_char_w * 1.15;
                     }
                 }
@@ -982,7 +1298,11 @@ impl GuiApp for CounterApp {
                 let by = 160.0;
                 let mut new_hover = None;
                 for (i, bx) in [30.0, 135.0, 240.0].iter().enumerate() {
-                    if position.x >= *bx && position.x <= *bx + btn_w && position.y >= by && position.y <= by + btn_h {
+                    if position.x >= *bx
+                        && position.x <= *bx + btn_w
+                        && position.y >= by
+                        && position.y <= by + btn_h
+                    {
                         new_hover = Some(i);
                         break;
                     }
@@ -999,7 +1319,11 @@ impl GuiApp for CounterApp {
                     let btn_h = 36.0;
                     let by = 160.0;
                     for (i, bx) in [30.0, 135.0, 240.0].iter().enumerate() {
-                        if position.x >= *bx && position.x <= *bx + btn_w && position.y >= by && position.y <= by + btn_h {
+                        if position.x >= *bx
+                            && position.x <= *bx + btn_w
+                            && position.y >= by
+                            && position.y <= by + btn_h
+                        {
                             match i {
                                 0 => self.count -= 1,
                                 1 => self.count += 1,
@@ -1032,10 +1356,28 @@ impl GuiApp for CounterApp {
                 builder.fill_rounded_rect(card_rect, 10.0, Color::rgb(35, 35, 35));
                 builder.stroke_rect(card_rect, Color::rgb(55, 55, 55), 1.0);
 
-                draw_vector_text(&mut builder, "CURRENT COUNT", card_rect.origin.x + card_rect.width / 2.0 + 50.0, card_rect.origin.y + 30.0, 7.0, 10.0, 1.6, Color::rgb(140, 140, 140));
+                draw_vector_text(
+                    &mut builder,
+                    "CURRENT COUNT",
+                    card_rect.origin.x + card_rect.width / 2.0 + 50.0,
+                    card_rect.origin.y + 30.0,
+                    7.0,
+                    10.0,
+                    1.6,
+                    Color::rgb(140, 140, 140),
+                );
 
                 let count_str = self.count.to_string();
-                draw_vector_text(&mut builder, &count_str, card_rect.origin.x + card_rect.width / 2.0 + (count_str.len() as f64 * 8.0), card_rect.origin.y + 75.0, 16.0, 28.0, 3.2, Color::WHITE);
+                draw_vector_text(
+                    &mut builder,
+                    &count_str,
+                    card_rect.origin.x + card_rect.width / 2.0 + (count_str.len() as f64 * 8.0),
+                    card_rect.origin.y + 75.0,
+                    16.0,
+                    28.0,
+                    3.2,
+                    Color::WHITE,
+                );
 
                 // Buttons
                 let labels = ["- DEC", "+ INC", "RESET"];
@@ -1046,7 +1388,11 @@ impl GuiApp for CounterApp {
                     let rect = Rect::new(*bx, by, btn_w, btn_h);
                     let is_hovered = self.hovered == Some(i);
                     let bg = if i == 1 {
-                        if is_hovered { Color::rgb(24, 140, 235) } else { Color::rgb(0, 120, 212) }
+                        if is_hovered {
+                            Color::rgb(24, 140, 235)
+                        } else {
+                            Color::rgb(0, 120, 212)
+                        }
                     } else if is_hovered {
                         Color::rgb(60, 60, 60)
                     } else {
@@ -1054,7 +1400,16 @@ impl GuiApp for CounterApp {
                     };
                     builder.fill_rounded_rect(rect, 6.0, bg);
                     builder.stroke_rect(rect, Color::rgb(70, 70, 70), 1.0);
-                    draw_vector_text_left(&mut builder, labels[i], bx + 18.0, by + 18.0, 7.0, 12.0, 1.8, Color::WHITE);
+                    draw_vector_text_left(
+                        &mut builder,
+                        labels[i],
+                        bx + 18.0,
+                        by + 18.0,
+                        7.0,
+                        12.0,
+                        1.8,
+                        Color::WHITE,
+                    );
                 }
 
                 let frame = surface.acquire_frame()?;

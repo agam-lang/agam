@@ -3305,11 +3305,7 @@ fn run_gui_app(file: &PathBuf, source: &str, verbose: bool) -> Result<i32, Strin
         "Agam Native Calculator"
     };
 
-    let (width, height) = if is_counter {
-        (360, 240)
-    } else {
-        (440, 620)
-    };
+    let (width, height) = if is_counter { (360, 240) } else { (440, 620) };
 
     let event_loop = agam_gui::GuiEventLoop::new()
         .map_err(|e| format!("failed to initialize GUI event loop: {e}"))?;
@@ -3328,4 +3324,3 @@ fn run_gui_app(file: &PathBuf, source: &str, verbose: bool) -> Result<i32, Strin
     }
     Ok(0)
 }
-

@@ -6,8 +6,8 @@
 //! - Vector stroke glyph typography scaled smoothly via Vello compute shaders.
 //! - Retained scene graph rendering with clipping cards and fluent dark aesthetics.
 
-use agam_gui::platform::{GuiEventLoop, WindowConfig};
 use agam_gui::CalculatorApp;
+use agam_gui::platform::{GuiEventLoop, WindowConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = GuiEventLoop::new()?;
