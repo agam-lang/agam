@@ -290,50 +290,51 @@ mod tests {
     #[test]
     fn test_font_context_creation_and_measure() {
         let font_ctx = FontContext::new();
-        let size = font_ctx
-            .measure_text("Hello Agam!", 16.0, None, None, TextWrap::Word)
-            .expect("Text measurement");
-        assert!(size.width > 0.0);
-        assert!(size.height > 0.0);
+        let res = font_ctx.measure_text("Hello Agam!", 16.0, None, None, TextWrap::Word);
+        assert!(res.is_ok());
+        if let Ok(size) = res {
+            assert!(size.width > 0.0);
+            assert!(size.height > 0.0);
+        }
     }
 
     #[test]
     fn test_multiline_text_wrapping() {
         let font_ctx = FontContext::new();
-        let single_line = font_ctx
-            .measure_text("Short text", 16.0, None, None, TextWrap::Word)
-            .expect("Single line measure");
+        let single_res = font_ctx.measure_text("Short text", 16.0, None, None, TextWrap::Word);
+        let multi_res = font_ctx.measure_text(
+            "This is a longer paragraph intended to test multiline wrapping behavior in the Agam GUI text layout engine.",
+            16.0,
+            None,
+            Some(150.0),
+            TextWrap::Word,
+        );
 
-        let multiline = font_ctx
-            .measure_text(
-                "This is a longer paragraph intended to test multiline wrapping behavior in the Agam GUI text layout engine.",
-                16.0,
-                None,
-                Some(150.0),
-                TextWrap::Word,
-            )
-            .expect("Multiline measure");
-
-        assert!(multiline.height > single_line.height);
+        assert!(single_res.is_ok());
+        assert!(multi_res.is_ok());
+        if let (Ok(single_line), Ok(multiline)) = (single_res, multi_res) {
+            assert!(multiline.height > single_line.height);
+        }
     }
 
     #[test]
     fn test_text_layout_glyph_generation() {
         let font_ctx = FontContext::new();
-        let layout = font_ctx
-            .layout_text(
-                "Agam 2026",
-                18.0,
-                None,
-                FontWeight::Bold,
-                TextAlign::Center,
-                Some(200.0),
-                TextWrap::None,
-            )
-            .expect("Text layout");
+        let res = font_ctx.layout_text(
+            "Agam 2026",
+            18.0,
+            None,
+            FontWeight::Bold,
+            TextAlign::Center,
+            Some(200.0),
+            TextWrap::None,
+        );
 
-        assert!(!layout.is_empty());
-        assert_eq!(layout.text, "Agam 2026");
-        assert!(layout.glyphs.len() >= 8);
+        assert!(res.is_ok());
+        if let Ok(layout) = res {
+            assert!(!layout.is_empty());
+            assert_eq!(layout.text, "Agam 2026");
+            assert!(layout.glyphs.len() >= 8);
+        }
     }
 }

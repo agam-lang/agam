@@ -29,17 +29,20 @@ fn build_standard_3rect_clip_scene() -> SceneBuilder {
 #[test]
 fn test_golden_scene() {
     let scene = build_standard_3rect_clip_scene();
-    let actual_json = scene
-        .to_json_pretty()
-        .expect("Scene must serialize to JSON");
+    let Ok(actual_json) = scene.to_json_pretty() else {
+        assert!(false, "Scene must serialize to JSON");
+        return;
+    };
 
     let golden_path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/golden/scene_3rect_clip.json"
     );
 
-    let golden_json = std::fs::read_to_string(golden_path)
-        .expect("Golden snapshot file must exist at tests/golden/scene_3rect_clip.json");
+    let Ok(golden_json) = std::fs::read_to_string(golden_path) else {
+        assert!(false, "Golden snapshot file must exist");
+        return;
+    };
 
     // Normalize line endings for cross-platform deterministic comparison
     let normalized_actual = actual_json.replace("\r\n", "\n").trim().to_string();
@@ -51,7 +54,9 @@ fn test_golden_scene() {
     );
 
     // Round-trip deserialization verification
-    let deserialized = SceneBuilder::from_json(&normalized_actual)
-        .expect("Scene must deserialize cleanly from JSON snapshot");
+    let Ok(deserialized) = SceneBuilder::from_json(&normalized_actual) else {
+        assert!(false, "Scene must deserialize cleanly");
+        return;
+    };
     assert_eq!(scene, deserialized);
 }

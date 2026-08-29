@@ -205,38 +205,46 @@ mod tests {
         let bytes = vec![
             255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
         ];
-        let tex = ImageTexture::from_rgba_bytes(2, 2, bytes).expect("2x2 RGBA texture");
-        assert_eq!(tex.width(), 2);
-        assert_eq!(tex.height(), 2);
-        assert_eq!(tex.as_bytes().len(), 16);
+        let res = ImageTexture::from_rgba_bytes(2, 2, bytes);
+        assert!(res.is_ok());
+        if let Ok(tex) = res {
+            assert_eq!(tex.width(), 2);
+            assert_eq!(tex.height(), 2);
+            assert_eq!(tex.as_bytes().len(), 16);
+        }
     }
 
     #[test]
     fn test_image_texture_from_image_buffer() {
         let mut buf = ImageBuffer::<Rgba8>::new(4, 4);
         buf.put_pixel(0, 0, Rgba8::new(255, 128, 64, 255));
-        let tex =
-            ImageTexture::from_image_buffer(&buf).expect("Convert ImageBuffer to ImageTexture");
-        assert_eq!(tex.width(), 4);
-        assert_eq!(tex.height(), 4);
-        assert_eq!(tex.as_bytes()[0], 255);
-        assert_eq!(tex.as_bytes()[1], 128);
+        let res = ImageTexture::from_image_buffer(&buf);
+        assert!(res.is_ok());
+        if let Ok(tex) = res {
+            assert_eq!(tex.width(), 4);
+            assert_eq!(tex.height(), 4);
+            assert_eq!(tex.as_bytes()[0], 255);
+            assert_eq!(tex.as_bytes()[1], 128);
+        }
     }
 
     #[test]
     fn test_image_fit_contain_and_cover() {
         let bytes = vec![0; 400]; // 10x10
-        let tex = ImageTexture::from_rgba_bytes(10, 10, bytes).unwrap();
-        let target = Rect::new(0.0, 0.0, 100.0, 50.0);
+        let res = ImageTexture::from_rgba_bytes(10, 10, bytes);
+        assert!(res.is_ok());
+        if let Ok(tex) = res {
+            let target = Rect::new(0.0, 0.0, 100.0, 50.0);
 
-        let contain_rect = tex.compute_fit_rect(target, ImageFit::Contain);
-        assert_eq!(contain_rect.width, 50.0);
-        assert_eq!(contain_rect.height, 50.0);
-        assert_eq!(contain_rect.origin.x, 25.0);
+            let contain_rect = tex.compute_fit_rect(target, ImageFit::Contain);
+            assert_eq!(contain_rect.width, 50.0);
+            assert_eq!(contain_rect.height, 50.0);
+            assert_eq!(contain_rect.origin.x, 25.0);
 
-        let cover_rect = tex.compute_fit_rect(target, ImageFit::Cover);
-        assert_eq!(cover_rect.width, 100.0);
-        assert_eq!(cover_rect.height, 100.0);
-        assert_eq!(cover_rect.origin.y, -25.0);
+            let cover_rect = tex.compute_fit_rect(target, ImageFit::Cover);
+            assert_eq!(cover_rect.width, 100.0);
+            assert_eq!(cover_rect.height, 100.0);
+            assert_eq!(cover_rect.origin.y, -25.0);
+        }
     }
 }

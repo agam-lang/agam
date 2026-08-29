@@ -705,17 +705,10 @@ mod tests {
 
     #[test]
     fn test_color_hex_parsing() {
-        let red = Color::from_hex("#FF0000").unwrap();
-        assert_eq!(red, Color::RED);
-
-        let green = Color::from_hex("00FF00").unwrap();
-        assert_eq!(green, Color::GREEN);
-
-        let semi_blue = Color::from_hex("#0000FF80").unwrap();
-        assert_eq!(semi_blue, Color::rgba(0, 0, 255, 128));
-
-        let invalid = Color::from_hex("XYZ");
-        assert!(invalid.is_err());
+        assert_eq!(Color::from_hex("#FF0000"), Ok(Color::RED));
+        assert_eq!(Color::from_hex("00FF00"), Ok(Color::GREEN));
+        assert_eq!(Color::from_hex("#0000FF80"), Ok(Color::rgba(0, 0, 255, 128)));
+        assert!(Color::from_hex("XYZ").is_err());
     }
 
     #[test]

@@ -45,16 +45,23 @@ impl<T: Clone> Signal<T> {
         }
     }
 
+    fn lock_inner(&self) -> std::sync::MutexGuard<'_, SignalInner<T>> {
+        match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     /// Read the signal's current value.
     pub fn get(&self) -> T {
-        let inner = self.inner.lock().expect("Signal lock poisoned");
+        let inner = self.lock_inner();
         inner.value.clone()
     }
 
     /// Update the signal's value and notify all registered listeners.
     pub fn set(&self, new_value: T) {
         let listeners = {
-            let mut inner = self.inner.lock().expect("Signal lock poisoned");
+            let mut inner = self.lock_inner();
             inner.value = new_value;
             inner.listeners.clone()
         };
@@ -67,7 +74,7 @@ impl<T: Clone> Signal<T> {
     /// Mutate the signal's value in-place via a closure.
     pub fn update(&self, f: impl FnOnce(&mut T)) {
         let listeners = {
-            let mut inner = self.inner.lock().expect("Signal lock poisoned");
+            let mut inner = self.lock_inner();
             f(&mut inner.value);
             inner.listeners.clone()
         };
@@ -79,7 +86,7 @@ impl<T: Clone> Signal<T> {
 
     /// Register a listener to be notified on subsequent mutations.
     pub fn subscribe(&self, listener: impl Fn() + Send + Sync + 'static) {
-        let mut inner = self.inner.lock().expect("Signal lock poisoned");
+        let mut inner = self.lock_inner();
         inner.listeners.push(Arc::new(listener));
     }
 

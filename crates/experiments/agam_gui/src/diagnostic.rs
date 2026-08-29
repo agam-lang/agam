@@ -85,6 +85,6 @@ mod tests {
 
         let diag = err.to_diagnostic("E_GUI_SURFACE_LOST");
         assert!(diag.is_error());
-        assert_eq!(diag.proof.as_ref().unwrap().fact, proof.fact);
+        assert_eq!(diag.proof.as_ref().map(|p| &p.fact), Some(&proof.fact));
     }
 }
