@@ -323,4 +323,59 @@ fn main() -> i32:
         assert_eq!(out_advance, PipelineFuzzOutcome::Success);
         assert_eq!(out_base, PipelineFuzzOutcome::Success);
     }
+
+    #[test]
+    fn test_dual_syntax_parity_closure_and_multiline_struct() {
+        let advance_syntax = r#"
+@lang.advance
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn test_features() -> i32 {
+    let p: Point = Point {
+        x: 10,
+        y: 20,
+    };
+    let f = || -> i32 {
+        return p.x + p.y;
+    };
+    return f();
+}
+
+fn main() -> i32 {
+    return test_features();
+}
+"#;
+
+        let base_syntax = r#"
+@lang.base
+struct Point:
+    x: i32
+    y: i32
+
+fn test_features() -> i32:
+    let p: Point = Point {
+        x: 10,
+        y: 20,
+    }
+    let f = || -> i32:
+        return p.x + p.y
+    return f()
+
+fn main() -> i32:
+    return test_features()
+"#;
+
+        let out_advance = CompilerPipelineFuzzer::test_source(advance_syntax);
+        assert_eq!(
+            out_advance,
+            PipelineFuzzOutcome::Success,
+            "Advance syntax failed"
+        );
+
+        let out_base = CompilerPipelineFuzzer::test_source(base_syntax);
+        assert_eq!(out_base, PipelineFuzzOutcome::Success, "Base syntax failed");
+    }
 }

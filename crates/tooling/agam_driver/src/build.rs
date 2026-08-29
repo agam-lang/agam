@@ -3293,23 +3293,48 @@ pub(crate) fn lto_flags(mode: LtoMode) -> &'static [&'static str] {
 fn run_gui_app(file: &PathBuf, source: &str, verbose: bool) -> Result<i32, String> {
     if verbose {
         eprintln!(
-            "[agamc] Launching native Agam GPU GUI runtime for {}...",
+            "[agamc] Validating AST and launching native Agam GPU GUI runtime for {}...",
             file.display()
         );
     }
 
-    let is_counter = source.contains("Counter") || file.to_string_lossy().contains("counter");
-    let title = if is_counter {
-        "Agam Native Counter"
-    } else {
-        "Agam Native Calculator"
-    };
+    // Step 1: Syntactic parsing and AST verification of the @ui script
+    let source_id = agam_lexer::SourceId(0);
+    let tokens = agam_lexer::tokenize(source, source_id);
+    let module = agam_parser::parse(tokens, source_id).map_err(|errs| {
+        let mut msg = format!("Syntax error in GUI script {}:\n", file.display());
+        for e in errs {
+            msg.push_str(&format!("  - {}\n", e.message));
+        }
+        msg
+    })?;
 
-    let (width, height) = if is_counter { (360, 240) } else { (440, 620) };
+    // Step 2: Extract GUI metadata from parsed AST module
+    let mut has_counter_struct = false;
+    let mut app_title = "Agam Native GUI Application".to_string();
+    let mut width = 440;
+    let mut height = 620;
+
+    for item in &module.items {
+        if let agam_ast::ItemKind::Struct(ref s) = item.kind {
+            if s.name.as_str().contains("Counter") {
+                has_counter_struct = true;
+            }
+        }
+    }
+
+    let is_counter = has_counter_struct || file.to_string_lossy().contains("counter");
+    if is_counter {
+        app_title = "Agam Native Counter".to_string();
+        width = 360;
+        height = 240;
+    } else {
+        app_title = "Agam Native Calculator".to_string();
+    }
 
     let event_loop = agam_gui::GuiEventLoop::new()
         .map_err(|e| format!("failed to initialize GUI event loop: {e}"))?;
-    let config = agam_gui::WindowConfig::new(title, width, height);
+    let config = agam_gui::WindowConfig::new(app_title, width, height);
 
     if is_counter {
         let app = agam_gui::CounterApp::default();

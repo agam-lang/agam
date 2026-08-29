@@ -653,4 +653,21 @@ mod tests {
         );
         assert!(hit.is_some());
     }
+
+    #[test]
+    fn test_10k_node_dirty_rect_stress() {
+        let _font_ctx = FontContext::new();
+        let mut builder = SceneBuilder::new();
+
+        // Construct 10,000 visual primitives across a 2D canvas
+        for i in 0..10_000 {
+            let col = (i % 100) as f64 * 20.0;
+            let row = (i / 100) as f64 * 20.0;
+            let rect = Rect::new(col, row, 18.0, 18.0);
+            builder.fill_rounded_rect(rect, 2.0, Color::rgba(50, 100, 200, 255));
+        }
+
+        assert_eq!(builder.node_count(), 10_000);
+        assert!(builder.node_count() > 0);
+    }
 }

@@ -7,6 +7,7 @@ use crate::gpu::{GpuContext, GpuSurface};
 use crate::input::{GuiEvent, Key, MouseButton};
 use crate::platform::{GuiApp, GuiWindow};
 use crate::scene::{Color, Point, Rect, SceneBuilder, SceneRenderer};
+use crate::text::FontContext;
 
 // ── Calculator Engine ───────────────────────────────────────────────────────
 
@@ -884,6 +885,7 @@ pub fn draw_vector_text_left(
 
 pub struct CalculatorApp {
     pub engine: CalculatorEngine,
+    pub font_context: FontContext,
     gpu_context: Option<GpuContext>,
     surface: Option<GpuSurface>,
     renderer: Option<SceneRenderer>,
@@ -897,6 +899,7 @@ impl Default for CalculatorApp {
     fn default() -> Self {
         Self {
             engine: CalculatorEngine::new(),
+            font_context: FontContext::default(),
             gpu_context: None,
             surface: None,
             renderer: None,
@@ -1260,6 +1263,7 @@ impl GuiApp for CalculatorApp {
 
 pub struct CounterApp {
     count: i32,
+    pub font_context: FontContext,
     gpu_context: Option<GpuContext>,
     surface: Option<GpuSurface>,
     renderer: Option<SceneRenderer>,
@@ -1271,6 +1275,7 @@ impl Default for CounterApp {
     fn default() -> Self {
         Self {
             count: 0,
+            font_context: FontContext::default(),
             gpu_context: None,
             surface: None,
             renderer: None,

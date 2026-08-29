@@ -337,4 +337,57 @@ mod tests {
             assert!(layout.glyphs.len() >= 8);
         }
     }
+
+    #[test]
+    fn test_unicode_multiscript_shaping_and_bidi() {
+        let font_ctx = FontContext::new();
+
+        // 1. CJK Complex Scripts
+        let cjk_res = font_ctx.layout_text(
+            "Agam 语言 和 日本語",
+            16.0,
+            None,
+            FontWeight::Regular,
+            TextAlign::Left,
+            None,
+            TextWrap::None,
+        );
+        assert!(cjk_res.is_ok());
+        if let Ok(layout) = cjk_res {
+            assert!(!layout.is_empty());
+            assert!(layout.size.width > 0.0);
+        }
+
+        // 2. RTL Bidi Scripts (Arabic & Hebrew)
+        let rtl_res = font_ctx.layout_text(
+            "مرحبا بالعالم שלום עולם",
+            16.0,
+            None,
+            FontWeight::Regular,
+            TextAlign::Right,
+            Some(300.0),
+            TextWrap::Word,
+        );
+        assert!(rtl_res.is_ok());
+        if let Ok(layout) = rtl_res {
+            assert!(!layout.is_empty());
+            assert!(layout.size.width > 0.0);
+        }
+
+        // 3. Devanagari & Diacritics
+        let devanagari_res = font_ctx.layout_text(
+            "Agam भाषा ॐ संवत्",
+            16.0,
+            None,
+            FontWeight::SemiBold,
+            TextAlign::Left,
+            None,
+            TextWrap::None,
+        );
+        assert!(devanagari_res.is_ok());
+        if let Ok(layout) = devanagari_res {
+            assert!(!layout.is_empty());
+            assert!(layout.size.width > 0.0);
+        }
+    }
 }

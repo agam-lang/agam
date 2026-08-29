@@ -56,7 +56,7 @@ impl Parser {
             .unwrap_or(TokenKind::Eof)
     }
 
-    /// Check if the next token `{` is followed by struct field initializers, skipping newlines and comments.
+    /// Check if the next token `{` is followed by struct field initializers, skipping newlines, comments, and layout tokens.
     fn looks_like_struct_literal(&self) -> bool {
         if self.peek_kind() != TokenKind::LBrace {
             return false;
@@ -64,7 +64,11 @@ impl Parser {
         let mut offset = 1;
         while matches!(
             self.peek_at(offset),
-            TokenKind::Newline | TokenKind::LineComment | TokenKind::BlockComment
+            TokenKind::Newline
+                | TokenKind::LineComment
+                | TokenKind::BlockComment
+                | TokenKind::Indent
+                | TokenKind::Dedent
         ) {
             offset += 1;
         }
@@ -74,7 +78,11 @@ impl Parser {
                 let mut next_offset = offset + 1;
                 while matches!(
                     self.peek_at(next_offset),
-                    TokenKind::Newline | TokenKind::LineComment | TokenKind::BlockComment
+                    TokenKind::Newline
+                        | TokenKind::LineComment
+                        | TokenKind::BlockComment
+                        | TokenKind::Indent
+                        | TokenKind::Dedent
                 ) {
                     next_offset += 1;
                 }
@@ -116,6 +124,17 @@ impl Parser {
         while self.peek_kind() == TokenKind::Newline
             || self.peek_kind() == TokenKind::LineComment
             || self.peek_kind() == TokenKind::BlockComment
+        {
+            self.advance();
+        }
+    }
+
+    fn skip_struct_whitespace(&mut self) {
+        while self.peek_kind() == TokenKind::Newline
+            || self.peek_kind() == TokenKind::LineComment
+            || self.peek_kind() == TokenKind::BlockComment
+            || self.peek_kind() == TokenKind::Indent
+            || self.peek_kind() == TokenKind::Dedent
         {
             self.advance();
         }
@@ -1376,7 +1395,7 @@ impl Parser {
                 // Struct literal: Path { field: expr, ... }
                 if self.looks_like_struct_literal() {
                     self.advance(); // {
-                    self.skip_newlines();
+                    self.skip_struct_whitespace();
                     let mut fields = Vec::new();
                     while self.peek_kind() == TokenKind::Identifier
                         || self.peek_kind() == TokenKind::StringLiteral
@@ -1403,8 +1422,9 @@ impl Parser {
                             span: fname_tok.span,
                         });
                         self.eat(TokenKind::Comma);
-                        self.skip_newlines();
+                        self.skip_struct_whitespace();
                     }
+                    self.skip_struct_whitespace();
                     let end = self.expect(TokenKind::RBrace)?.span;
                     return Ok(Expr {
                         id,
@@ -1436,6 +1456,13 @@ impl Parser {
                 }
 
                 let body = if self.peek_kind() == TokenKind::LBrace {
+                    let block = self.parse_block()?;
+                    Expr {
+                        id: self.node_id(),
+                        span: block.span,
+                        kind: ExprKind::BlockExpr(block),
+                    }
+                } else if self.eat(TokenKind::Colon) {
                     let block = self.parse_block()?;
                     Expr {
                         id: self.node_id(),
@@ -1479,6 +1506,13 @@ impl Parser {
                 }
 
                 let body = if self.peek_kind() == TokenKind::LBrace {
+                    let block = self.parse_block()?;
+                    Expr {
+                        id: self.node_id(),
+                        span: block.span,
+                        kind: ExprKind::BlockExpr(block),
+                    }
+                } else if self.eat(TokenKind::Colon) {
                     let block = self.parse_block()?;
                     Expr {
                         id: self.node_id(),
