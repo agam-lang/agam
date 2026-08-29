@@ -13,9 +13,9 @@
     "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
   },
   "artifact_kind": "CSource",
-  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\01_algorithms\\fibonacci.agam",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\01_algorithms\\fibonacci.agam",
   "artifact_name": "temp_bench_agam_c.c",
   "bytes": 16569,
-  "created_unix_ms": 1787936659092,
-  "last_used_unix_ms": 1787936976615
+  "created_unix_ms": 1787989328525,
+  "last_used_unix_ms": 1787989328525
 }

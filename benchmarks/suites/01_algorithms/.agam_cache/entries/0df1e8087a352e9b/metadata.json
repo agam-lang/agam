@@ -13,9 +13,9 @@
     "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=missing;llvm_wsl_allowed=false;llvm_clang=clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
   },
   "artifact_kind": "LlvmIr",
-  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\01_algorithms\\fibonacci.agam",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\01_algorithms\\fibonacci.agam",
   "artifact_name": "temp_bench_agam_llvm.ll",
-  "bytes": 52359,
-  "created_unix_ms": 1787936658738,
-  "last_used_unix_ms": 1787936975443
+  "bytes": 4442,
+  "created_unix_ms": 1787989301294,
+  "last_used_unix_ms": 1787989301294
 }

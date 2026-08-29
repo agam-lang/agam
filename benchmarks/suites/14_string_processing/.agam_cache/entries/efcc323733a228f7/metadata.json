@@ -13,9 +13,9 @@
     "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
   },
   "artifact_kind": "CSource",
-  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\14_string_processing\\base64_encode.agam",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\14_string_processing\\base64_encode.agam",
   "artifact_name": "temp_bench_agam_c.c",
   "bytes": 19922,
-  "created_unix_ms": 1787936927478,
-  "last_used_unix_ms": 1787937235933
+  "created_unix_ms": 1787989633607,
+  "last_used_unix_ms": 1787989633607
 }

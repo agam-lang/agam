@@ -38,7 +38,7 @@ impl CallCacheSelection {
     }
 
     pub fn resolved_enable_all(&self) -> bool {
-        self.enable_all || !self.disable_all
+        self.enable_all && !self.disable_all
     }
 
     pub fn merge_cli(&self, cli_enabled: bool) -> Self {
@@ -70,10 +70,9 @@ impl CallCacheSelection {
             return false;
         }
 
-        self.resolved_enable_all()
-            || self.optimize_all
-            || self.include_functions.contains(function)
+        self.include_functions.contains(function)
             || self.optimize_functions.contains(function)
+            || !self.disable_all
     }
 }
 

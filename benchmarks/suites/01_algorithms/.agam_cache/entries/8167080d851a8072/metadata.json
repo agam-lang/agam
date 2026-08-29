@@ -13,9 +13,9 @@
     "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
   },
   "artifact_kind": "CSource",
-  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\01_algorithms\\quicksort.agam",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\01_algorithms\\quicksort.agam",
   "artifact_name": "temp_bench_agam_c.c",
   "bytes": 19294,
-  "created_unix_ms": 1787936686500,
-  "last_used_unix_ms": 1787936984126
+  "created_unix_ms": 1787989381793,
+  "last_used_unix_ms": 1787989381793
 }

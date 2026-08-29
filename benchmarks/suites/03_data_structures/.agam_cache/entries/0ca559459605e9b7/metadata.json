@@ -13,9 +13,9 @@
     "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=missing;llvm_wsl_allowed=false;llvm_clang=clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
   },
   "artifact_kind": "LlvmIr",
-  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\03_data_structures\\ring_buffer.agam",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\03_data_structures\\ring_buffer.agam",
   "artifact_name": "temp_bench_agam_llvm.ll",
-  "bytes": 40345,
-  "created_unix_ms": 1787936775269,
-  "last_used_unix_ms": 1787937074676
+  "bytes": 5729,
+  "created_unix_ms": 1787989479521,
+  "last_used_unix_ms": 1787989479521
 }

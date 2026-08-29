@@ -13,9 +13,9 @@
     "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
   },
   "artifact_kind": "CSource",
-  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\01_algorithms\\prime_sieve.agam",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\01_algorithms\\prime_sieve.agam",
   "artifact_name": "temp_bench_agam_c.c",
   "bytes": 17596,
-  "created_unix_ms": 1787936692069,
-  "last_used_unix_ms": 1787936989586
+  "created_unix_ms": 1787989388011,
+  "last_used_unix_ms": 1787989388011
 }

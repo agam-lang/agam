@@ -13,9 +13,9 @@
     "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude=;llvm_toolchain=missing;llvm_wsl_allowed=false;llvm_clang=clang.exe;llvm_target=host;llvm_sysroot=none;llvm_sdkroot=none"
   },
   "artifact_kind": "LlvmIr",
-  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\01_algorithms\\quicksort.agam",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\01_algorithms\\quicksort.agam",
   "artifact_name": "temp_bench_agam_llvm.ll",
-  "bytes": 61834,
-  "created_unix_ms": 1787936686141,
-  "last_used_unix_ms": 1787936982942
+  "bytes": 6838,
+  "created_unix_ms": 1787989380623,
+  "last_used_unix_ms": 1787989380623
 }

@@ -13,9 +13,9 @@
     "feature_signature": "build_cache=compiler-build-v2;strategy=auto-v1;disable_all=false;enable_all=false;optimize_all=false;include=;optimize=;exclude="
   },
   "artifact_kind": "CSource",
-  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\benchmarks\\suites\\03_data_structures\\valkey_kv_store.agam",
+  "source_path": "C:\\Users\\ksvik\\Projects\\Agam-Lang\\agam\\benchmarks\\suites\\03_data_structures\\valkey_kv_store.agam",
   "artifact_name": "temp_bench_agam_c.c",
   "bytes": 23134,
-  "created_unix_ms": 1787936792655,
-  "last_used_unix_ms": 1787937093781
+  "created_unix_ms": 1787989498226,
+  "last_used_unix_ms": 1787989498226
 }
