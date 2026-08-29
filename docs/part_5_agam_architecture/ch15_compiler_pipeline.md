@@ -80,7 +80,7 @@ Each phase has distinct performance characteristics and output artifacts:
 
 ## 15.3 Crate Dependency Architecture
 
-The compiler's 27 crates are organized in strict dependency layers. No crate may depend on a crate in a higher layer:
+The compiler's 29 crates are organized in strict dependency layers. No crate may depend on a crate in a higher layer:
 
 ```text
 Layer 0 (Foundation):

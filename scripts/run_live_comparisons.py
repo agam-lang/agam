@@ -16,27 +16,37 @@ Execution Targets:
 import os
 import subprocess
 import time
+import shutil
 import statistics
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
-if (ROOT / "target" / "release" / "agamc.exe").exists():
-    AGAM_BIN = ROOT / "target" / "release" / "agamc.exe"
-    SUITES_ROOT = ROOT / "benchmarks" / "suites"
-elif (ROOT / "agam" / "target" / "release" / "agamc.exe").exists():
-    AGAM_BIN = ROOT / "agam" / "target" / "release" / "agamc.exe"
-    SUITES_ROOT = ROOT / "benchmarks" / "suites"
-else:
-    AGAM_BIN = ROOT / "target" / "release" / "agamc.exe"
-    SUITES_ROOT = ROOT / "benchmarks" / "suites"
 
+def find_agamc(root_dir):
+    for candidate in [
+        root_dir / "target" / "release" / "agamc.exe",
+        root_dir / "target" / "release" / "agamc",
+        root_dir / "agam" / "target" / "release" / "agamc.exe",
+        root_dir / "agam" / "target" / "release" / "agamc",
+    ]:
+        if candidate.exists():
+            return candidate
+    return root_dir / "target" / "release" / ("agamc.exe" if os.name == "nt" else "agamc")
+
+AGAM_BIN = find_agamc(ROOT)
+SUITES_ROOT = ROOT / "benchmarks" / "suites"
 if not SUITES_ROOT.exists() and (ROOT / "agam" / "benchmarks" / "suites").exists():
     SUITES_ROOT = ROOT / "agam" / "benchmarks" / "suites"
 
-ZIG_BIN = Path("C:/Users/ksvik/.tools/zig-windows-x86_64-0.13.0/zig.exe")
-LLVM_CLANG = Path("C:/Program Files/LLVM/bin/clang.exe")
-GO_BIN = Path("C:/Program Files/Go/bin/go.exe")
+which_zig = shutil.which("zig")
+ZIG_BIN = Path(which_zig) if which_zig else Path("C:/Users/ksvik/.tools/zig-windows-x86_64-0.13.0/zig.exe")
+
+which_clang = shutil.which("clang")
+LLVM_CLANG = Path(which_clang) if which_clang else Path("C:/Program Files/LLVM/bin/clang.exe")
+
+which_go = shutil.which("go")
+GO_BIN = Path(which_go) if which_go else Path("C:/Program Files/Go/bin/go.exe")
 
 WORKLOADS = [
     # 01 Algorithms

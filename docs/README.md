@@ -97,7 +97,7 @@ cargo run --manifest-path agam/Cargo.toml -p agam_driver -- repl
 
 ## 🛡️ Architectural Invariants
 
-1. **Strict DAG Dependency Graph**: No circular crate dependencies across all 27 crates.
+1. **Strict DAG Dependency Graph**: No circular crate dependencies across all 29 crates.
 2. **Zero Unsound FFI**: Foreign function interfaces require explicit `unsafe` blocks with verified layout annotations (`@repr(C)`).
 3. **Deterministic Memory Safety**: Automatic Reference Counting (ARC) with compile-time affine borrowing guarantees zero use-after-free without a tracing garbage collector.
 4. **Hardware Acceleration Parity**: GPU kernels and CPU tensor operations share identical mathematical semantics and type safety guarantees.

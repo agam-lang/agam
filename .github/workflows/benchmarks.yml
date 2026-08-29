@@ -1,9 +1,44 @@
 name: benchmarks
+
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+
 jobs:
-  build:
-    uses: agam-lang/.github/.github/workflows/benchmarks.yml@main
+  run-benchmarks:
+    name: "Cross-Language Parity Audit & Empirical Benchmarks"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Compiler Toolchains (Clang, Zig, Go)
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y clang libclang-dev golang
+
+      - name: Build Agam Compiler Release
+        run: cargo build --release
+
+      - name: Run 61-Workload Checksum Parity Audit
+        run: python scripts/verify_all_comparison_codes.py
+
+      - name: Run Empirical 5-Way Live Benchmarks
+        run: |
+          python scripts/run_live_comparisons.py | tee benchmark_output.txt
+          echo "## Empirical Benchmark Report" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat benchmark_output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+

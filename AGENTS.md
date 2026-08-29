@@ -4,7 +4,7 @@
 
 ## Quick Orientation
 
-- **What:** Agam compiler (Rust workspace, 27 crates).
+- **What:** Agam compiler (Rust workspace, 29 crates).
 - **Target:** Native LLVM for Windows, Linux, Android.
 - **Pipeline:** Source → agam_lexer → agam_parser → agam_ast → agam_sema → agam_hir → agam_mir → agam_codegen/agam_jit
 - **CLI:** gamc {build,run,check,lock,new,dev,daemon,fmt,test,lsp,repl,exec,doctor,env,publish,registry,cache,package}
