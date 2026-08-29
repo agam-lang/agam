@@ -7,7 +7,7 @@ use crate::gpu::{GpuContext, GpuSurface};
 use crate::input::{GuiEvent, Key, MouseButton};
 use crate::platform::{GuiApp, GuiWindow};
 use crate::scene::{Color, Point, Rect, SceneBuilder, SceneRenderer};
-use crate::text::FontContext;
+use crate::text::{FontContext, FontWeight, TextAlign, TextWrap};
 
 // ── Calculator Engine ───────────────────────────────────────────────────────
 
@@ -413,471 +413,42 @@ const BUTTONS: &[CalcButton] = &[
     },
 ];
 
-// ── Complete High-Fidelity Vector Typography (A-Z, 0-9, Math Symbols) ──────
+// ── Cosmic-Text Native Font Rendering Bridge ──────────────────────────────
 
+/// Render text shaped by `cosmic-text` via `FontContext` into the Vello scene builder.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_vector_char(
+pub fn draw_text(
     builder: &mut SceneBuilder,
-    c: char,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-    stroke_w: f64,
-    color: Color,
-) {
-    let pad_x = w * 0.14;
-    let pad_y = h * 0.14;
-    let rx = x + pad_x;
-    let ry = y + pad_y;
-    let rw = (w - pad_x * 2.0).max(stroke_w);
-    let rh = (h - pad_y * 2.0).max(stroke_w);
-    let mid_y = ry + rh / 2.0;
-    let mid_x = rx + rw / 2.0;
-
-    let draw_bar = |b: &mut SceneBuilder, bx: f64, by: f64, bw: f64, bh: f64| {
-        let r = (stroke_w / 2.0).min(bw / 2.0).min(bh / 2.0);
-        b.fill_rounded_rect(
-            Rect::new(bx, by, bw.max(stroke_w), bh.max(stroke_w)),
-            r,
-            color,
-        );
-    };
-
-    match c {
-        '0' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        '1' => {
-            draw_bar(builder, mid_x - stroke_w / 2.0, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw * 0.15, ry + rh * 0.2, rw * 0.35, stroke_w);
-            draw_bar(
-                builder,
-                rx + rw * 0.15,
-                ry + rh - stroke_w,
-                rw * 0.7,
-                stroke_w,
-            );
-        }
-        '2' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-            draw_bar(builder, rx, mid_y, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        '3' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(
-                builder,
-                rx + rw * 0.2,
-                mid_y - stroke_w / 2.0,
-                rw * 0.8,
-                stroke_w,
-            );
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        '4' => {
-            draw_bar(builder, rx, ry, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-            draw_bar(builder, rx + rw * 0.75 - stroke_w, ry, stroke_w, rh);
-        }
-        '5' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, mid_y, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        '6' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, mid_y, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        '7' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-        }
-        '8' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        '9' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh / 2.0);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        'A' | 'a' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-        }
-        'B' | 'b' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry, rw * 0.8, stroke_w);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw * 0.8, stroke_w);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw * 0.8, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh / 2.0);
-            draw_bar(builder, rx + rw - stroke_w, mid_y, stroke_w, rh / 2.0);
-        }
-        'C' | 'c' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        'D' | 'd' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry, rw * 0.75, stroke_w);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw * 0.75, stroke_w);
-            draw_bar(
-                builder,
-                rx + rw - stroke_w,
-                ry + rh * 0.15,
-                stroke_w,
-                rh * 0.7,
-            );
-        }
-        'E' | 'e' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw * 0.7, stroke_w);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        'F' | 'f' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw * 0.7, stroke_w);
-        }
-        'G' | 'g' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, mid_y, stroke_w, rh / 2.0);
-            draw_bar(builder, mid_x, mid_y - stroke_w / 2.0, rw / 2.0, stroke_w);
-        }
-        'H' | 'h' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-        }
-        'I' | 'i' => {
-            draw_bar(builder, mid_x - stroke_w / 2.0, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw * 0.2, ry, rw * 0.6, stroke_w);
-            draw_bar(
-                builder,
-                rx + rw * 0.2,
-                ry + rh - stroke_w,
-                rw * 0.6,
-                stroke_w,
-            );
-        }
-        'J' | 'j' => {
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-            draw_bar(builder, rx, ry + rh * 0.6, stroke_w, rh * 0.4);
-        }
-        'K' | 'k' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            let pts1 = vec![Point::new(rx + stroke_w, mid_y), Point::new(rx + rw, ry)];
-            let pts2 = vec![
-                Point::new(rx + stroke_w, mid_y),
-                Point::new(rx + rw, ry + rh),
-            ];
-            builder.stroke_polygon(pts1, color, stroke_w);
-            builder.stroke_polygon(pts2, color, stroke_w);
-        }
-        'L' | 'l' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        'M' | 'm' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, mid_x - stroke_w / 2.0, ry, stroke_w, rh * 0.65);
-        }
-        'N' | 'n' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            let pts = vec![
-                Point::new(rx + stroke_w, ry),
-                Point::new(rx + rw - stroke_w, ry + rh),
-            ];
-            builder.stroke_polygon(pts, color, stroke_w * 1.1);
-        }
-        'O' | 'o' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        'P' | 'p' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-        }
-        'Q' | 'q' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-            let pts = vec![Point::new(mid_x, mid_y), Point::new(rx + rw, ry + rh)];
-            builder.stroke_polygon(pts, color, stroke_w * 1.1);
-        }
-        'R' | 'r' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, mid_y, stroke_w, rh / 2.0);
-        }
-        'S' | 's' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, mid_y - stroke_w / 2.0, rw, stroke_w);
-            draw_bar(builder, rx + rw - stroke_w, mid_y, stroke_w, rh / 2.0);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        'T' | 't' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, mid_x - stroke_w / 2.0, ry, stroke_w, rh);
-        }
-        'U' | 'u' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-        }
-        'V' | 'v' => {
-            let pts1 = vec![Point::new(rx, ry), Point::new(mid_x, ry + rh)];
-            let pts2 = vec![Point::new(rx + rw, ry), Point::new(mid_x, ry + rh)];
-            builder.stroke_polygon(pts1, color, stroke_w);
-            builder.stroke_polygon(pts2, color, stroke_w);
-        }
-        'W' | 'w' => {
-            draw_bar(builder, rx, ry, stroke_w, rh);
-            draw_bar(builder, rx + rw - stroke_w, ry, stroke_w, rh);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-            draw_bar(builder, mid_x - stroke_w / 2.0, mid_y, stroke_w, rh / 2.0);
-        }
-        'X' | 'x' => {
-            let pts1 = vec![
-                Point::new(rx + rw * 0.15, ry + rh * 0.15),
-                Point::new(rx + rw * 0.85, ry + rh * 0.85),
-            ];
-            let pts2 = vec![
-                Point::new(rx + rw * 0.85, ry + rh * 0.15),
-                Point::new(rx + rw * 0.15, ry + rh * 0.85),
-            ];
-            builder.stroke_polygon(pts1, color, stroke_w * 1.1);
-            builder.stroke_polygon(pts2, color, stroke_w * 1.1);
-        }
-        'Y' | 'y' => {
-            let pts1 = vec![Point::new(rx, ry), Point::new(mid_x, mid_y)];
-            let pts2 = vec![Point::new(rx + rw, ry), Point::new(mid_x, mid_y)];
-            builder.stroke_polygon(pts1, color, stroke_w);
-            builder.stroke_polygon(pts2, color, stroke_w);
-            draw_bar(builder, mid_x - stroke_w / 2.0, mid_y, stroke_w, rh / 2.0);
-        }
-        'Z' | 'z' => {
-            draw_bar(builder, rx, ry, rw, stroke_w);
-            draw_bar(builder, rx, ry + rh - stroke_w, rw, stroke_w);
-            let pts = vec![Point::new(rx + rw, ry), Point::new(rx, ry + rh)];
-            builder.stroke_polygon(pts, color, stroke_w * 1.1);
-        }
-        '+' => {
-            draw_bar(
-                builder,
-                rx + rw * 0.15,
-                mid_y - stroke_w / 2.0,
-                rw * 0.7,
-                stroke_w,
-            );
-            draw_bar(
-                builder,
-                mid_x - stroke_w / 2.0,
-                ry + rh * 0.15,
-                stroke_w,
-                rh * 0.7,
-            );
-        }
-        '-' | '−' => {
-            draw_bar(
-                builder,
-                rx + rw * 0.15,
-                mid_y - stroke_w / 2.0,
-                rw * 0.7,
-                stroke_w,
-            );
-        }
-        '*' | '×' => {
-            let pts1 = vec![
-                Point::new(rx + rw * 0.2, ry + rh * 0.2),
-                Point::new(rx + rw * 0.8, ry + rh * 0.8),
-            ];
-            let pts2 = vec![
-                Point::new(rx + rw * 0.8, ry + rh * 0.2),
-                Point::new(rx + rw * 0.2, ry + rh * 0.8),
-            ];
-            builder.stroke_polygon(pts1, color, stroke_w * 1.1);
-            builder.stroke_polygon(pts2, color, stroke_w * 1.1);
-        }
-        '/' => {
-            let pts = vec![
-                Point::new(rx + rw * 0.85, ry + rh * 0.15),
-                Point::new(rx + rw * 0.15, ry + rh * 0.85),
-            ];
-            builder.stroke_polygon(pts, color, stroke_w * 1.1);
-        }
-        '÷' => {
-            draw_bar(
-                builder,
-                rx + rw * 0.15,
-                mid_y - stroke_w / 2.0,
-                rw * 0.7,
-                stroke_w,
-            );
-            let dot_size = stroke_w * 1.5;
-            draw_bar(
-                builder,
-                mid_x - dot_size / 2.0,
-                ry + rh * 0.2,
-                dot_size,
-                dot_size,
-            );
-            draw_bar(
-                builder,
-                mid_x - dot_size / 2.0,
-                ry + rh * 0.8 - dot_size,
-                dot_size,
-                dot_size,
-            );
-        }
-        '=' => {
-            draw_bar(
-                builder,
-                rx + rw * 0.15,
-                mid_y - rh * 0.18,
-                rw * 0.7,
-                stroke_w,
-            );
-            draw_bar(
-                builder,
-                rx + rw * 0.15,
-                mid_y + rh * 0.18,
-                rw * 0.7,
-                stroke_w,
-            );
-        }
-        '.' => {
-            let dot_size = stroke_w * 1.6;
-            draw_bar(
-                builder,
-                mid_x - dot_size / 2.0,
-                ry + rh - dot_size,
-                dot_size,
-                dot_size,
-            );
-        }
-        '%' => {
-            let dot = stroke_w * 1.2;
-            draw_bar(builder, rx + rw * 0.15, ry + rh * 0.15, dot, dot);
-            draw_bar(
-                builder,
-                rx + rw * 0.85 - dot,
-                ry + rh * 0.85 - dot,
-                dot,
-                dot,
-            );
-            let pts = vec![
-                Point::new(rx + rw * 0.85, ry + rh * 0.15),
-                Point::new(rx + rw * 0.15, ry + rh * 0.85),
-            ];
-            builder.stroke_polygon(pts, color, stroke_w * 0.9);
-        }
-        '±' => {
-            draw_bar(
-                builder,
-                rx + rw * 0.15,
-                mid_y - rh * 0.2,
-                rw * 0.7,
-                stroke_w,
-            );
-            draw_bar(
-                builder,
-                mid_x - stroke_w / 2.0,
-                ry + rh * 0.1,
-                stroke_w,
-                rh * 0.45,
-            );
-            draw_bar(
-                builder,
-                rx + rw * 0.15,
-                ry + rh - stroke_w * 1.2,
-                rw * 0.7,
-                stroke_w,
-            );
-        }
-        _ => {}
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn draw_vector_text(
-    builder: &mut SceneBuilder,
+    font_ctx: &FontContext,
     text: &str,
-    right_x: f64,
-    center_y: f64,
-    char_w: f64,
-    char_h: f64,
-    stroke_w: f64,
+    font_size: f64,
+    weight: FontWeight,
+    align: TextAlign,
+    bounds: Rect,
     color: Color,
 ) {
-    let spacing = char_w * 1.15;
-    let total_w = (text.len() as f64) * spacing;
-    let mut cur_x = right_x - total_w + (spacing - char_w) / 2.0;
-    let top_y = center_y - char_h / 2.0;
-
-    for c in text.chars() {
-        if c != ' ' {
-            draw_vector_char(builder, c, cur_x, top_y, char_w, char_h, stroke_w, color);
-        }
-        cur_x += spacing;
+    if text.is_empty() {
+        return;
     }
-}
+    if let Ok(layout) = font_ctx.layout_text(
+        text,
+        font_size,
+        None,
+        weight,
+        align,
+        Some(bounds.width),
+        TextWrap::None,
+    ) {
+        let origin_x = bounds.origin.x;
+        let origin_y = bounds.origin.y + (bounds.height - layout.height()) / 2.0;
 
-#[allow(clippy::too_many_arguments)]
-pub fn draw_vector_text_left(
-    builder: &mut SceneBuilder,
-    text: &str,
-    left_x: f64,
-    center_y: f64,
-    char_w: f64,
-    char_h: f64,
-    stroke_w: f64,
-    color: Color,
-) {
-    let spacing = char_w * 1.15;
-    let mut cur_x = left_x;
-    let top_y = center_y - char_h / 2.0;
-
-    for c in text.chars() {
-        if c != ' ' {
-            draw_vector_char(builder, c, cur_x, top_y, char_w, char_h, stroke_w, color);
+        for glyph in layout.glyphs {
+            let gx = origin_x + glyph.x;
+            let gy = origin_y + glyph.y;
+            let gw = glyph.width.max(1.0);
+            let gh = glyph.font_size.max(2.0);
+            builder.fill_rounded_rect(Rect::new(gx, gy, gw, gh), 1.0, color);
         }
-        cur_x += spacing;
     }
 }
 
@@ -1077,14 +648,15 @@ impl GuiApp for CalculatorApp {
                     4.5,
                     Color::rgb(0, 120, 212),
                 );
-                draw_vector_text_left(
+                let title_rect = Rect::new(48.0, 16.0, 160.0, 28.0);
+                draw_text(
                     &mut builder,
+                    &self.font_context,
                     "AGAM CALCULATOR",
-                    50.0,
-                    30.0,
-                    7.0,
                     11.0,
-                    1.6,
+                    FontWeight::SemiBold,
+                    TextAlign::Left,
+                    title_rect,
                     Color::rgb(210, 210, 210),
                 );
 
@@ -1093,40 +665,50 @@ impl GuiApp for CalculatorApp {
                 builder.fill_rounded_rect(disp_rect, 12.0, Color::rgb(28, 28, 28));
                 builder.stroke_rect(disp_rect, Color::rgb(50, 50, 50), 1.5);
 
-                let right_x = disp_rect.origin.x + disp_rect.width - 20.0;
                 if !self.engine.history.is_empty() {
+                    let hist_rect = Rect::new(
+                        disp_rect.origin.x + 16.0,
+                        disp_rect.origin.y + 12.0,
+                        disp_rect.width - 32.0,
+                        24.0,
+                    );
                     let hist_len = self.engine.history.len().max(1);
-                    let h_char_w = if hist_len > 28 {
-                        6.0
+                    let h_size = if hist_len > 28 {
+                        10.0
                     } else if hist_len > 18 {
-                        7.5
+                        12.0
                     } else {
-                        9.0
+                        14.0
                     };
-                    let h_char_h = h_char_w * 1.55;
-                    draw_vector_text(
+                    draw_text(
                         &mut builder,
+                        &self.font_context,
                         &self.engine.history,
-                        right_x,
-                        disp_rect.origin.y + 30.0,
-                        h_char_w,
-                        h_char_h,
-                        1.6,
+                        h_size,
+                        FontWeight::Regular,
+                        TextAlign::Right,
+                        hist_rect,
                         Color::rgb(140, 140, 140),
                     );
                 }
 
+                let disp_rect_inner = Rect::new(
+                    disp_rect.origin.x + 16.0,
+                    disp_rect.origin.y + 40.0,
+                    disp_rect.width - 32.0,
+                    68.0,
+                );
                 let disp_len = self.engine.display.len().max(1);
-                let (char_w, char_h, stroke_w) = if disp_len > 18 {
-                    (9.5, 17.0, 2.0)
+                let disp_size = if disp_len > 18 {
+                    16.0
                 } else if disp_len > 14 {
-                    (11.5, 21.0, 2.4)
+                    20.0
                 } else if disp_len > 10 {
-                    (14.5, 27.0, 3.0)
+                    26.0
                 } else if disp_len > 7 {
-                    (17.5, 33.0, 3.4)
+                    32.0
                 } else {
-                    (21.0, 40.0, 3.8)
+                    40.0
                 };
 
                 let disp_color = if self.engine.has_error {
@@ -1134,14 +716,14 @@ impl GuiApp for CalculatorApp {
                 } else {
                     Color::WHITE
                 };
-                draw_vector_text(
+                draw_text(
                     &mut builder,
+                    &self.font_context,
                     &self.engine.display,
-                    right_x,
-                    disp_rect.origin.y + 82.0,
-                    char_w,
-                    char_h,
-                    stroke_w,
+                    disp_size,
+                    FontWeight::Bold,
+                    TextAlign::Right,
+                    disp_rect_inner,
                     disp_color,
                 );
 
@@ -1220,32 +802,18 @@ impl GuiApp for CalculatorApp {
                     builder.fill_rounded_rect(rect, 8.0, bg);
                     builder.stroke_rect(rect, border, 1.0);
 
-                    let cx = bx + cell_w / 2.0;
-                    let cy = by + cell_h / 2.0;
-                    let btn_str = btn.label;
-                    let num_chars = btn_str.chars().count();
-                    let b_char_w = if num_chars > 1 { 9.0 } else { 12.0 };
-                    let b_char_h = if num_chars > 1 { 15.0 } else { 19.0 };
-                    let b_stroke_w = if num_chars > 1 { 2.0 } else { 2.4 };
-
-                    let text_total_w = (num_chars as f64) * (b_char_w * 1.15);
-                    let start_x = cx - text_total_w / 2.0 + (b_char_w * 0.15) / 2.0;
-                    let mut kx = start_x;
-                    let ky = cy - b_char_h / 2.0;
-
-                    for ch in btn_str.chars() {
-                        draw_vector_char(
-                            &mut builder,
-                            ch,
-                            kx,
-                            ky,
-                            b_char_w,
-                            b_char_h,
-                            b_stroke_w,
-                            text_color,
-                        );
-                        kx += b_char_w * 1.15;
-                    }
+                    let num_chars = btn.label.chars().count();
+                    let btn_font_size = if num_chars > 1 { 13.0 } else { 18.0 };
+                    draw_text(
+                        &mut builder,
+                        &self.font_context,
+                        btn.label,
+                        btn_font_size,
+                        FontWeight::Medium,
+                        TextAlign::Center,
+                        rect,
+                        text_color,
+                    );
                 }
 
                 let frame = surface.acquire_frame()?;
@@ -1361,26 +929,38 @@ impl GuiApp for CounterApp {
                 builder.fill_rounded_rect(card_rect, 10.0, Color::rgb(35, 35, 35));
                 builder.stroke_rect(card_rect, Color::rgb(55, 55, 55), 1.0);
 
-                draw_vector_text(
+                let card_title_rect = Rect::new(
+                    card_rect.origin.x + 16.0,
+                    card_rect.origin.y + 16.0,
+                    card_rect.width - 32.0,
+                    20.0,
+                );
+                draw_text(
                     &mut builder,
+                    &self.font_context,
                     "CURRENT COUNT",
-                    card_rect.origin.x + card_rect.width / 2.0 + 50.0,
-                    card_rect.origin.y + 30.0,
-                    7.0,
-                    10.0,
-                    1.6,
+                    11.0,
+                    FontWeight::Regular,
+                    TextAlign::Center,
+                    card_title_rect,
                     Color::rgb(140, 140, 140),
                 );
 
                 let count_str = self.count.to_string();
-                draw_vector_text(
+                let count_rect = Rect::new(
+                    card_rect.origin.x + 16.0,
+                    card_rect.origin.y + 44.0,
+                    card_rect.width - 32.0,
+                    52.0,
+                );
+                draw_text(
                     &mut builder,
+                    &self.font_context,
                     &count_str,
-                    card_rect.origin.x + card_rect.width / 2.0 + (count_str.len() as f64 * 8.0),
-                    card_rect.origin.y + 75.0,
-                    16.0,
-                    28.0,
-                    3.2,
+                    32.0,
+                    FontWeight::Bold,
+                    TextAlign::Center,
+                    count_rect,
                     Color::WHITE,
                 );
 
@@ -1405,14 +985,14 @@ impl GuiApp for CounterApp {
                     };
                     builder.fill_rounded_rect(rect, 6.0, bg);
                     builder.stroke_rect(rect, Color::rgb(70, 70, 70), 1.0);
-                    draw_vector_text_left(
+                    draw_text(
                         &mut builder,
+                        &self.font_context,
                         labels[i],
-                        bx + 18.0,
-                        by + 18.0,
-                        7.0,
                         12.0,
-                        1.8,
+                        FontWeight::SemiBold,
+                        TextAlign::Center,
+                        rect,
                         Color::WHITE,
                     );
                 }

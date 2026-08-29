@@ -6,7 +6,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap};
+use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Weight, Wrap};
 
 use crate::diagnostic::{GuiError, GuiResult};
 use crate::scene::Size;
@@ -93,8 +93,6 @@ pub struct FontContext {
 
 struct FontSystemInner {
     font_system: FontSystem,
-    #[allow(dead_code)]
-    swash_cache: SwashCache,
 }
 
 impl Default for FontContext {
@@ -107,12 +105,8 @@ impl FontContext {
     /// Initialize a new font context scanning platform system fonts.
     pub fn new() -> Self {
         let font_system = FontSystem::new();
-        let swash_cache = SwashCache::new();
         Self {
-            inner: Arc::new(Mutex::new(FontSystemInner {
-                font_system,
-                swash_cache,
-            })),
+            inner: Arc::new(Mutex::new(FontSystemInner { font_system })),
         }
     }
 
