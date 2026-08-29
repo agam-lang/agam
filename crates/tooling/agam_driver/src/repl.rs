@@ -1,6 +1,7 @@
 //! Interactive REPL and headless agent-facing execution.
 
 use super::*;
+use std::ffi::c_void;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ReplSession {

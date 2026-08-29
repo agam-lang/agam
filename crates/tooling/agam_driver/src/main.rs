@@ -33,7 +33,6 @@ pub(crate) mod repl;
 mod main_tests;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::ffi::c_void;
 use std::io::{BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{self, Stdio};

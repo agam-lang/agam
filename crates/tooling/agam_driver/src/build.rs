@@ -3299,7 +3299,7 @@ fn run_gui_app(file: &PathBuf, source: &str, verbose: bool) -> Result<i32, Strin
     }
 
     // Step 1: Syntactic parsing and AST verification of the @ui script
-    let source_id = agam_lexer::SourceId(0);
+    let source_id = agam_errors::SourceId(0);
     let tokens = agam_lexer::tokenize(source, source_id);
     let module = agam_parser::parse(tokens, source_id).map_err(|errs| {
         let mut msg = format!("Syntax error in GUI script {}:\n", file.display());
@@ -3311,26 +3311,20 @@ fn run_gui_app(file: &PathBuf, source: &str, verbose: bool) -> Result<i32, Strin
 
     // Step 2: Extract GUI metadata from parsed AST module
     let mut has_counter_struct = false;
-    let mut app_title = "Agam Native GUI Application".to_string();
-    let mut width = 440;
-    let mut height = 620;
-
-    for item in &module.items {
-        if let agam_ast::ItemKind::Struct(ref s) = item.kind {
-            if s.name.as_str().contains("Counter") {
+    for decl in &module.declarations {
+        if let agam_ast::decl::DeclKind::Struct(ref s) = decl.kind {
+            if s.name.name.contains("Counter") {
                 has_counter_struct = true;
             }
         }
     }
 
     let is_counter = has_counter_struct || file.to_string_lossy().contains("counter");
-    if is_counter {
-        app_title = "Agam Native Counter".to_string();
-        width = 360;
-        height = 240;
+    let (app_title, width, height) = if is_counter {
+        ("Agam Native Counter".to_string(), 360, 240)
     } else {
-        app_title = "Agam Native Calculator".to_string();
-    }
+        ("Agam Native Calculator".to_string(), 440, 620)
+    };
 
     let event_loop = agam_gui::GuiEventLoop::new()
         .map_err(|e| format!("failed to initialize GUI event loop: {e}"))?;
