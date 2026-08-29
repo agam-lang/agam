@@ -177,12 +177,20 @@ def benchmark_agam_c_aot(agm_file, runs=5):
     if not c_file.exists() and not exe_file.exists():
         return None, None, "Agam C generation failed"
 
-    # 2. Compile with Zig Clang -O3 if needed
-    if not exe_file.exists() and c_file.exists() and ZIG_BIN.exists():
-        compile_cmd = [str(ZIG_BIN), "cc", "-O3", str(c_file), "-o", str(exe_file), "-lm"]
-        c_time, _, c_err, c_rc = run_cmd(compile_cmd)
-        if c_rc != 0 or not exe_file.exists():
-            return None, None, f"C backend compile error: {c_err}"
+    # 2. Compile with C compiler -O3 if needed
+    if not exe_file.exists() and c_file.exists():
+        cc_bin = shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")
+        if cc_bin:
+            compile_cmd = [cc_bin, "-O3", str(c_file), "-o", str(exe_file), "-lm"]
+        elif ZIG_BIN.exists():
+            compile_cmd = [str(ZIG_BIN), "cc", "-O3", str(c_file), "-o", str(exe_file), "-lm"]
+        else:
+            compile_cmd = None
+
+        if compile_cmd:
+            c_time, _, c_err, c_rc = run_cmd(compile_cmd)
+            if c_rc != 0 or not exe_file.exists():
+                return None, None, f"C backend compile error: {c_err}"
 
     timings = []
     output = ""
@@ -240,7 +248,7 @@ def benchmark_cpp(cpp_file, runs=5):
     return statistics.median(timings) if timings else None, output, None
 
 def benchmark_rust(rs_file, runs=5):
-    exe_file = ROOT / "temp_rs_bench.exe"
+    exe_file = ROOT / ("temp_rs_bench.exe" if os.name == "nt" else "temp_rs_bench")
     if exe_file.exists():
         try: exe_file.unlink()
         except: pass
@@ -265,14 +273,13 @@ def benchmark_rust(rs_file, runs=5):
     return statistics.median(timings) if timings else None, output, None
 
 def benchmark_go(go_file, runs=5):
-    if not GO_BIN.exists():
-        return None, None, "Go not found"
-    exe_file = ROOT / "temp_go_bench.exe"
+    exe_file = ROOT / ("temp_go_bench.exe" if os.name == "nt" else "temp_go_bench")
     if exe_file.exists():
         try: exe_file.unlink()
         except: pass
     
-    compile_cmd = [str(GO_BIN), "build", "-o", str(exe_file), str(go_file)]
+    go_cmd = shutil.which("go") or str(GO_BIN)
+    compile_cmd = [go_cmd, "build", "-o", str(exe_file), str(go_file)]
     c_time, _, c_err, c_rc = run_cmd(compile_cmd)
     if c_rc != 0 or not exe_file.exists():
         return None, None, f"Go compile error: {c_err}"
@@ -294,8 +301,9 @@ def benchmark_go(go_file, runs=5):
 def benchmark_python(py_file, runs=5):
     timings = []
     output = ""
+    py_cmd = sys.executable if sys.executable else "python"
     for _ in range(runs):
-        t, out, _, rc = run_cmd(["python", str(py_file)])
+        t, out, _, rc = run_cmd([py_cmd, str(py_file)])
         if rc == 0:
             timings.append(t)
             output = out
@@ -303,14 +311,8 @@ def benchmark_python(py_file, runs=5):
 
 def main():
     print("=" * 140)
-    print("EMPIRICAL BENCHMARKS: AGAM (JIT, LLVM AOT, C AOT) vs. C++ (CLANG -O3) vs. RUST (-O) vs. GO vs. PYTHON 3.14")
-    print("Platform: Windows 11 Native x86_64 | 5-Run Median Warm Timing (ms)")
+    print(f"{'Workload':<20} | {'Agam JIT':<10} | {'Agam LLVM':<10} | {'Agam C':<10} | {'C++ -O3':<10} | {'Rust -O':<10} | {'Go':<10} | {'Python':<10} | {'Agam vs Py':<11}")
     print("=" * 140)
-    header = f"{'Workload':<20} | {'Agam JIT':<10} | {'Agam LLVM':<10} | {'Agam C':<10} | {'C++ -O3':<10} | {'Rust -O':<10} | {'Go':<10} | {'Python':<10} | {'LLVM vs Py':<11}"
-    print(header)
-    print("-" * 140)
-
-    results = []
 
     for name, suite in WORKLOADS:
         agm_file = SUITES_ROOT / suite / f"{name}.agam"
@@ -325,9 +327,9 @@ def main():
         t_jit, _, _ = benchmark_agam_jit(agm_file) if agm_file.exists() else (None, None, None)
         t_llvm, _, _ = benchmark_agam_llvm_aot(agm_file) if agm_file.exists() else (None, None, None)
         t_c_aot, _, _ = benchmark_agam_c_aot(agm_file) if agm_file.exists() else (None, None, None)
-        t_cpp, _, _ = benchmark_cpp(target_c) if (target_c and ZIG_BIN.exists()) else (None, None, None)
+        t_cpp, _, _ = benchmark_cpp(target_c) if target_c else (None, None, None)
         t_rust, _, _ = benchmark_rust(rs_file) if rs_file.exists() else (None, None, None)
-        t_go, _, _ = benchmark_go(go_file) if (go_file.exists() and GO_BIN.exists()) else (None, None, None)
+        t_go, _, _ = benchmark_go(go_file) if go_file.exists() else (None, None, None)
         t_py, _, _ = benchmark_python(py_file) if py_file.exists() else (None, None, None)
 
         s_jit = f"{t_jit:.2f}" if t_jit is not None else "—"
