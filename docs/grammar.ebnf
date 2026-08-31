@@ -84,7 +84,7 @@ Primary             = Literal
                     | ClosureExpr
                     | "(" , Expression , ")" ;
 
-ArrayLiteral        = "[" , [ Expression , { "," , Expression } ] , "]" ;
+ArrayLiteral        = "[" , [ Expression , { ( "," | Newline ) , Expression } ] , [ "," | Newline ] , "]" ;
 StructInit          = Identifier , "{" , [ FieldInit , { ( "," | Newline ) , FieldInit } ] , [ "," | Newline ] , "}" ;
 FieldInit           = ( Identifier | StringLiteral ) , ":" , Expression ;
 ClosureExpr         = ( "|" , [ ParameterList ] , "|" | "||" ) , [ "->" , Type ] , ( Expression | Block ) ;

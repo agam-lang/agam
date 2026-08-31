@@ -5,6 +5,7 @@
 
 pub mod apps;
 pub mod diagnostic;
+pub mod eval;
 pub mod gpu;
 pub mod image;
 pub mod input;
@@ -16,6 +17,7 @@ pub mod widget;
 
 pub use apps::{CalculatorApp, CounterApp};
 pub use diagnostic::{GuiError, GuiResult};
+pub use eval::{DynamicGuiApp, UiEvaluator, UiRuntime, UiValue};
 pub use gpu::{
     GpuCapabilities, GpuContext, GpuFrame, GpuSurface, HardwareTier, map_adapter_error,
     map_create_surface_error, map_device_error, map_surface_status,

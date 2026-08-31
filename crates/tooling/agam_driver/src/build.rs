@@ -3293,7 +3293,7 @@ pub(crate) fn lto_flags(mode: LtoMode) -> &'static [&'static str] {
 fn run_gui_app(file: &PathBuf, source: &str, verbose: bool) -> Result<i32, String> {
     if verbose {
         eprintln!(
-            "[agamc] Validating AST and launching native Agam GPU GUI runtime for {}...",
+            "[agamc] Evaluating AST and launching dynamic Agam GPU GUI runtime for {}...",
             file.display()
         );
     }
@@ -3309,37 +3309,17 @@ fn run_gui_app(file: &PathBuf, source: &str, verbose: bool) -> Result<i32, Strin
         msg
     })?;
 
-    // Step 2: Extract GUI metadata from parsed AST module
-    let mut has_counter_struct = false;
-    for decl in &module.declarations {
-        if let agam_ast::decl::DeclKind::Struct(ref s) = decl.kind {
-            if s.name.name.contains("Counter") {
-                has_counter_struct = true;
-            }
-        }
-    }
-
-    let is_counter = has_counter_struct || file.to_string_lossy().contains("counter");
-    let (app_title, width, height) = if is_counter {
-        ("Agam Native Counter".to_string(), 360, 240)
-    } else {
-        ("Agam Native Calculator".to_string(), 440, 620)
-    };
+    // Step 2: Dynamically construct live widget tree and reactive runtime from parsed AST
+    let (config, dynamic_app) = agam_gui::UiEvaluator::new()
+        .build_app(&module)
+        .map_err(|e| format!("GUI evaluation error in {}: {}", file.display(), e))?;
 
     let event_loop = agam_gui::GuiEventLoop::new()
         .map_err(|e| format!("failed to initialize GUI event loop: {e}"))?;
-    let config = agam_gui::WindowConfig::new(app_title, width, height);
 
-    if is_counter {
-        let app = agam_gui::CounterApp::default();
-        event_loop
-            .run(config, app)
-            .map_err(|e| format!("GUI runtime error: {e}"))?;
-    } else {
-        let app = agam_gui::CalculatorApp::default();
-        event_loop
-            .run(config, app)
-            .map_err(|e| format!("GUI runtime error: {e}"))?;
-    }
+    event_loop
+        .run(config, dynamic_app)
+        .map_err(|e| format!("GUI runtime error: {e}"))?;
+
     Ok(0)
 }

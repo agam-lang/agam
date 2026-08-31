@@ -12,6 +12,8 @@ headless-test = []
 [dependencies]
 # Agam core & runtime
 agam_errors = { workspace = true }
+agam_ast = { workspace = true }
+agam_lexer = { workspace = true }
 agam_runtime = { workspace = true }
 agam_std = { workspace = true }
 
@@ -23,3 +25,6 @@ cosmic-text = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+agam_parser = { workspace = true }

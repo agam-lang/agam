@@ -152,7 +152,10 @@ dependencies = [
 name = "agam_gui"
 version = "0.1.0"
 dependencies = [
+ "agam_ast",
  "agam_errors",
+ "agam_lexer",
+ "agam_parser",
  "agam_runtime",
  "agam_std",
  "cosmic-text",
