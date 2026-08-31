@@ -85,9 +85,9 @@ Primary             = Literal
                     | "(" , Expression , ")" ;
 
 ArrayLiteral        = "[" , [ Expression , { "," , Expression } ] , "]" ;
-StructInit          = Identifier , "{" , [ FieldInit , { "," , FieldInit } ] , "}" ;
-FieldInit           = Identifier , ":" , Expression ;
-ClosureExpr         = "|" , [ ParameterList ] , "|" , [ "->" , Type ] , ( Expression | Block ) ;
+StructInit          = Identifier , "{" , [ FieldInit , { ( "," | Newline ) , FieldInit } ] , [ "," | Newline ] , "}" ;
+FieldInit           = ( Identifier | StringLiteral ) , ":" , Expression ;
+ClosureExpr         = ( "|" , [ ParameterList ] , "|" | "||" ) , [ "->" , Type ] , ( Expression | Block ) ;
 
 (* 5. Types *)
 Type                = PrimitiveType

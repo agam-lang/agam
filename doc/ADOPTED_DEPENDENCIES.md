@@ -45,6 +45,10 @@ Attempting to hand-roll term-rewriting engines, SMT decision procedures, polyhed
 | **4K Image Buffers & 2D Convolutions** | **BUILD** | First-Party Native (`agam_std::image`) | 4K image filtering ($3\times3$ Sobel, Gaussian blur, Laplacian sharpen) explicitly routing through `agam_runtime::simd` with Netpbm (PPM P6 / PGM P5) uncompressed binary codec. |
 | **Audio Waveform DSP & WAV Containers** | **BUILD** | First-Party Native (`agam_std::audio`) | Native multi-channel waveform representation, sample-rate conversion, peak/RMS metrics, and uncompressed PCM WAV container I/O. Complex FLAC LPC / Rice-Golomb bitstream compression is deferred to adopted codec boundary (`claxon`/`symphonia`). |
 | **HTTP Wire Parsing & Stream Security** | **ADOPT** | **`httparse`** | Zero-copy HTTP/1.1 parsing via `httparse`. HTTP/2 binary framing and HPACK multiplexing are explicitly deferred to prevent CVE/DoS (e.g. Rapid Reset) vulnerabilities. |
+| **Window Creation & OS Event Loop** | **ADOPT** | **`winit = 0.30.13`** | Cross-platform windowing and event handling; maps OS events at facade boundary into Agam-owned `GuiEvent`. Decision: [`WEEKLY-REVIEW-2026-08-29.md`](WEEKLY-REVIEW-2026-08-29.md). |
+| **GPU Abstraction & Surface Lifecycle** | **ADOPT** | **`wgpu = 29.0.3`** | 2D UI does not need wgpu 30's mesh-shader/multiview features; 29.0.3 is vello 0.10.0's required range. Decision: [`WEEKLY-REVIEW-2026-08-29.md`](WEEKLY-REVIEW-2026-08-29.md). |
+| **2D Vector Scene Renderer** | **ADOPT** | **`vello = 0.10.0`** | Rust/`wgpu` 2D scene renderer; latest stable release, compatible with `wgpu ^29.0.3`. Decision: [`WEEKLY-REVIEW-2026-08-29.md`](WEEKLY-REVIEW-2026-08-29.md). |
+| **Text Shaping, Layout & Font Fallback** | **ADOPT** | **`cosmic-text = 0.19.0`** | Cross-platform text shaping/layout with font fallback; version compatible with the adopted vello/wgpu pair. Decision: [`WEEKLY-REVIEW-2026-08-29.md`](WEEKLY-REVIEW-2026-08-29.md). |
 
 ---
 
