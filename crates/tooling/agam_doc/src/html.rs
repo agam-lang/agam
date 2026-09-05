@@ -438,19 +438,22 @@ fn render_markdown(md: &str) -> String {
 
 const THEME_CSS: &str = r#"
 :root {
-    --bg-primary: #0d1117;
-    --bg-secondary: #161b22;
-    --bg-card: rgba(22, 27, 34, 0.7);
-    --border-color: #30363d;
-    --accent-primary: #38bdf8;
-    --accent-glow: rgba(56, 189, 248, 0.2);
-    --text-primary: #f0f6fc;
-    --text-muted: #8b949e;
-    --code-bg: #0b0f14;
-    --badge-fn: #3b82f6;
-    --badge-struct: #10b981;
-    --badge-enum: #f59e0b;
-    --badge-trait: #8b5cf6;
+    --bg-primary: #08080c;
+    --bg-secondary: #101016;
+    --bg-card: rgba(21, 21, 32, 0.75);
+    --border-color: rgba(255, 255, 255, 0.08);
+    --accent-primary: #ff1b8d;
+    --accent-glow: rgba(255, 27, 141, 0.25);
+    --accent-cyan: #00d4ff;
+    --accent-copper: #c25010;
+    --accent-violet: #8b2be2;
+    --text-primary: #ffffff;
+    --text-muted: #9ba1b5;
+    --code-bg: #050508;
+    --badge-fn: #00d4ff;
+    --badge-struct: #ff1b8d;
+    --badge-enum: #f58a18;
+    --badge-trait: #8b2be2;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
