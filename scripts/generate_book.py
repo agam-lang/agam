@@ -4,14 +4,23 @@ import re
 import sys
 from pathlib import Path
 
-DOC_DIR = Path("c:/Users/ksvik/Projects/Agam-Lang/doc")
-SUMMARY_FILE = DOC_DIR / "SUMMARY.md"
-OUTPUT_MD = DOC_DIR / "Agam_Compiler_Book.md"
-OUTPUT_PDF = DOC_DIR / "Agam_Compiler_Book.pdf"
+SCRIPT_DIR = Path(__file__).resolve().parent
+if (SCRIPT_DIR.parent / "docs").exists():
+    DOCS_DIR = SCRIPT_DIR.parent / "docs"
+elif (SCRIPT_DIR.parent / "agam" / "docs").exists():
+    DOCS_DIR = SCRIPT_DIR.parent / "agam" / "docs"
+elif (SCRIPT_DIR.parent.parent / "docs").exists():
+    DOCS_DIR = SCRIPT_DIR.parent.parent / "docs"
+else:
+    DOCS_DIR = Path("c:/Users/ksvik/Projects/Agam-Lang/docs")
+
+SUMMARY_FILE = DOCS_DIR / "SUMMARY.md"
+OUTPUT_MD = DOCS_DIR / "Agam_Compiler_Book.md"
+OUTPUT_PDF = DOCS_DIR / "Agam_Compiler_Book.pdf"
 
 def clean_markdown_content(content: str) -> str:
     """Removes IDE-specific file:/// links and normalizes headers/code blocks."""
-    # Replace file:///c:/Users/ksvik/Projects/Agam-Lang/doc/... links with internal anchor or text
+    # Replace file:///.../docs/... links with internal anchor or text
     content = re.sub(r'\[([^\]]+)\]\(file:///[^\)]+\)', r'\1', content)
     # Remove metadata comments or HTML tags if needed
     return content
@@ -27,7 +36,7 @@ def compile_unified_markdown():
         match = re.search(r'\(([^)]+\.md)\)', line)
         if match:
             rel_path = match.group(1)
-            full_path = DOC_DIR / rel_path
+            full_path = DOCS_DIR / rel_path
             if full_path.exists() and full_path != OUTPUT_MD:
                 chapter_paths.append((rel_path, full_path))
 
@@ -172,12 +181,21 @@ def generate_pdf_from_md():
 
         # Escape HTML entities for reportlab
         safe_line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+        # Protect inline code blocks from markdown formatting
+        code_spans = []
+        def _save_code(m):
+            code_spans.append(m.group(1))
+            return f"__CODE_SPAN_{len(code_spans)-1}__"
+
+        safe_line = re.sub(r'`(.*?)`', _save_code, safe_line)
         # Bold formatting **text**
         safe_line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', safe_line)
         # Italic formatting *text*
         safe_line = re.sub(r'\*(.*?)\*', r'<i>\1</i>', safe_line)
-        # Inline code `text`
-        safe_line = re.sub(r'`(.*?)`', r'<font name="Courier" color="#0f172a">\1</font>', safe_line)
+        # Restore inline code
+        for i, code_text in enumerate(code_spans):
+            safe_line = safe_line.replace(f"__CODE_SPAN_{i}__", f'<font name="Courier" color="#0f172a">{code_text}</font>')
 
         if line.startswith("# "):
             story.append(Paragraph(safe_line[2:], title_style))

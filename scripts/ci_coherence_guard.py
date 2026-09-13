@@ -3,11 +3,13 @@
 Agam CI Coherence Guard & Ratchet Verifier.
 
 Asserts compiler stability invariants:
-1. Total unwrap line count <= 1084
-2. Total expect line count <= 1318
-3. Total panic! line count <= 87
-4. Combined Panic/Unwrap Sites <= 2489
-5. Verifies required specification documents exist
+1. Total unwrap line count <= 1080
+2. Total expect line count <= 993
+3. Total panic! line count <= 81
+4. Combined Panic/Unwrap Sites <= 2154
+5. Verifies structural invariant: single canonical docs/ directory (no doc/ split)
+6. Verifies required specification documents exist in canonical docs/
+7. Verifies literature and algorithm citations
 """
 
 import os
@@ -21,11 +23,11 @@ CAP_EXPECTS = 993
 CAP_PANICS = 81
 CAP_TOTAL = 2154
 
-# Locate crates directory flexibly
+# Locate crates and docs directories flexibly
 SCRIPT_DIR = Path(__file__).resolve().parent
 if (SCRIPT_DIR.parent / "crates").exists():
     AGAM_ROOT = SCRIPT_DIR.parent
-    WORKSPACE_ROOT = SCRIPT_DIR.parent.parent
+    WORKSPACE_ROOT = SCRIPT_DIR.parent.parent if (SCRIPT_DIR.parent.parent / "docs").exists() else SCRIPT_DIR.parent
 elif (SCRIPT_DIR.parent / "agam" / "crates").exists():
     AGAM_ROOT = SCRIPT_DIR.parent / "agam"
     WORKSPACE_ROOT = SCRIPT_DIR.parent
@@ -106,26 +108,61 @@ def count_panics():
 
     return total_unwraps, total_expects, total_panics
 
+def verify_no_doc_docs_split():
+    """
+    Structural Invariant: Enforce single canonical documentation directory (`docs/`).
+    Asserts that `doc/` and `docs/` are never simultaneously present as independent
+    physical directories, preventing doc/ vs docs/ synchronization drift.
+    """
+    print("\n--- Verifying Documentation Directory Structure Invariant ---")
+    roots_to_check = set([WORKSPACE_ROOT, AGAM_ROOT])
+    for root in roots_to_check:
+        doc_path = root / "doc"
+        docs_path = root / "docs"
+
+        if doc_path.exists():
+            if doc_path.is_symlink():
+                resolved_target = doc_path.resolve()
+                if resolved_target != docs_path.resolve():
+                    print(f"[FAIL]: Symlink '{doc_path}' points to '{resolved_target}', expected '{docs_path.resolve()}'")
+                    sys.exit(1)
+                print(f"[PASS]: 'doc/' verified as symlink to canonical 'docs/' at {root}")
+            else:
+                print(f"[FAIL]: Non-canonical directory '{doc_path}' detected!")
+                print(f"        'docs/' is the single canonical documentation directory.")
+                print(f"        'doc/' must not exist as an independent directory.")
+                sys.exit(1)
+
+    canonical_docs = WORKSPACE_ROOT / "docs" if (WORKSPACE_ROOT / "docs").exists() else AGAM_ROOT / "docs"
+    if not canonical_docs.exists():
+        print(f"[FAIL]: Canonical documentation directory '{canonical_docs}' missing!")
+        sys.exit(1)
+
+    print(f"[PASS]: Single canonical documentation directory verified at: {canonical_docs.resolve()}")
+
 def verify_required_docs():
-    required = [
-        AGAM_ROOT / "docs" / "MEMORY_MODEL.md",
-        AGAM_ROOT / "docs" / "grammar.ebnf",
-        AGAM_ROOT / "docs" / "ADOPTED_DEPENDENCIES.md",
-        AGAM_ROOT / "docs" / "FUTURE_ARCHITECTURE.md",
+    required_names = [
+        "MEMORY_MODEL.md",
+        "grammar.ebnf",
+        "ADOPTED_DEPENDENCIES.md",
+        "FUTURE_ARCHITECTURE.md",
+        "RFC-std-db.md",
     ]
-    print("\n--- Verifying Required Specification Artifacts ---")
+    print("\n--- Verifying Required Specification Artifacts in Canonical docs/ ---")
+    docs_dir = WORKSPACE_ROOT / "docs" if (WORKSPACE_ROOT / "docs").exists() else AGAM_ROOT / "docs"
     all_ok = True
-    for doc in required:
+    for name in required_names:
+        doc = docs_dir / name
         if doc.exists() and doc.stat().st_size > 0:
-            print(f"[FOUND]: {doc.relative_to(AGAM_ROOT)} ({doc.stat().st_size} bytes)")
+            print(f"[FOUND]: docs/{name} ({doc.stat().st_size} bytes)")
         else:
-            print(f"[MISSING/EMPTY]: {doc.relative_to(AGAM_ROOT)}")
+            print(f"[MISSING/EMPTY]: docs/{name} in {docs_dir}")
             all_ok = False
     
     if not all_ok:
-        print("[FAIL]: Required specification artifacts are missing!")
+        print("[FAIL]: Required specification artifacts are missing in canonical docs/!")
         sys.exit(1)
-    print("[PASS]: All required specification artifacts present.")
+    print("[PASS]: All required specification artifacts present in canonical docs/.")
 
 def verify_literature_citations():
     """
@@ -133,7 +170,8 @@ def verify_literature_citations():
     Cross-references claims in architectural docs against codebase reality.
     """
     print("\n--- Verifying Literature & Algorithm Citations ---")
-    doc_path = AGAM_ROOT / "docs" / "FUTURE_ARCHITECTURE.md"
+    docs_dir = WORKSPACE_ROOT / "docs" if (WORKSPACE_ROOT / "docs").exists() else AGAM_ROOT / "docs"
+    doc_path = docs_dir / "FUTURE_ARCHITECTURE.md"
     if not doc_path.exists():
         print("[FAIL]: FUTURE_ARCHITECTURE.md not found for citation check")
         sys.exit(1)
@@ -173,6 +211,7 @@ def verify_literature_citations():
 
 if __name__ == "__main__":
     count_panics()
+    verify_no_doc_docs_split()
     verify_required_docs()
     verify_literature_citations()
     print("==================================================")
