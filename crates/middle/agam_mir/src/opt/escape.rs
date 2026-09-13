@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::ir::{Instruction, MirFunction, MirModule, Op, Terminator, ValueId};
+use crate::ir::{MirFunction, MirModule, Op, Terminator, ValueId};
 use agam_sema::symbol::TypeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -284,11 +284,18 @@ pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityI
         }
     }
 
-    // 4. Eligible non-escaping roots to promote
+    // 4. Eligible non-escaping roots to promote:
+    // Safety Invariant (Option b): In Phase 1, we strictly restrict promotion to
+    // trivially droppable types (primitives where type_needs_destruction(ty) == false).
+    // Non-trivial aggregates that require destructors are deferred to Phase 2, when
+    // real destructor drop-glue is implemented across all 3 emitters (LLVM, C, JIT)
+    // and post-dominator cleanup edges are computed. This guarantees that non-trivial
+    // aggregates remain on the heap where existing ArcRelease triggers destructors,
+    // preventing silent destructor omission.
     let promotable_roots: Vec<ValueId> = arc_allocs
-        .keys()
-        .copied()
-        .filter(|r| !escaping_roots.contains(r))
+        .iter()
+        .filter(|(r, (_, ty))| !escaping_roots.contains(r) && !type_needs_destruction(*ty))
+        .map(|(r, _)| *r)
         .collect();
 
     if promotable_roots.is_empty() {
@@ -296,15 +303,6 @@ pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityI
     }
 
     // 5. Atomic rewrite
-    let mut next_val_id = func
-        .blocks
-        .iter()
-        .flat_map(|b| b.instructions.iter().map(|i| i.result.0))
-        .chain(func.params.iter().map(|p| p.value.0))
-        .max()
-        .unwrap_or(0)
-        + 1;
-
     let mut any_mutated = false;
 
     for &root in &promotable_roots {
@@ -316,9 +314,6 @@ pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityI
             Some(a) => a.clone(),
             None => continue,
         };
-
-        let needs_drop = type_needs_destruction(ty);
-        let mut drop_inserted = false;
 
         for block in &mut func.blocks {
             let original_instructions = std::mem::take(&mut block.instructions);
@@ -342,39 +337,13 @@ pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityI
                     }
                 } else if let Op::ArcRelease { value } = &instr.op {
                     if aliases.contains(value) {
+                        // Trivially droppable types need no destructor: release is removed entirely.
                         any_mutated = true;
-                        // If this type needs destruction and we haven't inserted StackDrop yet,
-                        // replace this release with StackDrop
-                        if needs_drop && !drop_inserted {
-                            rewritten_instructions.push(Instruction {
-                                result: ValueId(next_val_id),
-                                ty: TypeId(0),
-                                op: Op::StackDrop { value: root },
-                            });
-                            next_val_id += 1;
-                            drop_inserted = true;
-                        }
-                        // Otherwise omitted
                     } else {
                         rewritten_instructions.push(instr);
                     }
                 } else {
                     rewritten_instructions.push(instr);
-                }
-            }
-
-            // If this block is an exit block and needs drop wasn't inserted yet
-            if needs_drop && !drop_inserted {
-                let is_exit = matches!(block.terminator, Terminator::Return(_) | Terminator::ReturnVoid);
-                if is_exit {
-                    rewritten_instructions.push(Instruction {
-                        result: ValueId(next_val_id),
-                        ty: TypeId(0),
-                        op: Op::StackDrop { value: root },
-                    });
-                    next_val_id += 1;
-                    drop_inserted = true;
-                    any_mutated = true;
                 }
             }
 

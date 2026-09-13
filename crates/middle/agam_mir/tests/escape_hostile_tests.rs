@@ -429,17 +429,18 @@ fn test_ast_rewrite_arc_alloc_promoted_to_alloca_with_copy_and_release_removed()
 }
 
 #[test]
-fn test_ast_rewrite_non_trivial_aggregate_emits_stack_drop() {
-    // Non-trivial aggregate type:
-    // ArcAlloc -> Alloca
-    // ArcRelease -> removed and exactly one StackDrop { value: root } emitted before return
+fn test_ast_rewrite_non_trivial_aggregate_declines_promotion_until_drop_glue_available() {
+    // Safety Invariant (Option b):
+    // Non-trivial aggregate type needing destruction MUST decline stack promotion
+    // in Phase 1 until real drop glue is implemented across all 3 emitters.
+    // It remains ArcAlloc + ArcRelease so that ARC runtime drops are not bypassed.
     let b0 = BlockId(0);
     let v_alloc = ValueId(0);
     let v_rel = ValueId(1);
     let non_trivial_ty = TypeId(25); // User struct / non-primitive
 
     let mut func = MirFunction {
-        name: "test_aggregate_promote".into(),
+        name: "test_aggregate_preserve".into(),
         generics: vec![],
         params: vec![],
         return_ty: TypeId(0),
@@ -468,45 +469,24 @@ fn test_ast_rewrite_non_trivial_aggregate_emits_stack_drop() {
     };
 
     let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
-    assert!(changed, "Expected rewrite_escape_and_promote to succeed");
-
-    let block = &func.blocks[0];
-    let mut found_alloca = false;
-    let mut found_release = false;
-    let mut stack_drops = Vec::new();
-
-    for instr in &block.instructions {
-        match &instr.op {
-            Op::Alloca { name, ty } => {
-                assert_eq!(name, "agg");
-                assert_eq!(*ty, non_trivial_ty);
-                found_alloca = true;
-            }
-            Op::ArcRelease { .. } => {
-                found_release = true;
-            }
-            Op::StackDrop { value } => {
-                stack_drops.push(*value);
-            }
-            _ => {}
-        }
-    }
-
-    assert!(found_alloca, "ArcAlloc must be replaced with Alloca");
-    assert!(!found_release, "ArcRelease must be removed from AST");
-    assert_eq!(
-        stack_drops.len(),
-        1,
-        "Exactly one StackDrop must be emitted on exit edge"
+    assert!(
+        !changed,
+        "Non-trivial aggregate MUST decline stack promotion in Phase 1 to prevent silent destructor omission"
     );
-    assert_eq!(
-        stack_drops[0], v_alloc,
-        "StackDrop must drop the root allocation"
-    );
+
+    // Verify AST remains intact as ArcAlloc + ArcRelease
+    assert!(matches!(
+        func.blocks[0].instructions[0].op,
+        Op::ArcAlloc { .. }
+    ));
+    assert!(matches!(
+        func.blocks[0].instructions[1].op,
+        Op::ArcRelease { .. }
+    ));
 
     assert!(
         MirVerifier::verify_function(&func).is_ok(),
-        "Promoted function must satisfy MirVerifier"
+        "Unmodified function must satisfy MirVerifier"
     );
 }
 
