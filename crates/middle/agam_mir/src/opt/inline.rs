@@ -138,7 +138,10 @@ impl InlineState {
             .collect();
 
         for instr in &block.instructions {
-            if let Op::Alloca { name, .. } | Op::LoadLocal(name) = &instr.op {
+            if let Op::Alloca { name, .. }
+            | Op::ArcAlloc { name, .. }
+            | Op::LoadLocal(name) = &instr.op
+            {
                 names_to_rename.insert(name.clone());
             }
             if let Op::StoreLocal { name, .. } = &instr.op {
@@ -304,6 +307,19 @@ fn remap_op(
         Op::Alloca { name, ty } => Op::Alloca {
             name: remap_local(name, local_map),
             ty: *ty,
+        },
+        Op::ArcAlloc { name, ty } => Op::ArcAlloc {
+            name: remap_local(name, local_map),
+            ty: *ty,
+        },
+        Op::ArcRetain { value } => Op::ArcRetain {
+            value: remap_value(*value, value_map),
+        },
+        Op::ArcRelease { value } => Op::ArcRelease {
+            value: remap_value(*value, value_map),
+        },
+        Op::StackDrop { value } => Op::StackDrop {
+            value: remap_value(*value, value_map),
         },
         Op::GetField { object, field } => Op::GetField {
             object: remap_value(*object, value_map),

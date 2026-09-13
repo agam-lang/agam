@@ -117,6 +117,10 @@ pub fn run(module: &mut MirModule) -> bool {
                     }
                     Op::Call { .. }
                     | Op::Alloca { .. }
+                    | Op::ArcAlloc { .. }
+                    | Op::ArcRetain { .. }
+                    | Op::ArcRelease { .. }
+                    | Op::StackDrop { .. }
                     | Op::GetField { .. }
                     | Op::GetIndex { .. }
                     | Op::Phi(_)

@@ -1037,7 +1037,7 @@ impl AgamJit {
                 builder.def_var(var, value);
                 Ok(value)
             }
-            Op::Alloca { name, ty } => {
+            Op::Alloca { name, ty } | Op::ArcAlloc { name, ty } => {
                 let var = *local_vars
                     .get(name)
                     .ok_or_else(|| format!("unknown local `{name}` in JIT alloca"))?;
@@ -1052,6 +1052,10 @@ impl AgamJit {
                     });
                 let zero = default_value(builder, local_ty, pointer_type);
                 builder.def_var(var, zero);
+                Ok(default_value(builder, result_ty, pointer_type))
+            }
+            Op::ArcRetain { value } => lookup_value(values, *value),
+            Op::ArcRelease { .. } | Op::StackDrop { .. } => {
                 Ok(default_value(builder, result_ty, pointer_type))
             }
             Op::BinOp { op, left, right } => {
@@ -2483,7 +2487,7 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     layout.local_types.insert(name.clone(), ty);
                     ty
                 }
-                Op::Alloca { name, ty } => {
+                Op::Alloca { name, ty } | Op::ArcAlloc { name, ty } => {
                     let ty = infer_jit_type_from_type_id(*ty).unwrap_or(JitType::Int {
                         bits: 32,
                         signed: true,
@@ -2491,6 +2495,13 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     layout.local_types.entry(name.clone()).or_insert(ty);
                     JitType::Unit
                 }
+                Op::ArcRetain { value } => {
+                    if let Some(slots) = layout.enum_payload_slots.get(value).cloned() {
+                        layout.enum_payload_slots.insert(instr.result, slots);
+                    }
+                    value_type(&layout, *value)
+                }
+                Op::ArcRelease { .. } | Op::StackDrop { .. } => JitType::Unit,
                 Op::StoreIndex { value, .. } => value_type(&layout, *value),
                 Op::GetField { .. } => {
                     infer_jit_type_from_type_id(instr.ty).unwrap_or(JitType::Int {
@@ -5325,5 +5336,110 @@ fn main() -> i32:
             let res = c.run_function("main", &[]);
             assert_eq!(res, Ok(JitValue::Int(0)));
         }
+    }
+
+    #[test]
+    fn test_jit_arc_opcodes_execution_parity() {
+        // Build a function using ArcAlloc, ArcRetain, ArcRelease, and StackDrop
+        let module_arc = manual_module(vec![manual_function(
+            "main",
+            i32_ty(),
+            vec![BasicBlock {
+                id: BlockId(0),
+                instructions: vec![
+                    Instruction {
+                        result: ValueId(0),
+                        ty: i32_ty(),
+                        op: Op::ArcAlloc {
+                            name: "buf".into(),
+                            ty: i32_ty(),
+                        },
+                    },
+                    Instruction {
+                        result: ValueId(1),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(42),
+                    },
+                    Instruction {
+                        result: ValueId(2),
+                        ty: i32_ty(),
+                        op: Op::StoreLocal {
+                            name: "buf".into(),
+                            value: ValueId(1),
+                        },
+                    },
+                    Instruction {
+                        result: ValueId(3),
+                        ty: i32_ty(),
+                        op: Op::LoadLocal("buf".into()),
+                    },
+                    Instruction {
+                        result: ValueId(4),
+                        ty: i32_ty(),
+                        op: Op::ArcRetain { value: ValueId(3) },
+                    },
+                    Instruction {
+                        result: ValueId(5),
+                        ty: TypeId(0),
+                        op: Op::ArcRelease { value: ValueId(4) },
+                    },
+                    Instruction {
+                        result: ValueId(6),
+                        ty: TypeId(0),
+                        op: Op::StackDrop { value: ValueId(0) },
+                    },
+                ],
+                terminator: Terminator::Return(ValueId(4)),
+            }],
+        )]);
+
+        // Build equivalent function using classic Alloca
+        let module_classic = manual_module(vec![manual_function(
+            "main",
+            i32_ty(),
+            vec![BasicBlock {
+                id: BlockId(0),
+                instructions: vec![
+                    Instruction {
+                        result: ValueId(0),
+                        ty: i32_ty(),
+                        op: Op::Alloca {
+                            name: "buf".into(),
+                            ty: i32_ty(),
+                        },
+                    },
+                    Instruction {
+                        result: ValueId(1),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(42),
+                    },
+                    Instruction {
+                        result: ValueId(2),
+                        ty: i32_ty(),
+                        op: Op::StoreLocal {
+                            name: "buf".into(),
+                            value: ValueId(1),
+                        },
+                    },
+                    Instruction {
+                        result: ValueId(3),
+                        ty: i32_ty(),
+                        op: Op::LoadLocal("buf".into()),
+                    },
+                ],
+                terminator: Terminator::Return(ValueId(3)),
+            }],
+        )]);
+
+        let compiled_arc = CompiledJitModule::compile(&module_arc, JitOptions::default())
+            .expect("JIT compilation of Arc opcodes module should succeed");
+        let compiled_classic = CompiledJitModule::compile(&module_classic, JitOptions::default())
+            .expect("JIT compilation of classic module should succeed");
+
+        let res_arc = compiled_arc.run_function("main", &[]);
+        let res_classic = compiled_classic.run_function("main", &[]);
+
+        assert_eq!(res_arc, Ok(JitValue::Int(42)));
+        assert_eq!(res_arc, res_classic);
     }
 }

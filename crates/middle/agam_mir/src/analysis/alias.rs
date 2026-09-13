@@ -106,8 +106,8 @@ impl<'a> AliasOracle<'a> {
         while visited.insert(curr) {
             let instr = instrs.get(&curr)?;
             match &instr.op {
-                Op::Alloca { .. } => return Some(curr),
-                Op::Copy(orig) => curr = *orig,
+                Op::Alloca { .. } | Op::ArcAlloc { .. } => return Some(curr),
+                Op::Copy(orig) | Op::ArcRetain { value: orig } => curr = *orig,
                 Op::GetField { object, .. } => curr = *object,
                 _ => return None,
             }
@@ -136,12 +136,13 @@ impl<'a> AliasOracle<'a> {
                     }
                 }
             }
+            Op::ArcAlloc { .. } => PointerProvenance::EscapedAlloc(val),
             Op::GetField { object, field } => PointerProvenance::StructField {
                 base: *object,
                 field: field.clone(),
             },
             Op::ConstString(_) => PointerProvenance::ConstantMemory(val),
-            Op::Copy(orig) => self.resolve_provenance(*orig),
+            Op::Copy(orig) | Op::ArcRetain { value: orig } => self.resolve_provenance(*orig),
             Op::BinOp {
                 op: MirBinOp::Add,
                 left,

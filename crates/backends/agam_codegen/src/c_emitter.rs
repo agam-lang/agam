@@ -227,7 +227,7 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                     ty
                 }
                 Op::StoreIndex { value, .. } => value_type(&layout, *value),
-                Op::Alloca { name, ty } => {
+                Op::Alloca { name, ty } | Op::ArcAlloc { name, ty } => {
                     let ty = layout
                         .local_types
                         .get(name)
@@ -237,6 +237,9 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                     layout.local_types.insert(name.clone(), ty);
                     ty
                 }
+                Op::ArcRetain { value } => value_type(&layout, *value),
+                Op::ArcRelease { .. } => CType::Int,
+                Op::StackDrop { .. } => CType::Int,
                 Op::GetField { object, .. } => value_type(&layout, *object),
                 Op::GetIndex { object, .. } => value_type(&layout, *object),
                 Op::Phi(entries) => entries
@@ -917,7 +920,7 @@ fn emit_instruction(
             .unwrap();
             writeln!(out, "  {} {} = __v{};", result_ty.name(), v, value.0).unwrap();
         }
-        Op::Alloca { name, .. } => {
+        Op::Alloca { name, .. } | Op::ArcAlloc { name, .. } => {
             let local_ty = layout.local_types.get(name).copied().unwrap_or(CType::Int);
             writeln!(
                 out,
@@ -935,6 +938,18 @@ fn emit_instruction(
                 result_ty.default_value()
             )
             .unwrap();
+        }
+        Op::ArcRetain { value } => {
+            let _ = writeln!(out, "  {} {} = __v{};", result_ty.name(), v, value.0);
+        }
+        Op::ArcRelease { .. } | Op::StackDrop { .. } => {
+            let _ = writeln!(
+                out,
+                "  {} {} = {};",
+                result_ty.name(),
+                v,
+                result_ty.default_value()
+            );
         }
         Op::GetField { object, field } => {
             // Resolve field name to index via struct_layouts.
@@ -1586,5 +1601,83 @@ mod tests {
             c_code.contains("syscall(__v0, __v1)"),
             "expected C code to contain syscall(__v0, __v1), got:\n{c_code}"
         );
+    }
+
+    #[test]
+    fn test_codegen_c_arc_opcodes_emission() {
+        let b0 = BlockId(0);
+        let v_alloc = ValueId(0);
+        let v_const = ValueId(1);
+        let v_store = ValueId(2);
+        let v_load = ValueId(3);
+        let v_retain = ValueId(4);
+        let v_release = ValueId(5);
+        let v_drop = ValueId(6);
+
+        let module = MirModule {
+            functions: vec![MirFunction {
+                name: "test_arc_emit".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: agam_sema::symbol::TypeId(1),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v_alloc,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ArcAlloc {
+                                name: "buf".into(),
+                                ty: agam_sema::symbol::TypeId(1),
+                            },
+                        },
+                        Instruction {
+                            result: v_const,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ConstInt(100),
+                        },
+                        Instruction {
+                            result: v_store,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::StoreLocal {
+                                name: "buf".into(),
+                                value: v_const,
+                            },
+                        },
+                        Instruction {
+                            result: v_load,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::LoadLocal("buf".into()),
+                        },
+                        Instruction {
+                            result: v_retain,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ArcRetain { value: v_load },
+                        },
+                        Instruction {
+                            result: v_release,
+                            ty: agam_sema::symbol::TypeId(0),
+                            op: Op::ArcRelease { value: v_retain },
+                        },
+                        Instruction {
+                            result: v_drop,
+                            ty: agam_sema::symbol::TypeId(0),
+                            op: Op::StackDrop { value: v_alloc },
+                        },
+                    ],
+                    terminator: Terminator::Return(v_retain),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
+        };
+
+        let c_code = emit_c(&module);
+        assert!(c_code.contains("_local_buf = 0;"), "C was:\n{c_code}");
+        assert!(c_code.contains("_local_buf = __v1;"), "C was:\n{c_code}");
+        assert!(c_code.contains("__v4 = __v3;"), "C was:\n{c_code}");
     }
 }

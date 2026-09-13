@@ -571,7 +571,7 @@ fn analyze_function(
                     layout.local_types.insert(name.clone(), ty);
                     ty
                 }
-                Op::Alloca { name, ty } => {
+                Op::Alloca { name, ty } | Op::ArcAlloc { name, ty } => {
                     let ty = layout
                         .local_types
                         .get(name)
@@ -581,6 +581,9 @@ fn analyze_function(
                     layout.local_types.insert(name.clone(), ty);
                     ty
                 }
+                Op::ArcRetain { value } => value_type(&layout, *value),
+                Op::ArcRelease { .. } => LlvmType::default_int(),
+                Op::StackDrop { .. } => LlvmType::default_int(),
                 Op::StoreIndex { value, .. } => value_type(&layout, *value),
                 Op::GetField { .. } => {
                     infer_llvm_type_from_type_id(instr.ty).unwrap_or_else(LlvmType::default_int)
@@ -709,7 +712,7 @@ fn analyze_function(
                             }
                             merged
                         }
-                        Op::Alloca { name, .. } => {
+                        Op::Alloca { name, .. } | Op::ArcAlloc { name, .. } => {
                             let sign = if let Some(sign) = proven_local_signs.get(name) {
                                 *sign
                             } else {
@@ -729,6 +732,11 @@ fn analyze_function(
                             }
                             sign
                         }
+                        Op::ArcRetain { value } => value_signs
+                            .get(value)
+                            .copied()
+                            .unwrap_or_else(|| default_sign_for_type(value_type(&layout, *value))),
+                        Op::ArcRelease { .. } | Op::StackDrop { .. } => SignInfo::Unknown,
                         Op::GetField { object, .. } => value_signs
                             .get(object)
                             .copied()
@@ -2534,7 +2542,7 @@ impl LlvmEmitter {
                 let source = get_value(values, *value)?;
                 values.insert(instr.result, source);
             }
-            Op::Alloca { name, .. } => {
+            Op::Alloca { name, .. } | Op::ArcAlloc { name, .. } => {
                 let local_ty = layout
                     .local_types
                     .get(name)
@@ -2546,6 +2554,16 @@ impl LlvmEmitter {
                     locals.insert(name.clone(), (local_ty, ptr_name));
                     emitted_locals.insert(name.clone());
                 }
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                );
+            }
+            Op::ArcRetain { value } => {
+                let source = get_value(values, *value)?;
+                values.insert(instr.result, source);
+            }
+            Op::ArcRelease { .. } | Op::StackDrop { .. } => {
                 values.insert(
                     instr.result,
                     ValueRef::new(result_ty, result_ty.default_value(), result_sign),
@@ -7915,5 +7933,84 @@ fn main() -> i32:
             llvm.contains("!\"llvm.loop.vectorize.enable\""),
             "Must emit vectorization loop control metadata"
         );
+    }
+
+    #[test]
+    fn test_codegen_llvm_arc_opcodes_emission() {
+        let b0 = BlockId(0);
+        let v_alloc = ValueId(0);
+        let v_const = ValueId(1);
+        let v_store = ValueId(2);
+        let v_load = ValueId(3);
+        let v_retain = ValueId(4);
+        let v_release = ValueId(5);
+        let v_drop = ValueId(6);
+
+        let module = MirModule {
+            functions: vec![MirFunction {
+                name: "test_arc_emit".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: agam_sema::symbol::TypeId(1),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v_alloc,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ArcAlloc {
+                                name: "buf".into(),
+                                ty: agam_sema::symbol::TypeId(1),
+                            },
+                        },
+                        Instruction {
+                            result: v_const,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ConstInt(100),
+                        },
+                        Instruction {
+                            result: v_store,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::StoreLocal {
+                                name: "buf".into(),
+                                value: v_const,
+                            },
+                        },
+                        Instruction {
+                            result: v_load,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::LoadLocal("buf".into()),
+                        },
+                        Instruction {
+                            result: v_retain,
+                            ty: agam_sema::symbol::TypeId(1),
+                            op: Op::ArcRetain { value: v_load },
+                        },
+                        Instruction {
+                            result: v_release,
+                            ty: agam_sema::symbol::TypeId(0),
+                            op: Op::ArcRelease { value: v_retain },
+                        },
+                        Instruction {
+                            result: v_drop,
+                            ty: agam_sema::symbol::TypeId(0),
+                            op: Op::StackDrop { value: v_alloc },
+                        },
+                    ],
+                    terminator: Terminator::Return(v_retain),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
+        };
+
+        let llvm_res = emit_llvm_with_options(&module, LlvmEmitOptions::default());
+        assert!(llvm_res.is_ok(), "LLVM emission for ARC opcodes failed");
+        let Ok(llvm) = llvm_res else { return };
+        assert!(llvm.contains("%local_buf = alloca"), "LLVM was:\n{llvm}");
+        assert!(llvm.contains("%local_buf"), "LLVM was:\n{llvm}");
     }
 }

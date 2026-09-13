@@ -138,7 +138,10 @@ fn is_side_effectful(instr: &Instruction, live_locals: &HashSet<String>) -> bool
         Op::GpuKernelLaunch { .. } => true,
         Op::GpuSharedAlloc { .. } => false,
         Op::StoreIndex { .. } => true,
-        Op::StoreLocal { name, .. } | Op::Alloca { name, .. } => live_locals.contains(name),
+        Op::StoreLocal { name, .. }
+        | Op::Alloca { name, .. }
+        | Op::ArcAlloc { name, .. } => live_locals.contains(name),
+        Op::ArcRetain { .. } | Op::ArcRelease { .. } | Op::StackDrop { .. } => true,
         Op::GpuIntrinsic { .. } => true, // Conservatively mark as having side effects (like barriers)
         Op::InlineAsm { .. } => true,    // Inline ASM might have side effects
         Op::Syscall { .. } => true,      // Direct OS syscalls have arbitrary external side effects
@@ -216,7 +219,11 @@ fn mark_used_values(instr: &Instruction, used_values: &mut HashSet<ValueId>) {
         | Op::ConstString(_)
         | Op::Unit
         | Op::LoadLocal(_)
-        | Op::Alloca { .. } => {}
+        | Op::Alloca { .. }
+        | Op::ArcAlloc { .. } => {}
+        Op::ArcRetain { value } | Op::ArcRelease { value } | Op::StackDrop { value } => {
+            used_values.insert(*value);
+        }
         Op::EnumConstruct { payload, .. } => {
             used_values.extend(payload.iter().copied());
         }

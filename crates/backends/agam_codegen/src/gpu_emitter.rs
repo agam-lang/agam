@@ -396,11 +396,17 @@ fn analyze_kernel_layout(func: &MirFunction) -> KernelLayout {
     for block in &func.blocks {
         for instr in &block.instructions {
             let inferred = match &instr.op {
-                Op::Alloca { name, ty } => {
+                Op::Alloca { name, ty } | Op::ArcAlloc { name, ty } => {
                     let local_ty = kernel_ir_type_from_type_id(*ty);
                     layout.local_types.insert(name.clone(), local_ty);
                     "i8*"
                 }
+                Op::ArcRetain { value } => layout
+                    .value_types
+                    .get(value)
+                    .copied()
+                    .unwrap_or("i64"),
+                Op::ArcRelease { .. } | Op::StackDrop { .. } => "i64",
                 Op::StoreLocal { name, value } => {
                     let ty = layout
                         .value_types
@@ -793,13 +799,37 @@ fn emit_kernel_instruction(
                 .unwrap();
             }
         }
-        Op::Alloca { name, .. } => {
+        Op::Alloca { name, .. } | Op::ArcAlloc { name, .. } => {
             let ty = kernel_local_type(layout, name);
             out.push_str("  %local_");
             push_sanitized(out, name);
             out.push_str(" = alloca ");
             out.push_str(ty);
             out.push('\n');
+        }
+        Op::ArcRetain { value } => {
+            let value_ty = kernel_value_type(layout, *value);
+            let _ = write!(
+                out,
+                "  %v{} = select i1 true, {} %v{}, {} {}\n",
+                id,
+                value_ty,
+                value.0,
+                value_ty,
+                default_value_for_ir(value_ty)
+            );
+        }
+        Op::ArcRelease { .. } | Op::StackDrop { .. } => {
+            let result_ty = kernel_value_type(layout, ValueId(id));
+            let _ = write!(
+                out,
+                "  %v{} = select i1 true, {} {}, {} {}\n",
+                id,
+                result_ty,
+                default_value_for_ir(result_ty),
+                result_ty,
+                default_value_for_ir(result_ty)
+            );
         }
         Op::GpuSharedAlloc { element_abi, count } => {
             write!(

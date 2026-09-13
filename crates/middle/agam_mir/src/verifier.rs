@@ -345,7 +345,10 @@ fn instruction_uses(instr: &Instruction) -> Vec<ValueId> {
             index,
             value,
         } => vec![*object, *index, *value],
-        Op::Alloca { .. } => Vec::new(),
+        Op::Alloca { .. } | Op::ArcAlloc { .. } => Vec::new(),
+        Op::ArcRetain { value } | Op::ArcRelease { value } | Op::StackDrop { value } => {
+            vec![*value]
+        }
         Op::GetField { object, .. } => vec![*object],
         Op::GetIndex { object, index } => vec![*object, *index],
         Op::Phi(entries) => entries.iter().map(|(_, v)| *v).collect(),
@@ -605,6 +608,108 @@ mod tests {
                         op: Op::ConstInt(39),
                     }],
                     terminator: Terminator::Return(v_dst_in_b0),
+                },
+            ],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_err());
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::UseNotDominatedByDef { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn test_verifier_arc_opcodes_validity() {
+        let b0 = BlockId(0);
+        let v_alloc = ValueId(0);
+        let v_retained = ValueId(1);
+        let v_release = ValueId(2);
+        let v_drop = ValueId(3);
+
+        let func = MirFunction {
+            name: "test_arc_flow".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(1),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_alloc,
+                        ty: TypeId(1),
+                        op: Op::ArcAlloc {
+                            name: "buf".into(),
+                            ty: TypeId(1),
+                        },
+                    },
+                    Instruction {
+                        result: v_retained,
+                        ty: TypeId(1),
+                        op: Op::ArcRetain { value: v_alloc },
+                    },
+                    Instruction {
+                        result: v_release,
+                        ty: TypeId(0),
+                        op: Op::ArcRelease { value: v_retained },
+                    },
+                    Instruction {
+                        result: v_drop,
+                        ty: TypeId(0),
+                        op: Op::StackDrop { value: v_alloc },
+                    },
+                ],
+                terminator: Terminator::Return(v_alloc), // Valid: ArcAlloc is heap-managed and permitted to escape
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        assert!(MirVerifier::verify_function(&func).is_ok());
+    }
+
+    #[test]
+    fn test_verifier_arc_opcodes_dominance_failure() {
+        let b0 = BlockId(0);
+        let b1 = BlockId(1);
+        let v_alloc_in_b1 = ValueId(0);
+        let v_retain_in_b0 = ValueId(1);
+
+        let func = MirFunction {
+            name: "test_arc_dominance".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(1),
+            entry: b0,
+            blocks: vec![
+                BasicBlock {
+                    id: b0,
+                    instructions: vec![Instruction {
+                        result: v_retain_in_b0,
+                        ty: TypeId(1),
+                        op: Op::ArcRetain {
+                            value: v_alloc_in_b1, // VIOLATION: Used before defined in b1
+                        },
+                    }],
+                    terminator: Terminator::Jump(b1),
+                },
+                BasicBlock {
+                    id: b1,
+                    instructions: vec![Instruction {
+                        result: v_alloc_in_b1,
+                        ty: TypeId(1),
+                        op: Op::ArcAlloc {
+                            name: "buf".into(),
+                            ty: TypeId(1),
+                        },
+                    }],
+                    terminator: Terminator::Return(v_alloc_in_b1),
                 },
             ],
             target: Default::default(),

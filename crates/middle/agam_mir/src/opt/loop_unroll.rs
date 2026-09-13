@@ -489,6 +489,19 @@ fn clone_op(op: &Op, value_map: &HashMap<ValueId, ValueId>) -> Op {
                 .map(|(name, value)| (name.clone(), remap_value(*value, value_map)))
                 .collect(),
         },
+        Op::ArcAlloc { name, ty } => Op::ArcAlloc {
+            name: name.clone(),
+            ty: *ty,
+        },
+        Op::ArcRetain { value } => Op::ArcRetain {
+            value: remap_value(*value, value_map),
+        },
+        Op::ArcRelease { value } => Op::ArcRelease {
+            value: remap_value(*value, value_map),
+        },
+        Op::StackDrop { value } => Op::StackDrop {
+            value: remap_value(*value, value_map),
+        },
     }
 }
 

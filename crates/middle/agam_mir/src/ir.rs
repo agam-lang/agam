@@ -108,6 +108,15 @@ pub enum Op {
     /// Allocate a local variable (stack allocation).
     Alloca { name: String, ty: TypeId },
 
+    /// ARC-managed heap allocation. `result` is the sole initial owner.
+    ArcAlloc { name: String, ty: TypeId },
+    /// Creates one additional ARC ownership token for `value`.
+    ArcRetain { value: ValueId },
+    /// Consumes one ownership token for `value`; instruction result is Unit.
+    ArcRelease { value: ValueId },
+    /// Runs the non-ARC destructor for a promoted stack object.
+    StackDrop { value: ValueId },
+
     /// Field access.
     GetField { object: ValueId, field: String },
     /// Array/tuple index.
