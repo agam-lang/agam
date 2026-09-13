@@ -1,7 +1,7 @@
 //! # Agam Native GUI Counter Application
 //!
 //! Demonstrates:
-//! - State variables (`let mut count: i32 = 0`)
+//! - State variables (`let mut count: i32 = 42`)
 //! - Declarative Flex Column/Row layout
 //! - Interactive push buttons with increment/decrement callbacks
 //! - Native typography and Fluent Dark theme
@@ -10,11 +10,11 @@
 @ui
 
 fn counter_app() -> Window {
-    let mut count: i32 = 0;
+    let mut count: i32 = 42;
 
     return Window {
-        title: "Agam Native Counter",
-        size: (360, 240),
+        title: "Agam Live Counter Studio",
+        size: (400, 280),
         child: Column {
             gap: 16,
             padding: 24,
@@ -28,8 +28,8 @@ fn counter_app() -> Window {
                         gap: 8,
                         cross_align: "Center",
                         children: [
-                            Label { text: "CURRENT COUNT", size: 12, color: "#8C8C8C" },
-                            Label { text: "0", size: 36, weight: "Bold", color: "#FFFFFF" },
+                            Label { text: "CURRENT VALUE", size: 12, color: "#8C8C8C" },
+                            Label { text: count, size: 36, weight: "Bold", color: "#FFFFFF" },
                         ],
                     },
                 },
@@ -38,17 +38,17 @@ fn counter_app() -> Window {
                     main_align: "Center",
                     children: [
                         Button {
-                            label: "− Decrement",
+                            label: "− Step Down",
                             background: "#3C3C3C",
                             on_click: || { count -= 1; },
                         },
                         Button {
-                            label: "+ Increment",
+                            label: "+ Step Up",
                             background: "#0078D4",
                             on_click: || { count += 1; },
                         },
                         Button {
-                            label: "Reset",
+                            label: "Zero Out",
                             background: "#2A2A2A",
                             on_click: || { count = 0; },
                         },

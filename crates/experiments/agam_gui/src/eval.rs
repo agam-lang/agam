@@ -1282,4 +1282,235 @@ fn calculator_app() -> Window {
             }
         }
     }
+
+    #[test]
+    fn test_modified_counter_file_evaluation() {
+        let src = include_str!("../../../../examples/gui/counter.agam");
+        let tokens = tokenize(src, SourceId(0));
+        let module_res = agam_parser::parse(tokens, SourceId(0));
+        assert!(module_res.is_ok());
+        let Ok(module) = module_res else { return };
+        let app_res = UiEvaluator::new().build_app(&module);
+        assert!(app_res.is_ok());
+        let Ok((config, app)) = app_res else { return };
+
+        // 1. Verify WindowConfig reflects modified source (title and size)
+        assert_eq!(config.title, "Agam Live Counter Studio");
+        assert_eq!(config.width, 400);
+        assert_eq!(config.height, 280);
+
+        // 2. Verify initial counter state variable is 42
+        if let Ok(rt) = app.runtime.lock() {
+            if let Some(val) = rt.state.get("count") {
+                assert_eq!(val.to_display_string(), "42");
+            }
+        }
+
+        // 3. Render scene and verify serialization reflects the layout
+        let mut builder = SceneBuilder::new();
+        let font_ctx = FontContext::default();
+        let bounds = Rect::new(0.0, 0.0, 400.0, 280.0);
+        if let Ok(rt) = app.runtime.lock() {
+            app.root_node
+                .render(bounds, &font_ctx, &mut builder, &rt, None, None);
+        }
+        let json_res = builder.to_json();
+        assert!(json_res.is_ok());
+
+        // 4. Test interactive click handler: "+ Step Up" increments state 42 -> 43
+        if let Ok(rt) = app.runtime.lock() {
+            let hit = app
+                .root_node
+                .hit_test(Point::new(200.0, 180.0), bounds, &rt);
+            assert!(hit.is_some());
+            if let Some((key, Some(on_click))) = hit {
+                assert_eq!(key, "+ Step Up");
+                drop(rt);
+                if let Ok(mut rt) = app.runtime.lock() {
+                    let _ = rt.eval_expr(&on_click);
+                    if let Some(val) = rt.state.get("count") {
+                        assert_eq!(val.to_display_string(), "43");
+                    }
+                }
+            }
+        }
+
+        // 5. Test interactive click handler: "− Step Down" decrements state 43 -> 42
+        if let Ok(rt) = app.runtime.lock() {
+            let hit = app.root_node.hit_test(Point::new(80.0, 180.0), bounds, &rt);
+            assert!(hit.is_some());
+            if let Some((key, Some(on_click))) = hit {
+                assert_eq!(key, "− Step Down");
+                drop(rt);
+                if let Ok(mut rt) = app.runtime.lock() {
+                    let _ = rt.eval_expr(&on_click);
+                    if let Some(val) = rt.state.get("count") {
+                        assert_eq!(val.to_display_string(), "42");
+                    }
+                }
+            }
+        }
+
+        // 6. Test interactive click handler: "Zero Out" resets state to 0
+        if let Ok(rt) = app.runtime.lock() {
+            let hit = app
+                .root_node
+                .hit_test(Point::new(320.0, 180.0), bounds, &rt);
+            assert!(hit.is_some());
+            if let Some((key, Some(on_click))) = hit {
+                assert_eq!(key, "Zero Out");
+                drop(rt);
+                if let Ok(mut rt) = app.runtime.lock() {
+                    let _ = rt.eval_expr(&on_click);
+                    if let Some(val) = rt.state.get("count") {
+                        assert_eq!(val.to_display_string(), "0");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_ast_differential_source_mutation_reflects_in_evaluated_app() {
+        let src_a = r##"
+@lang.advance
+@ui
+fn app_a() -> Window {
+    let mut count: i32 = 10;
+    return Window {
+        title: "Dashboard Alpha",
+        size: (320, 200),
+        child: Column {
+            gap: 12,
+            padding: 16,
+            children: [
+                Label { text: "ALPHA METRIC", size: 14, color: "#AAAAAA" },
+                Label { text: count, size: 28, color: "#FFFFFF" },
+                Button { label: "Advance Alpha", on_click: || { count += 1; } }
+            ]
+        }
+    };
+}
+"##;
+
+        let src_b = r##"
+@lang.advance
+@ui
+fn app_b() -> Window {
+    let mut count: i32 = 99;
+    return Window {
+        title: "Dashboard Beta",
+        size: (500, 400),
+        child: Column {
+            gap: 20,
+            padding: 30,
+            children: [
+                Label { text: "BETA METRIC", size: 18, color: "#BBBBBB" },
+                Label { text: count, size: 48, color: "#00FF00" },
+                Button { label: "Advance Beta", on_click: || { count += 10; } }
+            ]
+        }
+    };
+}
+"##;
+
+        let tokens_a = tokenize(src_a, SourceId(0));
+        let module_a = agam_parser::parse(tokens_a, SourceId(0));
+        assert!(module_a.is_ok());
+        let Ok(mod_a) = module_a else { return };
+        let app_res_a = UiEvaluator::new().build_app(&mod_a);
+        assert!(app_res_a.is_ok());
+        let Ok((config_a, app_a)) = app_res_a else {
+            return;
+        };
+
+        let tokens_b = tokenize(src_b, SourceId(1));
+        let module_b = agam_parser::parse(tokens_b, SourceId(1));
+        assert!(module_b.is_ok());
+        let Ok(mod_b) = module_b else { return };
+        let app_res_b = UiEvaluator::new().build_app(&mod_b);
+        assert!(app_res_b.is_ok());
+        let Ok((config_b, app_b)) = app_res_b else {
+            return;
+        };
+
+        // 1. Assert WindowConfig differences directly derived from source
+        assert_eq!(config_a.title, "Dashboard Alpha");
+        assert_eq!(config_b.title, "Dashboard Beta");
+        assert_ne!(config_a.title, config_b.title);
+
+        assert_eq!(config_a.width, 320);
+        assert_eq!(config_b.width, 500);
+        assert_ne!(config_a.width, config_b.width);
+
+        assert_eq!(config_a.height, 200);
+        assert_eq!(config_b.height, 400);
+        assert_ne!(config_a.height, config_b.height);
+
+        // 2. Assert runtime initial states differ
+        if let (Ok(rt_a), Ok(rt_b)) = (app_a.runtime.lock(), app_b.runtime.lock()) {
+            let val_a = rt_a.state.get("count").cloned();
+            let val_b = rt_b.state.get("count").cloned();
+            assert_eq!(val_a, Some(UiValue::Int(10)));
+            assert_eq!(val_b, Some(UiValue::Int(99)));
+            assert_ne!(val_a, val_b);
+        }
+
+        // 3. Render both into SceneBuilders and assert scene graph difference
+        let mut builder_a = SceneBuilder::new();
+        let mut builder_b = SceneBuilder::new();
+        let font_ctx = FontContext::default();
+        if let (Ok(rt_a), Ok(rt_b)) = (app_a.runtime.lock(), app_b.runtime.lock()) {
+            app_a.root_node.render(
+                Rect::new(0.0, 0.0, config_a.width as f64, config_a.height as f64),
+                &font_ctx,
+                &mut builder_a,
+                &rt_a,
+                None,
+                None,
+            );
+            app_b.root_node.render(
+                Rect::new(0.0, 0.0, config_b.width as f64, config_b.height as f64),
+                &font_ctx,
+                &mut builder_b,
+                &rt_b,
+                None,
+                None,
+            );
+        }
+
+        let json_a = builder_a.to_json();
+        let json_b = builder_b.to_json();
+        assert!(json_a.is_ok());
+        assert!(json_b.is_ok());
+        if let (Ok(ja), Ok(jb)) = (json_a, json_b) {
+            assert_ne!(
+                ja, jb,
+                "Distinct AST source inputs must produce distinct scene graphs"
+            );
+        }
+
+        // 4. Assert button click event on App A mutates only App A's state
+        if let Ok(rt_a) = app_a.runtime.lock() {
+            let hit_a = app_a.root_node.hit_test(
+                Point::new(160.0, 160.0),
+                Rect::new(0.0, 0.0, 320.0, 200.0),
+                &rt_a,
+            );
+            assert!(hit_a.is_some());
+            if let Some((key, Some(on_click))) = hit_a {
+                assert_eq!(key, "Advance Alpha");
+                drop(rt_a);
+                if let Ok(mut rt_a) = app_a.runtime.lock() {
+                    let _ = rt_a.eval_expr(&on_click);
+                    assert_eq!(rt_a.state.get("count"), Some(&UiValue::Int(11)));
+                }
+            }
+        }
+
+        // Verify App B remains completely unaffected at 99
+        if let Ok(rt_b) = app_b.runtime.lock() {
+            assert_eq!(rt_b.state.get("count"), Some(&UiValue::Int(99)));
+        }
+    }
 }
