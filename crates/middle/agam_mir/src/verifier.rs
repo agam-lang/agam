@@ -285,27 +285,7 @@ impl MirVerifier {
         }
 
         // 6. Check Stack Frame Escape Safety Invariant
-        // Value defined by Op::Alloca must NEVER escape through return terminator
-        let mut stack_allocations: HashSet<ValueId> = HashSet::new();
-        for block in &func.blocks {
-            for instr in &block.instructions {
-                if matches!(instr.op, Op::Alloca { .. }) {
-                    stack_allocations.insert(instr.result);
-                }
-            }
-        }
-
-        for block in &func.blocks {
-            if let Terminator::Return(ret_val) = &block.terminator
-                && stack_allocations.contains(ret_val)
-            {
-                errors.push(MirVerificationError::EscapingStackAllocation {
-                    value: *ret_val,
-                    in_block: block.id,
-                    reason: "returned directly from function".into(),
-                });
-            }
-        }
+        Self::verify_stack_provenance(func, &mut errors);
 
         if errors.is_empty() {
             Ok(())
@@ -325,6 +305,229 @@ impl MirVerifier {
             Ok(())
         } else {
             Err(all_errors)
+        }
+    }
+
+    /// Check Stack Frame Escape Safety Invariant
+    /// A stack allocation (Op::Alloca) must NEVER escape the stack frame:
+    /// - Not through return terminator directly or via alias/copy/phi/projection
+    /// - Not stored into an escaping aggregate or external object
+    /// - Not passed to an external/unknown call or effect handler
+    /// - Not merged in a phi node with externally provided / parameter values
+    pub fn verify_stack_provenance(func: &MirFunction, errors: &mut Vec<MirVerificationError>) {
+        let mut provenance: HashMap<ValueId, HashSet<ValueId>> = HashMap::new();
+        let mut local_provenance: HashMap<String, HashSet<ValueId>> = HashMap::new();
+
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                if matches!(instr.op, Op::Alloca { .. }) {
+                    let mut set = HashSet::new();
+                    set.insert(instr.result);
+                    provenance.insert(instr.result, set);
+                }
+            }
+        }
+
+        if provenance.is_empty() {
+            return;
+        }
+
+        // Iterative fixed-point provenance propagation
+        let mut changed = true;
+        let mut iterations = 0;
+        const MAX_ITERATIONS: usize = 32;
+
+        while changed && iterations < MAX_ITERATIONS {
+            changed = false;
+            iterations += 1;
+
+            for block in &func.blocks {
+                for instr in &block.instructions {
+                    match &instr.op {
+                        Op::Copy(src) | Op::ArcRetain { value: src } | Op::Cast { value: src, .. } => {
+                            if let Some(src_roots) = provenance.get(src).cloned() {
+                                let entry = provenance.entry(instr.result).or_default();
+                                for root in src_roots {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        Op::Phi(entries) => {
+                            let mut incoming = HashSet::new();
+                            for (_, val) in entries {
+                                if let Some(r) = provenance.get(val) {
+                                    incoming.extend(r.iter().copied());
+                                }
+                            }
+                            if !incoming.is_empty() {
+                                let entry = provenance.entry(instr.result).or_default();
+                                for root in incoming {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        Op::StoreLocal { name, value } => {
+                            if let Some(val_roots) = provenance.get(value).cloned() {
+                                let entry = local_provenance.entry(name.clone()).or_default();
+                                for root in val_roots {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        Op::LoadLocal(name) => {
+                            if let Some(loc_roots) = local_provenance.get(name).cloned() {
+                                let entry = provenance.entry(instr.result).or_default();
+                                for root in loc_roots {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        Op::GetField { object, .. } | Op::GetIndex { object, .. } => {
+                            if let Some(obj_roots) = provenance.get(object).cloned() {
+                                let entry = provenance.entry(instr.result).or_default();
+                                for root in obj_roots {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        Op::StructConstruct { fields, .. } => {
+                            let mut incoming = HashSet::new();
+                            for (_, field_val) in fields {
+                                if let Some(r) = provenance.get(field_val) {
+                                    incoming.extend(r.iter().copied());
+                                }
+                            }
+                            if !incoming.is_empty() {
+                                let entry = provenance.entry(instr.result).or_default();
+                                for root in incoming {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        Op::EnumConstruct { payload, .. } => {
+                            let mut incoming = HashSet::new();
+                            for p_val in payload {
+                                if let Some(r) = provenance.get(p_val) {
+                                    incoming.extend(r.iter().copied());
+                                }
+                            }
+                            if !incoming.is_empty() {
+                                let entry = provenance.entry(instr.result).or_default();
+                                for root in incoming {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        Op::EnumPayload { value, .. } => {
+                            if let Some(val_roots) = provenance.get(value).cloned() {
+                                let entry = provenance.entry(instr.result).or_default();
+                                for root in val_roots {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        Op::StoreIndex { object, value, .. } => {
+                            if let Some(val_roots) = provenance.get(value).cloned() {
+                                let entry = provenance.entry(*object).or_default();
+                                for root in val_roots {
+                                    if entry.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Now verify escape invariants across all blocks and terminators
+        for block in &func.blocks {
+            if let Terminator::Return(ret_val) = &block.terminator {
+                if let Some(roots) = provenance.get(ret_val) {
+                    if !roots.is_empty() {
+                        errors.push(MirVerificationError::EscapingStackAllocation {
+                            value: *ret_val,
+                            in_block: block.id,
+                            reason: "escapes through function return".into(),
+                        });
+                    }
+                }
+            }
+
+            for instr in &block.instructions {
+                match &instr.op {
+                    Op::Call { callee, args } => {
+                        for arg in args {
+                            if let Some(roots) = provenance.get(arg) {
+                                if !roots.is_empty() {
+                                    errors.push(MirVerificationError::EscapingStackAllocation {
+                                        value: *arg,
+                                        in_block: block.id,
+                                        reason: format!("passed to external/unknown call `{}`", callee),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Op::EffectPerform { effect, operation, args } => {
+                        for arg in args {
+                            if let Some(roots) = provenance.get(arg) {
+                                if !roots.is_empty() {
+                                    errors.push(MirVerificationError::EscapingStackAllocation {
+                                        value: *arg,
+                                        in_block: block.id,
+                                        reason: format!("passed across effect boundary {}.{}", effect, operation),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Op::Phi(entries) => {
+                        let has_stack_input = entries
+                            .iter()
+                            .any(|(_, v)| provenance.get(v).is_some_and(|s| !s.is_empty()));
+                        let has_param_input = entries
+                            .iter()
+                            .any(|(_, v)| func.params.iter().any(|p| p.value == *v));
+                        if has_stack_input && has_param_input {
+                            errors.push(MirVerificationError::EscapingStackAllocation {
+                                value: instr.result,
+                                in_block: block.id,
+                                reason: "phi node merges stack allocation with external function parameter".into(),
+                            });
+                        }
+                    }
+                    Op::StoreIndex { object, value, .. } => {
+                        let is_param = func.params.iter().any(|p| p.value == *object);
+                        if is_param && provenance.get(value).is_some_and(|s| !s.is_empty()) {
+                            errors.push(MirVerificationError::EscapingStackAllocation {
+                                value: *value,
+                                in_block: block.id,
+                                reason: "stack allocation stored into external function parameter".into(),
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 }
@@ -722,6 +925,259 @@ mod tests {
             assert!(
                 errs.iter()
                     .any(|e| matches!(e, MirVerificationError::UseNotDominatedByDef { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn test_verifier_detects_aliased_return_escape() {
+        let b0 = BlockId(0);
+        let v_alloc = ValueId(0);
+        let v_copy = ValueId(1);
+
+        let func = MirFunction {
+            name: "test_aliased_return".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(1),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_alloc,
+                        ty: TypeId(1),
+                        op: Op::Alloca {
+                            name: "x".into(),
+                            ty: TypeId(1),
+                        },
+                    },
+                    Instruction {
+                        result: v_copy,
+                        ty: TypeId(1),
+                        op: Op::Copy(v_alloc),
+                    },
+                ],
+                terminator: Terminator::Return(v_copy),
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_err());
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::EscapingStackAllocation { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn test_verifier_detects_struct_field_escape() {
+        let b0 = BlockId(0);
+        let v_alloc = ValueId(0);
+        let v_struct = ValueId(1);
+
+        let func = MirFunction {
+            name: "test_struct_field_escape".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(2),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_alloc,
+                        ty: TypeId(1),
+                        op: Op::Alloca {
+                            name: "inner".into(),
+                            ty: TypeId(1),
+                        },
+                    },
+                    Instruction {
+                        result: v_struct,
+                        ty: TypeId(2),
+                        op: Op::StructConstruct {
+                            name: "Container".into(),
+                            fields: vec![("inner".into(), v_alloc)],
+                        },
+                    },
+                ],
+                terminator: Terminator::Return(v_struct),
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_err());
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::EscapingStackAllocation { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn test_verifier_detects_call_escape() {
+        let b0 = BlockId(0);
+        let v_alloc = ValueId(0);
+        let v_call = ValueId(1);
+
+        let func = MirFunction {
+            name: "test_call_escape".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(0),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_alloc,
+                        ty: TypeId(1),
+                        op: Op::Alloca {
+                            name: "buf".into(),
+                            ty: TypeId(1),
+                        },
+                    },
+                    Instruction {
+                        result: v_call,
+                        ty: TypeId(0),
+                        op: Op::Call {
+                            callee: "external_sink".into(),
+                            args: vec![v_alloc],
+                        },
+                    },
+                ],
+                terminator: Terminator::ReturnVoid,
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_err());
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::EscapingStackAllocation { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn test_verifier_detects_effect_escape() {
+        let b0 = BlockId(0);
+        let v_alloc = ValueId(0);
+        let v_eff = ValueId(1);
+
+        let func = MirFunction {
+            name: "test_effect_escape".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(0),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_alloc,
+                        ty: TypeId(1),
+                        op: Op::Alloca {
+                            name: "buf".into(),
+                            ty: TypeId(1),
+                        },
+                    },
+                    Instruction {
+                        result: v_eff,
+                        ty: TypeId(0),
+                        op: Op::EffectPerform {
+                            effect: "IO".into(),
+                            operation: "write".into(),
+                            args: vec![v_alloc],
+                        },
+                    },
+                ],
+                terminator: Terminator::ReturnVoid,
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_err());
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::EscapingStackAllocation { .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn test_verifier_detects_phi_param_merge_escape() {
+        let b0 = BlockId(0);
+        let b1 = BlockId(1);
+        let b2 = BlockId(2);
+        let v_param = ValueId(0);
+        let v_alloc = ValueId(1);
+        let v_phi = ValueId(2);
+
+        let func = MirFunction {
+            name: "test_phi_merge".into(),
+            generics: vec![],
+            params: vec![crate::ir::MirParam {
+                name: "p".into(),
+                value: v_param,
+                ty: TypeId(1),
+                gpu_abi: Default::default(),
+                memory_type: None,
+            }],
+            return_ty: TypeId(1),
+            entry: b0,
+            blocks: vec![
+                BasicBlock {
+                    id: b0,
+                    instructions: vec![Instruction {
+                        result: v_alloc,
+                        ty: TypeId(1),
+                        op: Op::Alloca {
+                            name: "local_x".into(),
+                            ty: TypeId(1),
+                        },
+                    }],
+                    terminator: Terminator::Jump(b1),
+                },
+                BasicBlock {
+                    id: b1,
+                    instructions: vec![Instruction {
+                        result: v_phi,
+                        ty: TypeId(1),
+                        op: Op::Phi(vec![(b0, v_alloc), (b2, v_param)]),
+                    }],
+                    terminator: Terminator::Return(v_phi),
+                },
+                BasicBlock {
+                    id: b2,
+                    instructions: vec![],
+                    terminator: Terminator::Jump(b1),
+                },
+            ],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_err());
+        if let Err(errs) = res {
+            assert!(
+                errs.iter()
+                    .any(|e| matches!(e, MirVerificationError::EscapingStackAllocation { .. }))
             );
         }
     }

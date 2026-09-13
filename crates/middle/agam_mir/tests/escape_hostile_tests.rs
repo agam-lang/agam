@@ -335,3 +335,494 @@ fn test_happy_path_temporary_promotion() {
 
     assert!(MirVerifier::verify_module(&module).is_ok());
 }
+
+#[test]
+fn test_ast_rewrite_arc_alloc_promoted_to_alloca_with_copy_and_release_removed() {
+    // Trivially droppable scalar primitive:
+    // ArcAlloc -> Alloca
+    // ArcRetain -> Copy
+    // ArcRelease -> removed entirely (no StackDrop needed)
+    let b0 = BlockId(0);
+    let v_alloc = ValueId(0);
+    let v_alias = ValueId(1);
+    let v_rel = ValueId(2);
+
+    let mut func = MirFunction {
+        name: "test_scalar_promote".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(0), // Unit
+        entry: b0,
+        blocks: vec![BasicBlock {
+            id: b0,
+            instructions: vec![
+                Instruction {
+                    result: v_alloc,
+                    ty: TypeId(1), // Int
+                    op: Op::ArcAlloc {
+                        name: "num".into(),
+                        ty: TypeId(1),
+                    },
+                },
+                Instruction {
+                    result: v_alias,
+                    ty: TypeId(1),
+                    op: Op::ArcRetain { value: v_alloc },
+                },
+                Instruction {
+                    result: v_rel,
+                    ty: TypeId(0),
+                    op: Op::ArcRelease { value: v_alias },
+                },
+            ],
+            terminator: Terminator::ReturnVoid,
+        }],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
+    assert!(changed, "Expected function to be transformed by rewrite_escape_and_promote");
+
+    // Check AST instruction sequence
+    let block = &func.blocks[0];
+    let mut found_alloca = false;
+    let mut found_copy = false;
+    let mut found_release = false;
+    let mut found_stack_drop = false;
+
+    for instr in &block.instructions {
+        match &instr.op {
+            Op::Alloca { name, ty } => {
+                assert_eq!(instr.result, v_alloc);
+                assert_eq!(name, "num");
+                assert_eq!(*ty, TypeId(1));
+                found_alloca = true;
+            }
+            Op::Copy(src) => {
+                assert_eq!(instr.result, v_alias);
+                assert_eq!(*src, v_alloc);
+                found_copy = true;
+            }
+            Op::ArcRelease { .. } => {
+                found_release = true;
+            }
+            Op::StackDrop { .. } => {
+                found_stack_drop = true;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(found_alloca, "ArcAlloc must be replaced with Alloca in AST");
+    assert!(found_copy, "ArcRetain must be replaced with Copy in AST");
+    assert!(!found_release, "ArcRelease must be removed from AST");
+    assert!(
+        !found_stack_drop,
+        "Primitive scalar must NOT emit StackDrop in AST"
+    );
+
+    assert!(
+        MirVerifier::verify_function(&func).is_ok(),
+        "Promoted function must satisfy MirVerifier"
+    );
+}
+
+#[test]
+fn test_ast_rewrite_non_trivial_aggregate_emits_stack_drop() {
+    // Non-trivial aggregate type:
+    // ArcAlloc -> Alloca
+    // ArcRelease -> removed and exactly one StackDrop { value: root } emitted before return
+    let b0 = BlockId(0);
+    let v_alloc = ValueId(0);
+    let v_rel = ValueId(1);
+    let non_trivial_ty = TypeId(25); // User struct / non-primitive
+
+    let mut func = MirFunction {
+        name: "test_aggregate_promote".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(0),
+        entry: b0,
+        blocks: vec![BasicBlock {
+            id: b0,
+            instructions: vec![
+                Instruction {
+                    result: v_alloc,
+                    ty: non_trivial_ty,
+                    op: Op::ArcAlloc {
+                        name: "agg".into(),
+                        ty: non_trivial_ty,
+                    },
+                },
+                Instruction {
+                    result: v_rel,
+                    ty: TypeId(0),
+                    op: Op::ArcRelease { value: v_alloc },
+                },
+            ],
+            terminator: Terminator::ReturnVoid,
+        }],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
+    assert!(changed, "Expected rewrite_escape_and_promote to succeed");
+
+    let block = &func.blocks[0];
+    let mut found_alloca = false;
+    let mut found_release = false;
+    let mut stack_drops = Vec::new();
+
+    for instr in &block.instructions {
+        match &instr.op {
+            Op::Alloca { name, ty } => {
+                assert_eq!(name, "agg");
+                assert_eq!(*ty, non_trivial_ty);
+                found_alloca = true;
+            }
+            Op::ArcRelease { .. } => {
+                found_release = true;
+            }
+            Op::StackDrop { value } => {
+                stack_drops.push(*value);
+            }
+            _ => {}
+        }
+    }
+
+    assert!(found_alloca, "ArcAlloc must be replaced with Alloca");
+    assert!(!found_release, "ArcRelease must be removed from AST");
+    assert_eq!(
+        stack_drops.len(),
+        1,
+        "Exactly one StackDrop must be emitted on exit edge"
+    );
+    assert_eq!(
+        stack_drops[0], v_alloc,
+        "StackDrop must drop the root allocation"
+    );
+
+    assert!(
+        MirVerifier::verify_function(&func).is_ok(),
+        "Promoted function must satisfy MirVerifier"
+    );
+}
+
+#[test]
+fn test_ast_rewrite_partial_escape_branch_declines_promotion() {
+    // Allocation escapes on ONE branch of an if/else:
+    // b0 -> branch to b_ret (escapes) and b_drop (releases)
+    // Partial escapes MUST NOT partially promote: Op::ArcAlloc and Op::ArcRelease remain untouched.
+    let b0 = BlockId(0);
+    let b_ret = BlockId(1);
+    let b_drop = BlockId(2);
+
+    let v_alloc = ValueId(0);
+    let v_cond = ValueId(1);
+    let v_rel = ValueId(2);
+
+    let mut func = MirFunction {
+        name: "test_partial_escape".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(1),
+        entry: b0,
+        blocks: vec![
+            BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_alloc,
+                        ty: TypeId(1),
+                        op: Op::ArcAlloc {
+                            name: "part".into(),
+                            ty: TypeId(1),
+                        },
+                    },
+                    Instruction {
+                        result: v_cond,
+                        ty: TypeId(0),
+                        op: Op::ConstInt(1),
+                    },
+                ],
+                terminator: Terminator::Branch {
+                    condition: v_cond,
+                    then_block: b_ret,
+                    else_block: b_drop,
+                },
+            },
+            BasicBlock {
+                id: b_ret,
+                instructions: vec![],
+                terminator: Terminator::Return(v_alloc), // ESCAPES here!
+            },
+            BasicBlock {
+                id: b_drop,
+                instructions: vec![Instruction {
+                    result: v_rel,
+                    ty: TypeId(0),
+                    op: Op::ArcRelease { value: v_alloc },
+                }],
+                terminator: Terminator::ReturnVoid,
+            },
+        ],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
+    assert!(!changed, "Partial escape MUST decline promotion");
+
+    // Verify AST remains untouched
+    assert!(matches!(
+        func.blocks[0].instructions[0].op,
+        Op::ArcAlloc { .. }
+    ));
+    assert!(matches!(
+        func.blocks[2].instructions[0].op,
+        Op::ArcRelease { .. }
+    ));
+
+    assert!(MirVerifier::verify_function(&func).is_ok());
+}
+
+#[test]
+fn test_ast_rewrite_call_escape_declines_promotion() {
+    // Allocation passed to an unknown call:
+    // MUST decline promotion and leave ArcAlloc untouched
+    let b0 = BlockId(0);
+    let v_alloc = ValueId(0);
+    let v_call_res = ValueId(1);
+
+    let mut func = MirFunction {
+        name: "test_call_escape".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(0),
+        entry: b0,
+        blocks: vec![BasicBlock {
+            id: b0,
+            instructions: vec![
+                Instruction {
+                    result: v_alloc,
+                    ty: TypeId(1),
+                    op: Op::ArcAlloc {
+                        name: "called".into(),
+                        ty: TypeId(1),
+                    },
+                },
+                Instruction {
+                    result: v_call_res,
+                    ty: TypeId(0),
+                    op: Op::Call {
+                        callee: "opaque_external_function".into(),
+                        args: vec![v_alloc],
+                    },
+                },
+            ],
+            terminator: Terminator::ReturnVoid,
+        }],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
+    assert!(!changed, "Call escape MUST decline promotion");
+
+    assert!(matches!(
+        func.blocks[0].instructions[0].op,
+        Op::ArcAlloc { .. }
+    ));
+
+    assert!(MirVerifier::verify_function(&func).is_ok());
+}
+
+#[test]
+fn test_ast_rewrite_phi_merge_with_param_declines_promotion() {
+    // Phi node merges a local ArcAlloc with an incoming function parameter:
+    // MUST decline promotion
+    let b_entry = BlockId(0);
+    let b_alloc = BlockId(1);
+    let b_pass = BlockId(2);
+    let b_merge = BlockId(3);
+
+    let v_param = ValueId(0);
+    let v_cond = ValueId(1);
+    let v_alloc = ValueId(2);
+    let v_phi = ValueId(3);
+
+    let mut func = MirFunction {
+        name: "test_phi_param_merge".into(),
+        generics: vec![],
+        params: vec![MirParam {
+            name: "input".into(),
+            value: v_param,
+            ty: TypeId(1),
+            gpu_abi: Default::default(),
+            memory_type: None,
+        }],
+        return_ty: TypeId(1),
+        entry: b_entry,
+        blocks: vec![
+            BasicBlock {
+                id: b_entry,
+                instructions: vec![Instruction {
+                    result: v_cond,
+                    ty: TypeId(0),
+                    op: Op::ConstInt(1),
+                }],
+                terminator: Terminator::Branch {
+                    condition: v_cond,
+                    then_block: b_alloc,
+                    else_block: b_pass,
+                },
+            },
+            BasicBlock {
+                id: b_alloc,
+                instructions: vec![Instruction {
+                    result: v_alloc,
+                    ty: TypeId(1),
+                    op: Op::ArcAlloc {
+                        name: "phi_local".into(),
+                        ty: TypeId(1),
+                    },
+                }],
+                terminator: Terminator::Jump(b_merge),
+            },
+            BasicBlock {
+                id: b_pass,
+                instructions: vec![],
+                terminator: Terminator::Jump(b_merge),
+            },
+            BasicBlock {
+                id: b_merge,
+                instructions: vec![Instruction {
+                    result: v_phi,
+                    ty: TypeId(1),
+                    op: Op::Phi(vec![(b_alloc, v_alloc), (b_pass, v_param)]),
+                }],
+                terminator: Terminator::Return(v_phi),
+            },
+        ],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
+    assert!(!changed, "Phi merge with param MUST decline promotion");
+
+    // In b_alloc, instruction 0 must remain ArcAlloc
+    assert!(matches!(
+        func.blocks[1].instructions[0].op,
+        Op::ArcAlloc { .. }
+    ));
+
+    assert!(MirVerifier::verify_function(&func).is_ok());
+}
+
+#[test]
+fn test_verifier_adversarial_evasion_rejected() {
+    // Feed adversarial MIR directly to MirVerifier to prove that
+    // deep stack provenance checks cannot be evaded.
+    let b0 = BlockId(0);
+    let v_alloc = ValueId(0);
+    let v_alias1 = ValueId(1);
+    let v_alias2 = ValueId(2);
+
+    // Evasion attempt 1: Copy-chain alias returned
+    let bad_ret_func = MirFunction {
+        name: "bad_ret".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(1),
+        entry: b0,
+        blocks: vec![BasicBlock {
+            id: b0,
+            instructions: vec![
+                Instruction {
+                    result: v_alloc,
+                    ty: TypeId(1),
+                    op: Op::Alloca {
+                        name: "s".into(),
+                        ty: TypeId(1),
+                    },
+                },
+                Instruction {
+                    result: v_alias1,
+                    ty: TypeId(1),
+                    op: Op::Copy(v_alloc),
+                },
+                Instruction {
+                    result: v_alias2,
+                    ty: TypeId(1),
+                    op: Op::Copy(v_alias1),
+                },
+            ],
+            terminator: Terminator::Return(v_alias2),
+        }],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let err = MirVerifier::verify_function(&bad_ret_func).err();
+    assert!(
+        err.is_some(),
+        "MirVerifier MUST reject returning an aliased stack allocation"
+    );
+    if let Some(e) = err {
+        assert!(
+            format!("{:?}", e).contains("EscapingStackAllocation"),
+            "Error must be EscapingStackAllocation: {:?}",
+            e
+        );
+    }
+
+    // Evasion attempt 2: Stack allocation smuggled into struct field and returned
+    let v_struct = ValueId(3);
+    let bad_struct_func = MirFunction {
+        name: "bad_struct".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(2),
+        entry: b0,
+        blocks: vec![BasicBlock {
+            id: b0,
+            instructions: vec![
+                Instruction {
+                    result: v_alloc,
+                    ty: TypeId(1),
+                    op: Op::Alloca {
+                        name: "s".into(),
+                        ty: TypeId(1),
+                    },
+                },
+                Instruction {
+                    result: v_struct,
+                    ty: TypeId(2),
+                    op: Op::StructConstruct {
+                        name: "Wrapper".into(),
+                        fields: vec![("f".into(), v_alloc)],
+                    },
+                },
+            ],
+            terminator: Terminator::Return(v_struct),
+        }],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let err2 = MirVerifier::verify_function(&bad_struct_func).err();
+    assert!(
+        err2.is_some(),
+        "MirVerifier MUST reject returning a struct wrapping a stack allocation"
+    );
+    if let Some(e) = err2 {
+        assert!(
+            format!("{:?}", e).contains("EscapingStackAllocation"),
+            "Error must be EscapingStackAllocation: {:?}",
+            e
+        );
+    }
+}

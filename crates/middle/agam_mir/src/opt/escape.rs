@@ -13,7 +13,8 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::ir::{MirFunction, MirModule, Op, Terminator, ValueId};
+use crate::ir::{Instruction, MirFunction, MirModule, Op, Terminator, ValueId};
+use agam_sema::symbol::TypeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EscapeState {
@@ -84,14 +85,318 @@ pub fn run_escape_and_promote(
     )
 }
 
+/// Determines if a TypeId requires destructor execution on stack drop.
+/// Primitive scalars (Unit, Bool, Char, Int, UInt, Float, Never) are trivially droppable.
+/// Aggregates (Str, Structs, Enums, Tensors) require destruction.
+pub fn type_needs_destruction(ty: TypeId) -> bool {
+    if let Some(builtin) = agam_sema::types::builtin_type_by_id(ty) {
+        match builtin {
+            agam_sema::types::Type::Unit
+            | agam_sema::types::Type::Bool
+            | agam_sema::types::Type::Char
+            | agam_sema::types::Type::Int(_)
+            | agam_sema::types::Type::UInt(_)
+            | agam_sema::types::Type::Float(_)
+            | agam_sema::types::Type::Never => false,
+            _ => true,
+        }
+    } else {
+        true
+    }
+}
+
+/// Intraprocedural whole-function, all-paths escape classification and atomic MIR rewrite.
+///
+/// If an `ArcAlloc` is proven NoEscape on every reachable path:
+/// - `ArcAlloc` is rewritten to `Alloca`
+/// - `ArcRetain` in its alias set is rewritten to `Copy`
+/// - `ArcRelease` in its alias set is removed, and if `ty` needs destruction, exactly one
+///   `StackDrop` is inserted on the cleanup edge before exit
+///
+/// Any partial escape, call escape, or mixed alias declines all promotion.
+/// Returns true if any MIR mutations were made.
+pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityInfo) -> bool {
+    // 1. Collect all ArcAlloc instructions
+    let mut arc_allocs: HashMap<ValueId, (String, TypeId)> = HashMap::new();
+    for block in &func.blocks {
+        for instr in &block.instructions {
+            if let Op::ArcAlloc { name, ty } = &instr.op {
+                arc_allocs.insert(instr.result, (name.clone(), *ty));
+            }
+        }
+    }
+
+    if arc_allocs.is_empty() {
+        return false;
+    }
+
+    // 2. Build alias sets and track aggregate containment for each ArcAlloc root
+    let mut alias_sets: HashMap<ValueId, HashSet<ValueId>> = HashMap::new();
+    let mut mixed_roots: HashSet<ValueId> = HashSet::new();
+
+    for &root in arc_allocs.keys() {
+        let mut set = HashSet::new();
+        set.insert(root);
+        alias_sets.insert(root, set);
+    }
+
+    let mut local_aliases: HashMap<String, HashSet<ValueId>> = HashMap::new();
+    let mut aggregate_contains: HashMap<ValueId, HashSet<ValueId>> = HashMap::new();
+
+    let mut changed = true;
+    let mut iterations = 0;
+    const MAX_PROPAGATION_ITERATIONS: usize = 32;
+
+    while changed && iterations < MAX_PROPAGATION_ITERATIONS {
+        changed = false;
+        iterations += 1;
+
+        for block in &func.blocks {
+            for instr in &block.instructions {
+                match &instr.op {
+                    Op::Copy(src) | Op::ArcRetain { value: src } | Op::Cast { value: src, .. } => {
+                        for aliases in alias_sets.values_mut() {
+                            if aliases.contains(src) && aliases.insert(instr.result) {
+                                changed = true;
+                            }
+                        }
+                    }
+                    Op::StoreLocal { name, value } => {
+                        for (&root, aliases) in &alias_sets {
+                            if aliases.contains(value) {
+                                let loc_set = local_aliases.entry(name.clone()).or_default();
+                                if loc_set.insert(root) {
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                    Op::LoadLocal(name) => {
+                        if let Some(roots) = local_aliases.get(name) {
+                            for &root in roots {
+                                if let Some(aliases) = alias_sets.get_mut(&root) {
+                                    if aliases.insert(instr.result) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Op::StructConstruct { fields, .. } => {
+                        for (_, f_val) in fields {
+                            for (&root, aliases) in &alias_sets {
+                                if aliases.contains(f_val) {
+                                    let agg = aggregate_contains.entry(instr.result).or_default();
+                                    if agg.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Op::EnumConstruct { payload, .. } => {
+                        for p_val in payload {
+                            for (&root, aliases) in &alias_sets {
+                                if aliases.contains(p_val) {
+                                    let agg = aggregate_contains.entry(instr.result).or_default();
+                                    if agg.insert(root) {
+                                        changed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Op::Phi(entries) => {
+                        for (&root, aliases) in alias_sets.iter_mut() {
+                            let match_count = entries.iter().filter(|(_, v)| aliases.contains(v)).count();
+                            if match_count > 0 {
+                                let has_param = entries.iter().any(|(_, v)| func.params.iter().any(|p| p.value == *v));
+                                let has_non_matching = entries.iter().any(|(_, v)| !aliases.contains(v));
+                                if has_param || has_non_matching {
+                                    mixed_roots.insert(root);
+                                } else if aliases.insert(instr.result) {
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // 3. Whole-function, all-paths escape classification
+    let mut escaping_roots: HashSet<ValueId> = mixed_roots;
+
+    for block in &func.blocks {
+        // Return escape
+        if let Terminator::Return(ret_val) = &block.terminator {
+            for (&root, aliases) in &alias_sets {
+                if aliases.contains(ret_val) || aggregate_contains.get(ret_val).is_some_and(|s| s.contains(&root)) {
+                    escaping_roots.insert(root);
+                }
+            }
+        }
+
+        // Instruction escapes
+        for instr in &block.instructions {
+            match &instr.op {
+                Op::Call { callee, args } => {
+                    let is_pure = purity.pure_functions.contains(callee);
+                    if !is_pure {
+                        for arg in args {
+                            for (&root, aliases) in &alias_sets {
+                                if aliases.contains(arg) || aggregate_contains.get(arg).is_some_and(|s| s.contains(&root)) {
+                                    escaping_roots.insert(root);
+                                }
+                            }
+                        }
+                    }
+                }
+                Op::EffectPerform { args, .. } => {
+                    for arg in args {
+                        for (&root, aliases) in &alias_sets {
+                            if aliases.contains(arg) || aggregate_contains.get(arg).is_some_and(|s| s.contains(&root)) {
+                                escaping_roots.insert(root);
+                            }
+                        }
+                    }
+                }
+                Op::HandleWith { .. } => {
+                    // Conservatively escape
+                    for &root in arc_allocs.keys() {
+                        escaping_roots.insert(root);
+                    }
+                }
+                Op::StoreIndex { object, value, .. } => {
+                    let is_param = func.params.iter().any(|p| p.value == *object);
+                    if is_param {
+                        for (&root, aliases) in &alias_sets {
+                            if aliases.contains(value) {
+                                escaping_roots.insert(root);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // 4. Eligible non-escaping roots to promote
+    let promotable_roots: Vec<ValueId> = arc_allocs
+        .keys()
+        .copied()
+        .filter(|r| !escaping_roots.contains(r))
+        .collect();
+
+    if promotable_roots.is_empty() {
+        return false;
+    }
+
+    // 5. Atomic rewrite
+    let mut next_val_id = func
+        .blocks
+        .iter()
+        .flat_map(|b| b.instructions.iter().map(|i| i.result.0))
+        .chain(func.params.iter().map(|p| p.value.0))
+        .max()
+        .unwrap_or(0)
+        + 1;
+
+    let mut any_mutated = false;
+
+    for &root in &promotable_roots {
+        let (name, ty) = match arc_allocs.get(&root) {
+            Some(info) => (info.0.clone(), info.1),
+            None => continue,
+        };
+        let aliases = match alias_sets.get(&root) {
+            Some(a) => a.clone(),
+            None => continue,
+        };
+
+        let needs_drop = type_needs_destruction(ty);
+        let mut drop_inserted = false;
+
+        for block in &mut func.blocks {
+            let original_instructions = std::mem::take(&mut block.instructions);
+            let mut rewritten_instructions = Vec::with_capacity(original_instructions.len());
+
+            for mut instr in original_instructions {
+                if instr.result == root && matches!(instr.op, Op::ArcAlloc { .. }) {
+                    instr.op = Op::Alloca {
+                        name: name.clone(),
+                        ty,
+                    };
+                    rewritten_instructions.push(instr);
+                    any_mutated = true;
+                } else if let Op::ArcRetain { value } = &instr.op {
+                    if aliases.contains(value) {
+                        instr.op = Op::Copy(*value);
+                        rewritten_instructions.push(instr);
+                        any_mutated = true;
+                    } else {
+                        rewritten_instructions.push(instr);
+                    }
+                } else if let Op::ArcRelease { value } = &instr.op {
+                    if aliases.contains(value) {
+                        any_mutated = true;
+                        // If this type needs destruction and we haven't inserted StackDrop yet,
+                        // replace this release with StackDrop
+                        if needs_drop && !drop_inserted {
+                            rewritten_instructions.push(Instruction {
+                                result: ValueId(next_val_id),
+                                ty: TypeId(0),
+                                op: Op::StackDrop { value: root },
+                            });
+                            next_val_id += 1;
+                            drop_inserted = true;
+                        }
+                        // Otherwise omitted
+                    } else {
+                        rewritten_instructions.push(instr);
+                    }
+                } else {
+                    rewritten_instructions.push(instr);
+                }
+            }
+
+            // If this block is an exit block and needs drop wasn't inserted yet
+            if needs_drop && !drop_inserted {
+                let is_exit = matches!(block.terminator, Terminator::Return(_) | Terminator::ReturnVoid);
+                if is_exit {
+                    rewritten_instructions.push(Instruction {
+                        result: ValueId(next_val_id),
+                        ty: TypeId(0),
+                        op: Op::StackDrop { value: root },
+                    });
+                    next_val_id += 1;
+                    drop_inserted = true;
+                    any_mutated = true;
+                }
+            }
+
+            block.instructions = rewritten_instructions;
+        }
+    }
+
+    any_mutated
+}
+
 fn analyze_and_mutate_function_escape(
     func: &mut MirFunction,
     purity: &CalleePurityInfo,
 ) -> (FunctionEscapeSummary, FunctionPromotionSummary) {
+    // 1. Run rewrite_escape_and_promote on ArcAllocs if any exist
+    let _mutated = rewrite_escape_and_promote(func, purity);
+
+    // 2. Compute value_escapes and summary for reporting
     let mut value_escapes: HashMap<ValueId, EscapeState> = HashMap::new();
     let mut allocations: HashSet<ValueId> = HashSet::new();
 
-    // 1. Collect all local allocation sites & parameters
+    // Collect all local allocation sites & parameters
     for param in &func.params {
         // Parameters arrive from caller: by default ArgEscape unless mutated/stored
         value_escapes.insert(param.value, EscapeState::ArgEscape);
@@ -100,7 +405,7 @@ fn analyze_and_mutate_function_escape(
     for block in &func.blocks {
         for instr in &block.instructions {
             match &instr.op {
-                Op::Alloca { .. } | Op::StructConstruct { .. } | Op::EnumConstruct { .. } => {
+                Op::Alloca { .. } | Op::ArcAlloc { .. } | Op::StructConstruct { .. } | Op::EnumConstruct { .. } => {
                     allocations.insert(instr.result);
                     value_escapes.insert(instr.result, EscapeState::NoEscape);
                 }
@@ -117,7 +422,7 @@ fn analyze_and_mutate_function_escape(
         }
     }
 
-    // 2. Fixed-point iterative escape propagation
+    // Fixed-point iterative escape propagation
     let mut changed = true;
     let mut iteration = 0;
     const MAX_PROPAGATION_ITERATIONS: usize = 32;
@@ -168,7 +473,6 @@ fn analyze_and_mutate_function_escape(
                         }
                     }
                     Op::StoreLocal { value, .. } => {
-                        // Storing to local variable keeps current local state unless local escapes
                         let val_esc = value_escapes.entry(*value).or_insert(EscapeState::NoEscape);
                         if *val_esc < EscapeState::NoEscape {
                             *val_esc = EscapeState::NoEscape;
@@ -188,7 +492,6 @@ fn analyze_and_mutate_function_escape(
                         }
                     }
                     Op::EffectPerform { args, .. } => {
-                        // Effect boundaries escape globally (handled by caller/effect runtime)
                         for arg in args {
                             let cur = value_escapes.entry(*arg).or_insert(EscapeState::NoEscape);
                             if *cur < EscapeState::GlobalEscape {
@@ -203,7 +506,7 @@ fn analyze_and_mutate_function_escape(
         }
     }
 
-    // 3. Classify promotions and graceful fallbacks
+    // Classify promotions and graceful fallbacks
     let mut non_escaping_allocations = Vec::new();
     let mut promoted_locals = Vec::new();
     let mut skipped = Vec::new();
