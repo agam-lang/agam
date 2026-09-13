@@ -15,8 +15,10 @@ use std::ffi::{CStr, CString, c_char};
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+use agam_errors::NyayaProof;
 use agam_mir::analysis::{
     CallCacheAnalysis, CallCacheMode as MirCallCacheMode, CallCacheRejectReason, CallCacheRequest,
 };
@@ -137,6 +139,48 @@ impl Default for JitOptions {
             call_cache_warmup: DEFAULT_CALL_CACHE_WARMUP,
         }
     }
+}
+
+pub static SYSCALL_WARNING_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Query the total number of times `Op::Syscall` fallback warning has been emitted in JIT compilation.
+pub fn syscall_warning_count() -> usize {
+    SYSCALL_WARNING_COUNT.load(Ordering::Relaxed)
+}
+
+/// Constructs the canonical Nyāya 4-part proof for an unsupported `Op::Syscall` in JIT mode.
+pub fn jit_syscall_nyaya_proof() -> NyayaProof {
+    NyayaProof::new(
+        "Op::Syscall instruction encountered during Cranelift JIT compilation",
+        "Cranelift JIT engine cannot emit direct inline assembly or pin native syscall machine registers",
+        Some(
+            "Compile with the LLVM AOT backend (`agamc build --backend llvm` or `agamc run --backend llvm`) for native syscall execution",
+        ),
+        "Direct kernel transitions (Op::Syscall) require target-specific machine register constraints provided by LLVM AOT",
+    )
+}
+
+/// Formats the complete Nyāya-structured diagnostic warning string for JIT syscall fallback.
+pub fn format_jit_syscall_warning() -> String {
+    let proof = jit_syscall_nyaya_proof();
+    format!(
+        "warning: Op::Syscall is unsupported in Cranelift JIT mode\n\
+           = note: direct system calls require the LLVM AOT backend\n\
+         --- Nyāya 4-Part Proof (Nyāya-śāstra) ---\n\
+           [Fact / Pratijñā]   {}\n\
+           [Reason / Hetu]    {}\n\
+           [Fix / Udāharaṇa]  {}\n\
+           [Law / Nigamana]   {}",
+        proof.fact,
+        proof.reason,
+        proof.fix.as_deref().unwrap_or(""),
+        proof.law
+    )
+}
+
+fn emit_jit_syscall_warning() {
+    eprintln!("{}", format_jit_syscall_warning());
+    SYSCALL_WARNING_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1249,14 +1293,17 @@ impl AgamJit {
                     pointer_type,
                 )
             }
-            Op::Syscall { .. } => Ok(default_value(
-                builder,
-                JitType::Int {
-                    bits: 64,
-                    signed: true,
-                },
-                pointer_type,
-            )),
+            Op::Syscall { .. } => {
+                emit_jit_syscall_warning();
+                Ok(default_value(
+                    builder,
+                    JitType::Int {
+                        bits: 64,
+                        signed: true,
+                    },
+                    pointer_type,
+                ))
+            }
         }
     }
 
@@ -5225,5 +5272,58 @@ fn main() -> i32:
             .expect("expected an optimized victim");
         assert_eq!(victim.function_index, 0);
         assert_eq!(victim.key, cold_key);
+    }
+
+    #[test]
+    fn test_jit_syscall_warning_diagnostic_and_nyaya_proof() {
+        let proof = jit_syscall_nyaya_proof();
+        assert!(proof.fact.contains("Op::Syscall"));
+        assert!(proof.reason.contains("Cranelift"));
+        assert!(proof.law.contains("LLVM"));
+        assert!(proof.fix.is_some());
+        let formatted = format_jit_syscall_warning();
+        assert!(formatted.contains("[Fact / Pratijñā]"));
+        assert!(formatted.contains("[Reason / Hetu]"));
+        assert!(formatted.contains("[Fix / Udāharaṇa]"));
+        assert!(formatted.contains("[Law / Nigamana]"));
+        assert!(formatted.contains("Op::Syscall"));
+        assert!(formatted.contains("LLVM AOT"));
+    }
+
+    #[test]
+    fn test_jit_syscall_op_warning_fires_on_compilation() {
+        let before_count = syscall_warning_count();
+        let module = manual_module(vec![manual_function(
+            "main",
+            i32_ty(),
+            vec![BasicBlock {
+                id: BlockId(0),
+                instructions: vec![
+                    Instruction {
+                        result: ValueId(0),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(1),
+                    },
+                    Instruction {
+                        result: ValueId(1),
+                        ty: i32_ty(),
+                        op: Op::Syscall {
+                            number: ValueId(0),
+                            args: vec![],
+                            dst: ValueId(1),
+                        },
+                    },
+                ],
+                terminator: Terminator::Return(ValueId(1)),
+            }],
+        )]);
+
+        let compiled = CompiledJitModule::compile(&module, JitOptions::default());
+        assert!(compiled.is_ok());
+        assert!(syscall_warning_count() > before_count);
+        if let Ok(c) = compiled {
+            let res = c.run_function("main", &[]);
+            assert_eq!(res, Ok(JitValue::Int(0)));
+        }
     }
 }

@@ -92,6 +92,10 @@ pub struct PalTcpListener {
 
 impl PalTcpListener {
     /// Bind a non-blocking TCP listener to the specified address.
+    ///
+    /// Note: Address reuse (`SO_REUSEADDR`) is automatically configured by Rust's
+    /// standard library before binding on POSIX platforms (preventing `TIME_WAIT` collisions),
+    /// while Windows uses `SO_EXCLUSIVEADDRUSE` by default to prevent socket hijacking.
     pub fn bind(addr: SocketAddr) -> Result<Self, PalNetError> {
         let listener = TcpListener::bind(addr).map_err(|e| {
             PalNetError::from_io(format!("Failed to bind TCP listener to {}", addr), e)
@@ -141,13 +145,6 @@ impl PalTcpListener {
         self.inner.set_nonblocking(nonblocking).map_err(|e| {
             PalNetError::from_io("Failed to configure non-blocking state on TCP listener", e)
         })
-    }
-
-    /// Enable address reuse (`SO_REUSEADDR`).
-    pub fn set_reuse_addr(&self, reuse: bool) -> Result<(), PalNetError> {
-        let _ = reuse;
-        // SO_REUSEADDR is handled at socket creation or standard listener options
-        Ok(())
     }
 
     /// Return the raw OS handle (descriptor/socket) for registration in an `EventDemuxer`.
@@ -516,13 +513,13 @@ mod tests {
     }
 
     #[test]
-    fn test_socket_options_nodelay_and_reuse() {
+    fn test_socket_options_nodelay_and_nonblocking() {
         let addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let listener = match PalTcpListener::bind(addr) {
             Ok(l) => l,
             Err(_) => return,
         };
-        assert!(listener.set_reuse_addr(true).is_ok());
+        assert!(listener.set_nonblocking(true).is_ok());
         let bound = listener.local_addr();
 
         let handle = std::thread::spawn(move || listener.accept());
