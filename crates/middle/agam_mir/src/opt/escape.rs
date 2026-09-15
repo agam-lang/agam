@@ -285,16 +285,12 @@ pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityI
     }
 
     // 4. Eligible non-escaping roots to promote:
-    // Safety Invariant (Option b): In Phase 1, we strictly restrict promotion to
-    // trivially droppable types (primitives where type_needs_destruction(ty) == false).
-    // Non-trivial aggregates that require destructors are deferred to Phase 2, when
-    // real destructor drop-glue is implemented across all 3 emitters (LLVM, C, JIT)
-    // and post-dominator cleanup edges are computed. This guarantees that non-trivial
-    // aggregates remain on the heap where existing ArcRelease triggers destructors,
-    // preventing silent destructor omission.
+    // Non-escaping ArcAllocs are promoted to stack Allocas.
+    // Non-trivial aggregates (type_needs_destruction(ty) == true) have Op::StackDrop
+    // emitted along post-dominating cleanup edges (join blocks, exit paths, and loop latches).
     let promotable_roots: Vec<ValueId> = arc_allocs
         .iter()
-        .filter(|(r, (_, ty))| !escaping_roots.contains(r) && !type_needs_destruction(*ty))
+        .filter(|(r, _)| !escaping_roots.contains(r))
         .map(|(r, _)| *r)
         .collect();
 
@@ -302,8 +298,67 @@ pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityI
         return false;
     }
 
-    // 5. Atomic rewrite
+    // 5. CFG & Dominator analysis for cleanup edge placement
+    let cfg = crate::analysis::ControlFlowGraph::build(func);
+    let rpo = crate::analysis::ReversePostOrder::build(func, &cfg);
+    let dom_tree = crate::analysis::DominatorTree::build(func, &cfg, &rpo);
+    let pdt = crate::analysis::PostDominatorTree::build(func, &cfg);
+    let loop_forest = crate::analysis::LoopForest::build(func, &cfg, &dom_tree);
+
+    // Locate the allocation block for each root
+    let mut alloc_blocks: HashMap<ValueId, crate::ir::BlockId> = HashMap::new();
+    for block in &func.blocks {
+        for instr in &block.instructions {
+            if arc_allocs.contains_key(&instr.result) {
+                alloc_blocks.insert(instr.result, block.id);
+            }
+        }
+    }
+
+    // Determine cleanup blocks for each non-trivial promoted root
+    let mut root_cleanup_blocks: HashMap<ValueId, Vec<crate::ir::BlockId>> = HashMap::new();
+    for &root in &promotable_roots {
+        let (_, ty) = match arc_allocs.get(&root) {
+            Some(info) => info,
+            None => continue,
+        };
+        if type_needs_destruction(*ty) {
+            if let Some(&alloc_block) = alloc_blocks.get(&root) {
+                // If allocation is inside a natural loop, drop before loop latches
+                let mut cleanups = Vec::new();
+                if let Some(lp) = loop_forest.loops.iter().find(|l| l.blocks.contains(&alloc_block)) {
+                    for &(latch, _) in &lp.back_edges {
+                        cleanups.push(latch);
+                    }
+                    for &exit in &pdt.exit_blocks {
+                        if dom_tree.dominates(alloc_block, exit) {
+                            cleanups.push(exit);
+                        }
+                    }
+                } else {
+                    cleanups = pdt.find_cleanup_blocks(alloc_block, func);
+                }
+                // Verify SSA dominance invariant: alloc_block must dominate all cleanup blocks
+                cleanups.retain(|&b| dom_tree.dominates(alloc_block, b));
+                cleanups.sort_by_key(|b| b.0);
+                cleanups.dedup();
+                root_cleanup_blocks.insert(root, cleanups);
+            }
+        }
+    }
+
+    // 6. Atomic rewrite
     let mut any_mutated = false;
+
+    // Find next fresh ValueId for new StackDrop instructions
+    let mut next_val_id = func
+        .blocks
+        .iter()
+        .flat_map(|b| b.instructions.iter())
+        .map(|i| i.result.0)
+        .max()
+        .unwrap_or(0)
+        + 1;
 
     for &root in &promotable_roots {
         let (name, ty) = match arc_allocs.get(&root) {
@@ -337,7 +392,7 @@ pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityI
                     }
                 } else if let Op::ArcRelease { value } = &instr.op {
                     if aliases.contains(value) {
-                        // Trivially droppable types need no destructor: release is removed entirely.
+                        // ArcRelease eliminated in favor of StackDrop
                         any_mutated = true;
                     } else {
                         rewritten_instructions.push(instr);
@@ -348,6 +403,24 @@ pub fn rewrite_escape_and_promote(func: &mut MirFunction, purity: &CalleePurityI
             }
 
             block.instructions = rewritten_instructions;
+        }
+
+        // Insert Op::StackDrop at designated cleanup blocks
+        if let Some(cleanups) = root_cleanup_blocks.get(&root) {
+            for &clean_block_id in cleanups {
+                for block in &mut func.blocks {
+                    if block.id == clean_block_id {
+                        block.instructions.push(crate::ir::Instruction {
+                            result: ValueId(next_val_id),
+                            ty: TypeId(0),
+                            op: Op::StackDrop { value: root },
+                        });
+                        next_val_id += 1;
+                        any_mutated = true;
+                        break;
+                    }
+                }
+            }
         }
     }
 

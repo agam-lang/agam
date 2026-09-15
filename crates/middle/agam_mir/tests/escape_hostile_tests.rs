@@ -429,18 +429,17 @@ fn test_ast_rewrite_arc_alloc_promoted_to_alloca_with_copy_and_release_removed()
 }
 
 #[test]
-fn test_ast_rewrite_non_trivial_aggregate_declines_promotion_until_drop_glue_available() {
-    // Safety Invariant (Option b):
-    // Non-trivial aggregate type needing destruction MUST decline stack promotion
-    // in Phase 1 until real drop glue is implemented across all 3 emitters.
-    // It remains ArcAlloc + ArcRelease so that ARC runtime drops are not bypassed.
+fn test_ast_rewrite_non_trivial_aggregate_emits_stack_drop() {
+    // Phase 2 Drop Glue Invariant:
+    // Non-trivial aggregate type needing destruction IS promoted to stack Alloca,
+    // ArcRelease is eliminated, and Op::StackDrop is placed on the post-dominating cleanup edge.
     let b0 = BlockId(0);
     let v_alloc = ValueId(0);
     let v_rel = ValueId(1);
     let non_trivial_ty = TypeId(25); // User struct / non-primitive
 
     let mut func = MirFunction {
-        name: "test_aggregate_preserve".into(),
+        name: "test_aggregate_promote_drop".into(),
         generics: vec![],
         params: vec![],
         return_ty: TypeId(0),
@@ -470,23 +469,278 @@ fn test_ast_rewrite_non_trivial_aggregate_declines_promotion_until_drop_glue_ava
 
     let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
     assert!(
-        !changed,
-        "Non-trivial aggregate MUST decline stack promotion in Phase 1 to prevent silent destructor omission"
+        changed,
+        "Non-trivial aggregate MUST be promoted to stack in Phase 2"
     );
 
-    // Verify AST remains intact as ArcAlloc + ArcRelease
-    assert!(matches!(
-        func.blocks[0].instructions[0].op,
-        Op::ArcAlloc { .. }
-    ));
-    assert!(matches!(
-        func.blocks[0].instructions[1].op,
-        Op::ArcRelease { .. }
-    ));
+    // Verify ArcAlloc -> Alloca
+    assert!(
+        matches!(func.blocks[0].instructions[0].op, Op::Alloca { .. }),
+        "ArcAlloc must be rewritten to Alloca"
+    );
+
+    // Verify ArcRelease removed and StackDrop emitted
+    let mut found_stack_drop = false;
+    for instr in &func.blocks[0].instructions {
+        assert!(
+            !matches!(instr.op, Op::ArcRelease { .. }),
+            "ArcRelease must be eliminated"
+        );
+        if let Op::StackDrop { value } = &instr.op {
+            assert_eq!(*value, v_alloc);
+            found_stack_drop = true;
+        }
+    }
+    assert!(found_stack_drop, "Op::StackDrop MUST be emitted before ReturnVoid");
 
     assert!(
         MirVerifier::verify_function(&func).is_ok(),
-        "Unmodified function must satisfy MirVerifier"
+        "Promoted function must satisfy MirVerifier"
+    );
+}
+
+#[test]
+fn test_ast_rewrite_diamond_branch_join_emits_stack_drop() {
+    // Branch Merge (Diamond CFG):
+    // Allocation in B0 before branch. B0 -> B1 (then), B2 (else).
+    // B1 -> B3 (join), B2 -> B3 (join). B3 returns void.
+    // StackDrop must run exactly once in the common post-dominating join block B3.
+    let b0 = BlockId(0);
+    let b1 = BlockId(1);
+    let b2 = BlockId(2);
+    let b3 = BlockId(3);
+
+    let v_alloc = ValueId(0);
+    let v_cond = ValueId(1);
+    let non_trivial_ty = TypeId(25);
+
+    let mut func = MirFunction {
+        name: "test_diamond_cleanup".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(0),
+        entry: b0,
+        blocks: vec![
+            BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_alloc,
+                        ty: non_trivial_ty,
+                        op: Op::ArcAlloc {
+                            name: "agg".into(),
+                            ty: non_trivial_ty,
+                        },
+                    },
+                    Instruction {
+                        result: v_cond,
+                        ty: TypeId(0),
+                        op: Op::ConstInt(1),
+                    },
+                ],
+                terminator: Terminator::Branch {
+                    condition: v_cond,
+                    then_block: b1,
+                    else_block: b2,
+                },
+            },
+            BasicBlock {
+                id: b1,
+                instructions: vec![],
+                terminator: Terminator::Jump(b3),
+            },
+            BasicBlock {
+                id: b2,
+                instructions: vec![],
+                terminator: Terminator::Jump(b3),
+            },
+            BasicBlock {
+                id: b3,
+                instructions: vec![],
+                terminator: Terminator::ReturnVoid,
+            },
+        ],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
+    assert!(changed, "Diamond non-escaping aggregate must be promoted");
+
+    // Neither B1 nor B2 should have StackDrop
+    assert!(func.blocks[1].instructions.is_empty(), "B1 must have no drop");
+    assert!(func.blocks[2].instructions.is_empty(), "B2 must have no drop");
+
+    // B3 (the post-dominator) must have exactly one StackDrop
+    let b3_drops = func.blocks[3]
+        .instructions
+        .iter()
+        .filter(|i| matches!(i.op, Op::StackDrop { value } if value == v_alloc))
+        .count();
+    assert_eq!(b3_drops, 1, "Exactly one StackDrop must be in join block B3");
+
+    assert!(
+        MirVerifier::verify_function(&func).is_ok(),
+        "Promoted diamond function must satisfy MirVerifier"
+    );
+}
+
+#[test]
+fn test_ast_rewrite_early_return_emits_stack_drop_both_paths() {
+    // Multi-return CFG:
+    // Allocation in B0. B0 -> B1 (early return), B2 (early return).
+    // StackDrop must be emitted in both exit blocks before return.
+    let b0 = BlockId(0);
+    let b1 = BlockId(1);
+    let b2 = BlockId(2);
+
+    let v_alloc = ValueId(0);
+    let v_cond = ValueId(1);
+    let non_trivial_ty = TypeId(25);
+
+    let mut func = MirFunction {
+        name: "test_multi_exit_cleanup".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(0),
+        entry: b0,
+        blocks: vec![
+            BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: v_alloc,
+                        ty: non_trivial_ty,
+                        op: Op::ArcAlloc {
+                            name: "agg".into(),
+                            ty: non_trivial_ty,
+                        },
+                    },
+                    Instruction {
+                        result: v_cond,
+                        ty: TypeId(0),
+                        op: Op::ConstInt(1),
+                    },
+                ],
+                terminator: Terminator::Branch {
+                    condition: v_cond,
+                    then_block: b1,
+                    else_block: b2,
+                },
+            },
+            BasicBlock {
+                id: b1,
+                instructions: vec![],
+                terminator: Terminator::ReturnVoid,
+            },
+            BasicBlock {
+                id: b2,
+                instructions: vec![],
+                terminator: Terminator::ReturnVoid,
+            },
+        ],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
+    assert!(changed, "Multi-exit non-escaping aggregate must be promoted");
+
+    let b1_has_drop = func.blocks[1]
+        .instructions
+        .iter()
+        .any(|i| matches!(i.op, Op::StackDrop { value } if value == v_alloc));
+    let b2_has_drop = func.blocks[2]
+        .instructions
+        .iter()
+        .any(|i| matches!(i.op, Op::StackDrop { value } if value == v_alloc));
+
+    assert!(b1_has_drop, "Exit block B1 must contain StackDrop");
+    assert!(b2_has_drop, "Exit block B2 must contain StackDrop");
+
+    assert!(
+        MirVerifier::verify_function(&func).is_ok(),
+        "Promoted multi-exit function must satisfy MirVerifier"
+    );
+}
+
+#[test]
+fn test_ast_rewrite_loop_emits_stack_drop_before_latch() {
+    // Loop CFG:
+    // B0 (entry) -> B1 (header)
+    // B1 -> B2 (body), B3 (exit)
+    // B2 allocates non-trivial aggregate, then jumps to B1 (back-edge/latch)
+    // B3 returns void
+    // StackDrop must be placed inside B2 before back-edge to avoid leaking per iteration.
+    let b0 = BlockId(0);
+    let b1 = BlockId(1);
+    let b2 = BlockId(2);
+    let b3 = BlockId(3);
+
+    let v_alloc = ValueId(0);
+    let v_cond = ValueId(1);
+    let non_trivial_ty = TypeId(25);
+
+    let mut func = MirFunction {
+        name: "test_loop_cleanup".into(),
+        generics: vec![],
+        params: vec![],
+        return_ty: TypeId(0),
+        entry: b0,
+        blocks: vec![
+            BasicBlock {
+                id: b0,
+                instructions: vec![],
+                terminator: Terminator::Jump(b1),
+            },
+            BasicBlock {
+                id: b1,
+                instructions: vec![Instruction {
+                    result: v_cond,
+                    ty: TypeId(0),
+                    op: Op::ConstInt(1),
+                }],
+                terminator: Terminator::Branch {
+                    condition: v_cond,
+                    then_block: b2,
+                    else_block: b3,
+                },
+            },
+            BasicBlock {
+                id: b2,
+                instructions: vec![Instruction {
+                    result: v_alloc,
+                    ty: non_trivial_ty,
+                    op: Op::ArcAlloc {
+                        name: "loop_agg".into(),
+                        ty: non_trivial_ty,
+                    },
+                }],
+                terminator: Terminator::Jump(b1), // back-edge
+            },
+            BasicBlock {
+                id: b3,
+                instructions: vec![],
+                terminator: Terminator::ReturnVoid,
+            },
+        ],
+        target: Default::default(),
+        gpu_config: None,
+    };
+
+    let changed = escape::rewrite_escape_and_promote(&mut func, &CalleePurityInfo::default());
+    assert!(changed, "Loop body aggregate must be promoted");
+
+    // B2 (body/latch) must have StackDrop before the jump back to B1
+    let b2_has_drop = func.blocks[2]
+        .instructions
+        .iter()
+        .any(|i| matches!(i.op, Op::StackDrop { value } if value == v_alloc));
+    assert!(b2_has_drop, "Loop latch block B2 must contain StackDrop before back-edge");
+
+    assert!(
+        MirVerifier::verify_function(&func).is_ok(),
+        "Promoted loop function must satisfy MirVerifier"
     );
 }
 

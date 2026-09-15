@@ -676,6 +676,245 @@ impl DominatorTree {
     }
 }
 
+/// Virtual exit block ID representing the unique exit root of the reversed CFG.
+pub const VIRTUAL_EXIT: BlockId = BlockId(u32::MAX);
+
+/// Post-Dominator Tree computing immediate post-dominators (ipdom) and post-dominance queries
+/// using the Cooper-Harvey-Kennedy iterative algorithm on the reversed control-flow graph.
+#[derive(Clone, Debug)]
+pub struct PostDominatorTree {
+    pub exit_blocks: Vec<BlockId>,
+    pub ipdoms: HashMap<BlockId, BlockId>,
+    pub children: HashMap<BlockId, Vec<BlockId>>,
+    pub depths: HashMap<BlockId, usize>,
+}
+
+impl PostDominatorTree {
+    /// Compute post-dominators using Cooper-Harvey-Kennedy iterative algorithm on reverse CFG
+    /// with a virtual exit root.
+    pub fn build(func: &MirFunction, cfg: &ControlFlowGraph) -> Self {
+        // 1. Collect all exit blocks (terminators: Return, ReturnVoid)
+        let exit_blocks: Vec<BlockId> = func
+            .blocks
+            .iter()
+            .filter(|b| matches!(b.terminator, Terminator::Return(_) | Terminator::ReturnVoid))
+            .map(|b| b.id)
+            .collect();
+
+        // 2. Compute Reverse Postorder on the reverse CFG starting from VIRTUAL_EXIT.
+        // In the reverse CFG:
+        // - VIRTUAL_EXIT's successors are exit_blocks.
+        // - For any block B, its reverse successors are cfg.predecessors(B).
+        let mut visited = HashSet::new();
+        let mut post_order = Vec::new();
+
+        fn reverse_dfs(
+            node: BlockId,
+            cfg: &ControlFlowGraph,
+            exit_blocks: &[BlockId],
+            visited: &mut HashSet<BlockId>,
+            post_order: &mut Vec<BlockId>,
+        ) {
+            visited.insert(node);
+            if node == VIRTUAL_EXIT {
+                for &exit in exit_blocks {
+                    if !visited.contains(&exit) {
+                        reverse_dfs(exit, cfg, exit_blocks, visited, post_order);
+                    }
+                }
+            } else {
+                for &pred in cfg.predecessors(node) {
+                    if !visited.contains(&pred) {
+                        reverse_dfs(pred, cfg, exit_blocks, visited, post_order);
+                    }
+                }
+            }
+            post_order.push(node);
+        }
+
+        reverse_dfs(VIRTUAL_EXIT, cfg, &exit_blocks, &mut visited, &mut post_order);
+
+        // Also visit any blocks not reached from exits (e.g. infinite loops)
+        for block in &func.blocks {
+            if !visited.contains(&block.id) {
+                reverse_dfs(block.id, cfg, &exit_blocks, &mut visited, &mut post_order);
+            }
+        }
+
+        post_order.reverse();
+        let reverse_rpo = post_order;
+        let mut rpo_indices = HashMap::new();
+        for (idx, &block) in reverse_rpo.iter().enumerate() {
+            rpo_indices.insert(block, idx);
+        }
+
+        // 3. Cooper-Harvey-Kennedy iteration for post-dominators
+        let mut ipdoms: HashMap<BlockId, BlockId> = HashMap::new();
+        ipdoms.insert(VIRTUAL_EXIT, VIRTUAL_EXIT);
+
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for &block in reverse_rpo.iter().skip(1) {
+                // Reverse predecessors of `block`:
+                // If `block` is an exit block, VIRTUAL_EXIT is a reverse predecessor.
+                // Forward successors of `block` are also reverse predecessors.
+                let mut rev_preds: Vec<BlockId> = Vec::new();
+                if exit_blocks.contains(&block) {
+                    rev_preds.push(VIRTUAL_EXIT);
+                }
+                for &succ in cfg.successors(block) {
+                    rev_preds.push(succ);
+                }
+
+                let mut new_ipdom = match rev_preds.iter().find(|&&p| ipdoms.contains_key(&p)) {
+                    Some(&first_pred) => first_pred,
+                    None => continue,
+                };
+
+                for &other_pred in &rev_preds {
+                    if other_pred == new_ipdom || !ipdoms.contains_key(&other_pred) {
+                        continue;
+                    }
+                    new_ipdom = Self::intersect(new_ipdom, other_pred, &ipdoms, &rpo_indices);
+                }
+
+                if ipdoms.get(&block) != Some(&new_ipdom) {
+                    ipdoms.insert(block, new_ipdom);
+                    changed = true;
+                }
+            }
+        }
+
+        // 4. Build children and depths
+        let mut children: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+        for &block in &reverse_rpo {
+            children.entry(block).or_default();
+            if block != VIRTUAL_EXIT
+                && let Some(&parent) = ipdoms.get(&block)
+            {
+                children.entry(parent).or_default().push(block);
+            }
+        }
+
+        let mut depths = HashMap::new();
+        let mut queue = VecDeque::new();
+        depths.insert(VIRTUAL_EXIT, 0);
+        queue.push_back((VIRTUAL_EXIT, 0));
+
+        while let Some((curr, d)) = queue.pop_front() {
+            if let Some(kids) = children.get(&curr) {
+                for &kid in kids {
+                    depths.insert(kid, d + 1);
+                    queue.push_back((kid, d + 1));
+                }
+            }
+        }
+
+        Self {
+            exit_blocks,
+            ipdoms,
+            children,
+            depths,
+        }
+    }
+
+    fn intersect(
+        mut b1: BlockId,
+        mut b2: BlockId,
+        ipdoms: &HashMap<BlockId, BlockId>,
+        rpo_indices: &HashMap<BlockId, usize>,
+    ) -> BlockId {
+        while b1 != b2 {
+            let r1 = rpo_indices.get(&b1).copied().unwrap_or(usize::MAX);
+            let r2 = rpo_indices.get(&b2).copied().unwrap_or(usize::MAX);
+            if r1 > r2 {
+                match ipdoms.get(&b1) {
+                    Some(&p) if p != b1 => b1 = p,
+                    _ => break,
+                }
+            } else {
+                match ipdoms.get(&b2) {
+                    Some(&p) if p != b2 => b2 = p,
+                    _ => break,
+                }
+            }
+        }
+        b1
+    }
+
+    /// Returns true if block `a` post-dominates block `b` (reflexive: a post-dominates a).
+    pub fn post_dominates(&self, a: BlockId, mut b: BlockId) -> bool {
+        if a == b {
+            return true;
+        }
+        while let Some(&parent) = self.ipdoms.get(&b) {
+            if parent == a {
+                return true;
+            }
+            if parent == b || parent == VIRTUAL_EXIT {
+                break;
+            }
+            b = parent;
+        }
+        false
+    }
+
+    /// Immediate post-dominator of a block (returns None if ipdom is VIRTUAL_EXIT).
+    pub fn ipdom(&self, block: BlockId) -> Option<BlockId> {
+        match self.ipdoms.get(&block).copied() {
+            Some(parent) if parent != VIRTUAL_EXIT && parent != block => Some(parent),
+            _ => None,
+        }
+    }
+
+    /// Finds the cleanup blocks for a promoted allocation originating in `alloc_block`.
+    ///
+    /// If there is a single common post-dominator that is an exit block or join block,
+    /// it is chosen. Otherwise, returns all reachable exit blocks from `alloc_block`.
+    pub fn find_cleanup_blocks(&self, alloc_block: BlockId, func: &MirFunction) -> Vec<BlockId> {
+        // If alloc_block is already an exit block, it is its own cleanup point
+        if self.exit_blocks.contains(&alloc_block) {
+            return vec![alloc_block];
+        }
+
+        // If there's an immediate post-dominator that post-dominates alloc_block and is in func:
+        if let Some(target) = self.ipdom(alloc_block) {
+            if self.post_dominates(target, alloc_block) && func.blocks.iter().any(|b| b.id == target) {
+                return vec![target];
+            }
+        }
+
+        // Otherwise find all exit blocks reachable from alloc_block
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(alloc_block);
+        visited.insert(alloc_block);
+
+        let mut cleanups = Vec::new();
+        let cfg = ControlFlowGraph::build(func);
+
+        while let Some(curr) = queue.pop_front() {
+            if self.exit_blocks.contains(&curr) {
+                cleanups.push(curr);
+            }
+            for &succ in cfg.successors(curr) {
+                if visited.insert(succ) {
+                    queue.push_back(succ);
+                }
+            }
+        }
+
+        if cleanups.is_empty() {
+            cleanups = self.exit_blocks.clone();
+        }
+
+        cleanups.sort_by_key(|b| b.0);
+        cleanups.dedup();
+        cleanups
+    }
+}
+
 /// Dominance Frontier for all reachable blocks.
 #[derive(Clone, Debug)]
 pub struct DominanceFrontier {
@@ -887,5 +1126,118 @@ mod dominator_tests {
         assert_eq!(loops.loops[0].header, b1);
         assert!(loops.loops[0].blocks.contains(&b1));
         assert_eq!(loops.loops[0].back_edges, vec![(b1, b1)]);
+    }
+
+    #[test]
+    fn test_post_dominator_tree_diamond() {
+        // Diamond: B0 -> B1, B2 -> B3 -> ReturnVoid
+        let b0 = BlockId(0);
+        let b1 = BlockId(1);
+        let b2 = BlockId(2);
+        let b3 = BlockId(3);
+
+        let func = MirFunction {
+            name: "diamond_pdt".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(0),
+            entry: b0,
+            blocks: vec![
+                BasicBlock {
+                    id: b0,
+                    instructions: vec![],
+                    terminator: Terminator::Branch {
+                        condition: ValueId(0),
+                        then_block: b1,
+                        else_block: b2,
+                    },
+                },
+                BasicBlock {
+                    id: b1,
+                    instructions: vec![],
+                    terminator: Terminator::Jump(b3),
+                },
+                BasicBlock {
+                    id: b2,
+                    instructions: vec![],
+                    terminator: Terminator::Jump(b3),
+                },
+                BasicBlock {
+                    id: b3,
+                    instructions: vec![],
+                    terminator: Terminator::ReturnVoid,
+                },
+            ],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let cfg = ControlFlowGraph::build(&func);
+        let pdt = PostDominatorTree::build(&func, &cfg);
+
+        // B3 post-dominates B0, B1, B2, and itself
+        assert!(pdt.post_dominates(b3, b0));
+        assert!(pdt.post_dominates(b3, b1));
+        assert!(pdt.post_dominates(b3, b2));
+        assert!(pdt.post_dominates(b3, b3));
+
+        // Neither B1 nor B2 post-dominates B0
+        assert!(!pdt.post_dominates(b1, b0));
+        assert!(!pdt.post_dominates(b2, b0));
+
+        // B3 is the unique cleanup block for allocation in B0
+        let cleanups = pdt.find_cleanup_blocks(b0, &func);
+        assert_eq!(cleanups, vec![b3]);
+    }
+
+    #[test]
+    fn test_post_dominator_tree_multi_return() {
+        // Branch to two separate returns: B0 -> B1 (Return), B2 (Return)
+        let b0 = BlockId(0);
+        let b1 = BlockId(1);
+        let b2 = BlockId(2);
+
+        let func = MirFunction {
+            name: "multi_ret_pdt".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(0),
+            entry: b0,
+            blocks: vec![
+                BasicBlock {
+                    id: b0,
+                    instructions: vec![],
+                    terminator: Terminator::Branch {
+                        condition: ValueId(0),
+                        then_block: b1,
+                        else_block: b2,
+                    },
+                },
+                BasicBlock {
+                    id: b1,
+                    instructions: vec![],
+                    terminator: Terminator::ReturnVoid,
+                },
+                BasicBlock {
+                    id: b2,
+                    instructions: vec![],
+                    terminator: Terminator::ReturnVoid,
+                },
+            ],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let cfg = ControlFlowGraph::build(&func);
+        let pdt = PostDominatorTree::build(&func, &cfg);
+
+        assert!(pdt.post_dominates(b1, b1));
+        assert!(pdt.post_dominates(b2, b2));
+        assert!(!pdt.post_dominates(b1, b0));
+        assert!(!pdt.post_dominates(b2, b0));
+
+        let mut cleanups = pdt.find_cleanup_blocks(b0, &func);
+        cleanups.sort_by_key(|b| b.0);
+        assert_eq!(cleanups, vec![b1, b2]);
     }
 }

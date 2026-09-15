@@ -216,6 +216,8 @@ struct FunctionLayout {
     value_signs: HashMap<ValueId, SignInfo>,
     local_types: HashMap<String, LlvmType>,
     value_int_flags: HashMap<ValueId, IntArithFlags>,
+    value_struct_names: HashMap<ValueId, String>,
+    local_struct_names: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -439,6 +441,8 @@ fn analyze_function(
         value_signs: HashMap::new(),
         local_types: HashMap::new(),
         value_int_flags: HashMap::new(),
+        value_struct_names: HashMap::new(),
+        local_struct_names: HashMap::new(),
     };
 
     for block in &func.blocks {
@@ -496,8 +500,13 @@ fn analyze_function(
                         }
                     }
                 }
-                Op::StructConstruct { .. } => {
+                Op::StructConstruct { name, .. } => {
                     layout.value_types.insert(instr.result, LlvmType::Struct);
+                    layout.value_struct_names.insert(instr.result, name.clone());
+                }
+                Op::Alloca { name, .. } | Op::ArcAlloc { name, .. } => {
+                    layout.local_struct_names.insert(name.clone(), name.clone());
+                    layout.value_struct_names.insert(instr.result, name.clone());
                 }
                 Op::EnumConstruct { .. } => {
                     layout.value_types.insert(instr.result, LlvmType::Enum);
@@ -505,6 +514,20 @@ fn analyze_function(
                 Op::StoreLocal { name, value } => {
                     if let Some(val_ty) = layout.value_types.get(value).copied() {
                         layout.local_types.insert(name.clone(), val_ty);
+                    }
+                    if let Some(sname) = layout.value_struct_names.get(value).cloned() {
+                        layout.local_struct_names.insert(name.clone(), sname);
+                    }
+                }
+                Op::LoadLocal(name) => {
+                    if let Some(sname) = layout.local_struct_names.get(name).cloned() {
+                        layout.value_struct_names.insert(instr.result, sname);
+                        layout.value_types.insert(instr.result, LlvmType::Struct);
+                    }
+                }
+                Op::Copy(src) => {
+                    if let Some(sname) = layout.value_struct_names.get(src).cloned() {
+                        layout.value_struct_names.insert(instr.result, sname);
                     }
                 }
                 _ => {}
@@ -2563,7 +2586,52 @@ impl LlvmEmitter {
                 let source = get_value(values, *value)?;
                 values.insert(instr.result, source);
             }
-            Op::ArcRelease { .. } | Op::StackDrop { .. } => {
+            Op::ArcRelease { .. } => {
+                values.insert(
+                    instr.result,
+                    ValueRef::new(result_ty, result_ty.default_value(), result_sign),
+                );
+            }
+            Op::StackDrop { value } => {
+                let val = get_value(values, *value)?;
+                if val.ty == LlvmType::Str {
+                    self.register_external_decl("free", "declare void @free(i8*)");
+                    let _ = writeln!(out, "  call void @free(i8* {})", val.repr);
+                } else if val.ty == LlvmType::Struct || layout.value_struct_names.contains_key(value) {
+                    let sname = layout.value_struct_names.get(value).cloned();
+                    let drop_hook = sname.as_ref().and_then(|name| {
+                        let hook1 = format!("__agam_drop_{}", name);
+                        let hook2 = format!("drop_{}", name);
+                        if self.user_functions.contains(&hook1) {
+                            Some(hook1)
+                        } else if self.user_functions.contains(&hook2) {
+                            Some(hook2)
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(drop_fn) = drop_hook {
+                        let symbol = self.call_target_symbol(&drop_fn);
+                        let ret_ty = self
+                            .layouts
+                            .get(&drop_fn)
+                            .map(|l| l.return_ty)
+                            .unwrap_or_else(LlvmType::default_int);
+                        if ret_ty == LlvmType::default_int() {
+                            let _ = writeln!(
+                                out,
+                                "  %drop_res_{} = call i32 @{}(%AgamStruct {})",
+                                instr.result.0, symbol, val.repr
+                            );
+                        } else {
+                            let _ = writeln!(
+                                out,
+                                "  call void @{}(%AgamStruct {})",
+                                symbol, val.repr
+                            );
+                        }
+                    }
+                }
                 values.insert(
                     instr.result,
                     ValueRef::new(result_ty, result_ty.default_value(), result_sign),
@@ -8012,5 +8080,153 @@ fn main() -> i32:
         let Ok(llvm) = llvm_res else { return };
         assert!(llvm.contains("%local_buf = alloca"), "LLVM was:\n{llvm}");
         assert!(llvm.contains("%local_buf"), "LLVM was:\n{llvm}");
+    }
+
+    #[test]
+    fn test_stack_drop_destructor_string_emits_free() {
+        let b0 = BlockId(0);
+        let v_str = ValueId(0);
+        let v_drop = ValueId(1);
+
+        let module = MirModule {
+            functions: vec![MirFunction {
+                name: "test_string_drop".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: agam_sema::symbol::TypeId(0),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v_str,
+                            ty: agam_sema::symbol::TypeId(2), // Str
+                            op: Op::ConstString("hello heap".into()),
+                        },
+                        Instruction {
+                            result: v_drop,
+                            ty: agam_sema::symbol::TypeId(0),
+                            op: Op::StackDrop { value: v_str },
+                        },
+                    ],
+                    terminator: Terminator::ReturnVoid,
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
+        };
+
+        let llvm = emit_llvm_with_options(&module, LlvmEmitOptions::default())
+            .expect("LLVM emission failed");
+        assert!(
+            llvm.contains("call void @free(i8*"),
+            "Expected call to @free for string buffer drop in LLVM, got:\n{llvm}"
+        );
+        assert!(
+            llvm.contains("declare void @free(i8*)"),
+            "Expected declaration for @free in LLVM, got:\n{llvm}"
+        );
+    }
+
+    #[test]
+    fn test_stack_drop_destructor_struct_custom_hook_emitted() {
+        let b0 = BlockId(0);
+        let b_drop = BlockId(0);
+
+        let v_p = ValueId(0);
+        let v_x = ValueId(1);
+        let v_y = ValueId(2);
+        let v_alloc = ValueId(3);
+        let v_drop = ValueId(4);
+
+        let point_ty = agam_sema::symbol::TypeId(50);
+
+        let mut struct_layouts = HashMap::new();
+        struct_layouts.insert(
+            "Point".into(),
+            StructLayout {
+                name: "Point".into(),
+                fields: vec!["x".into(), "y".into()],
+            },
+        );
+
+        let module = MirModule {
+            functions: vec![
+                // Destructor hook: fn __agam_drop_Point(p: Point)
+                MirFunction {
+                    name: "__agam_drop_Point".into(),
+                    generics: vec![],
+                    params: vec![MirParam {
+                        name: "p".into(),
+                        value: v_p,
+                        ty: point_ty,
+                        gpu_abi: Default::default(),
+                        memory_type: None,
+                    }],
+                    return_ty: agam_sema::symbol::TypeId(0),
+                    entry: b_drop,
+                    blocks: vec![BasicBlock {
+                        id: b_drop,
+                        instructions: vec![],
+                        terminator: Terminator::ReturnVoid,
+                    }],
+                    target: Default::default(),
+                    gpu_config: None,
+                },
+                // Calling function: constructs Point and drops it
+                MirFunction {
+                    name: "use_point".into(),
+                    generics: vec![],
+                    params: vec![],
+                    return_ty: agam_sema::symbol::TypeId(0),
+                    entry: b0,
+                    blocks: vec![BasicBlock {
+                        id: b0,
+                        instructions: vec![
+                            Instruction {
+                                result: v_x,
+                                ty: agam_sema::symbol::TypeId(1),
+                                op: Op::ConstInt(10),
+                            },
+                            Instruction {
+                                result: v_y,
+                                ty: agam_sema::symbol::TypeId(1),
+                                op: Op::ConstInt(20),
+                            },
+                            Instruction {
+                                result: v_alloc,
+                                ty: point_ty,
+                                op: Op::StructConstruct {
+                                    name: "Point".into(),
+                                    fields: vec![
+                                        ("x".into(), v_x),
+                                        ("y".into(), v_y),
+                                    ],
+                                },
+                            },
+                            Instruction {
+                                result: v_drop,
+                                ty: agam_sema::symbol::TypeId(0),
+                                op: Op::StackDrop { value: v_alloc },
+                            },
+                        ],
+                        terminator: Terminator::ReturnVoid,
+                    }],
+                    target: Default::default(),
+                    gpu_config: None,
+                },
+            ],
+            struct_layouts,
+            enum_layouts: HashMap::new(),
+        };
+
+        let llvm = emit_llvm_with_options(&module, LlvmEmitOptions::default())
+            .expect("LLVM emission failed");
+        assert!(
+            llvm.contains("@agam___agam_drop_Point(%AgamStruct"),
+            "Expected call to destructor hook @agam___agam_drop_Point in LLVM, got:\n{llvm}"
+        );
     }
 }
