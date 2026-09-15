@@ -48,11 +48,7 @@ pub fn optimize_module(module: &mut MirModule) -> bool {
         changed |= constant_fold::run(module);
         changed |= dce::run(module);
 
-        let purity = escape::CalleePurityInfo::default();
-        let (_escapes, promo) = escape::run_escape_and_promote(module, &purity);
-        if promo.total_promoted > 0 {
-            changed = true;
-        }
+        changed |= escape::run(module);
 
         if !changed {
             break;
@@ -197,5 +193,82 @@ mod tests {
         );
         assert!(MirVerifier::verify_module(&mod1).is_ok());
         assert!(MirVerifier::verify_module(&mod2).is_ok());
+    }
+
+    #[test]
+    fn test_optimize_module_wires_escape_promotion() {
+        let b0 = crate::ir::BlockId(0);
+        let v_param = ValueId(10);
+        let v0 = ValueId(0);
+        let v2 = ValueId(2);
+        let v3 = ValueId(3);
+        let v4 = ValueId(4);
+
+        let mut module = MirModule {
+            functions: vec![MirFunction {
+                name: "test_esc".into(),
+                generics: vec![],
+                params: vec![crate::ir::MirParam {
+                    name: "n".into(),
+                    ty: TypeId(4),
+                    value: v_param,
+                    gpu_abi: Default::default(),
+                    memory_type: None,
+                }],
+                return_ty: TypeId(4),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v0,
+                            ty: TypeId(4),
+                            op: Op::ArcAlloc {
+                                name: "local_buf".into(),
+                                ty: TypeId(4),
+                            },
+                        },
+                        Instruction {
+                            result: v2,
+                            ty: TypeId(4),
+                            op: Op::StoreLocal {
+                                name: "local_buf".into(),
+                                value: v_param,
+                            },
+                        },
+                        Instruction {
+                            result: v3,
+                            ty: TypeId(4),
+                            op: Op::ArcRetain { value: v0 },
+                        },
+                        Instruction {
+                            result: v4,
+                            ty: TypeId(0),
+                            op: Op::ArcRelease { value: v3 },
+                        },
+                        Instruction {
+                            result: ValueId(5),
+                            ty: TypeId(4),
+                            op: Op::LoadLocal("local_buf".into()),
+                        },
+                    ],
+                    terminator: Terminator::Return(ValueId(5)),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            enum_layouts: std::collections::HashMap::new(),
+            struct_layouts: std::collections::HashMap::new(),
+        };
+
+        let mutated = optimize_module(&mut module);
+        assert!(mutated, "optimize_module should return true when escape promotion rewrites an ArcAlloc");
+
+        let fn_opt = &module.functions[0];
+        let has_arc_alloc = fn_opt.blocks.iter().flat_map(|b| &b.instructions).any(|i| matches!(i.op, Op::ArcAlloc { .. }));
+        let has_alloca = fn_opt.blocks.iter().flat_map(|b| &b.instructions).any(|i| matches!(i.op, Op::Alloca { .. }));
+        assert!(!has_arc_alloc, "All ArcAllocs should be promoted");
+        assert!(has_alloca, "Promoted allocation should be Alloca");
+        assert!(MirVerifier::verify_module(&module).is_ok());
     }
 }

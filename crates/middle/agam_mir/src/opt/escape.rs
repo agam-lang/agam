@@ -52,6 +52,17 @@ pub struct StackPromotionResults {
     pub functions: BTreeMap<String, FunctionPromotionSummary>,
 }
 
+/// Run escape analysis and stack promotion over all functions in the module.
+/// Returns `true` if any function was mutated.
+pub fn run(module: &mut MirModule) -> bool {
+    let purity = CalleePurityInfo::default();
+    let mut any_mutated = false;
+    for func in &mut module.functions {
+        any_mutated |= rewrite_escape_and_promote(func, &purity);
+    }
+    any_mutated
+}
+
 /// Analyze escape behavior and perform stack promotion and ARC elision with graceful fallback.
 pub fn run_escape_and_promote(
     module: &mut MirModule,
