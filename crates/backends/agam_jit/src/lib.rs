@@ -97,6 +97,8 @@ struct FunctionLayout {
     return_ty: JitType,
     value_types: HashMap<ValueId, JitType>,
     local_types: HashMap<String, JitType>,
+    value_struct_names: HashMap<ValueId, String>,
+    local_struct_names: HashMap<String, String>,
     enum_payload_slots: HashMap<ValueId, Vec<EnumPayloadSlot>>,
     local_enum_payload_slots: HashMap<String, Vec<EnumPayloadSlot>>,
 }
@@ -693,6 +695,17 @@ thread_local! {
     static JIT_RUNTIME_ARGS: RefCell<RuntimeArgs> = RefCell::new(RuntimeArgs::default());
     static JIT_CALL_CACHE: RefCell<CallCacheThreadState> = RefCell::new(CallCacheThreadState::default());
     static JIT_OUTPUT_CAPTURE: RefCell<Option<String>> = const { RefCell::new(None) };
+    static JIT_FREE_CALL_COUNT: RefCell<usize> = const { RefCell::new(0) };
+}
+
+#[doc(hidden)]
+pub fn test_get_free_call_count() -> usize {
+    JIT_FREE_CALL_COUNT.with(|c| *c.borrow())
+}
+
+#[doc(hidden)]
+pub fn test_reset_free_call_count() {
+    JIT_FREE_CALL_COUNT.with(|c| *c.borrow_mut() = 0);
 }
 
 static START_TIME: OnceLock<Instant> = OnceLock::new();
@@ -712,6 +725,7 @@ const RT_MEMO_STORE: &str = "__agam_jit_memo_store";
 const RT_SPECIALIZATION_HIT: &str = "__agam_jit_specialization_hit";
 const RT_SPECIALIZATION_FALLBACK: &str = "__agam_jit_specialization_fallback";
 const RT_SPECIALIZATION_ENABLED: &str = "__agam_jit_specialization_enabled";
+const RT_FREE: &str = "__agam_jit_free";
 const MAX_CALL_CACHE_ARGS: usize = 4;
 const DEFAULT_CALL_CACHE_CAPACITY: usize = 256;
 const DEFAULT_CALL_CACHE_WARMUP: u64 = 32;
@@ -1055,7 +1069,49 @@ impl AgamJit {
                 Ok(default_value(builder, result_ty, pointer_type))
             }
             Op::ArcRetain { value } => lookup_value(values, *value),
-            Op::ArcRelease { .. } | Op::StackDrop { .. } => {
+            Op::ArcRelease { .. } => {
+                Ok(default_value(builder, result_ty, pointer_type))
+            }
+            Op::StackDrop { value } => {
+                let val_ty = value_type(layout, *value);
+                if val_ty == JitType::Str {
+                    if let Ok(arg_val) = lookup_value(values, *value) {
+                        let free_func = self.runtime_func_id(RT_FREE, &[JitType::Str], None)?;
+                        let free_ref = self.module.declare_func_in_func(free_func, builder.func);
+                        builder.ins().call(free_ref, &[arg_val]);
+                    }
+                } else if let Some(sname) = layout.value_struct_names.get(value) {
+                    let hook1 = format!("__agam_drop_{}", sname);
+                    let hook2 = format!("drop_{}", sname);
+                    let drop_fn = if self.func_ids.contains_key(&hook1) {
+                        Some(hook1)
+                    } else if self.func_ids.contains_key(&hook2) {
+                        Some(hook2)
+                    } else {
+                        None
+                    };
+                    if let Some(target) = drop_fn {
+                        if let Some(func_id) = self.func_ids.get(&target).copied() {
+                            let source_ty = value_type(layout, *value);
+                            let user_param_tys = self.layouts.get(&target).map(|l| l.params.clone());
+                            let target_ty = user_param_tys
+                                .as_ref()
+                                .and_then(|p| p.get(0).copied())
+                                .unwrap_or(source_ty);
+                            if let Ok(raw_val) = lookup_value(values, *value) {
+                                let arg_val = self.coerce_value(
+                                    builder,
+                                    raw_val,
+                                    source_ty,
+                                    target_ty,
+                                    mem_flags,
+                                )?;
+                                let func_ref = self.module.declare_func_in_func(func_id, builder.func);
+                                builder.ins().call(func_ref, &[arg_val]);
+                            }
+                        }
+                    }
+                }
                 Ok(default_value(builder, result_ty, pointer_type))
             }
             Op::BinOp { op, left, right } => {
@@ -2022,6 +2078,7 @@ fn register_runtime_symbols(builder: &mut JITBuilder) {
         RT_SPECIALIZATION_ENABLED,
         rt_specialization_enabled as *const u8,
     );
+    builder.symbol(RT_FREE, rt_free as *const u8);
 }
 
 fn jit_value_to_exit_code(value: JitValue) -> Result<i32, String> {
@@ -2408,6 +2465,8 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
         }),
         value_types: HashMap::new(),
         local_types: HashMap::new(),
+        value_struct_names: HashMap::new(),
+        local_struct_names: HashMap::new(),
         enum_payload_slots: HashMap::new(),
         local_enum_payload_slots: HashMap::new(),
     };
@@ -2437,6 +2496,9 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     if let Some(slots) = layout.enum_payload_slots.get(value).cloned() {
                         layout.enum_payload_slots.insert(instr.result, slots);
                     }
+                    if let Some(sname) = layout.value_struct_names.get(value).cloned() {
+                        layout.value_struct_names.insert(instr.result, sname);
+                    }
                     value_type(&layout, *value)
                 }
                 Op::BinOp { op, left, right } => {
@@ -2456,6 +2518,9 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     }
                 }
                 Op::LoadLocal(name) => {
+                    if let Some(sname) = layout.local_struct_names.get(name).cloned() {
+                        layout.value_struct_names.insert(instr.result, sname);
+                    }
                     if let Some(slots) = layout.local_enum_payload_slots.get(name).cloned() {
                         layout.enum_payload_slots.insert(instr.result, slots);
                         enum_pack_type()
@@ -2472,6 +2537,9 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     }
                 }
                 Op::StoreLocal { name, value } => {
+                    if let Some(sname) = layout.value_struct_names.get(value).cloned() {
+                        layout.local_struct_names.insert(name.clone(), sname);
+                    }
                     let ty = if let Some(slots) = layout.enum_payload_slots.get(value).cloned() {
                         layout.local_enum_payload_slots.insert(name.clone(), slots);
                         enum_pack_type()
@@ -2493,6 +2561,8 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                         signed: true,
                     });
                     layout.local_types.entry(name.clone()).or_insert(ty);
+                    layout.local_struct_names.insert(name.clone(), name.clone());
+                    layout.value_struct_names.insert(instr.result, name.clone());
                     JitType::Unit
                 }
                 Op::ArcRetain { value } => {
@@ -2511,6 +2581,11 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                 }
                 Op::GetIndex { object, .. } => value_type(&layout, *object),
                 Op::Phi(entries) => {
+                    if let Some((_, v)) = entries.iter().find(|(_, v)| layout.value_struct_names.contains_key(v)) {
+                        if let Some(sname) = layout.value_struct_names.get(v).cloned() {
+                            layout.value_struct_names.insert(instr.result, sname);
+                        }
+                    }
                     if let Some(slots) = merged_enum_payload_slots(&layout, entries) {
                         layout.enum_payload_slots.insert(instr.result, slots);
                     }
@@ -2534,7 +2609,8 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, JitType>)
                     bits: 32,
                     signed: true,
                 },
-                Op::StructConstruct { fields, .. } => {
+                Op::StructConstruct { name, fields } => {
+                    layout.value_struct_names.insert(instr.result, name.clone());
                     let payload_ids: Vec<ValueId> = fields.iter().map(|(_, v)| *v).collect();
                     let slots = struct_payload_slots_from_values(&layout, &payload_ids);
                     layout.enum_payload_slots.insert(instr.result, slots);
@@ -3942,6 +4018,12 @@ extern "C" fn rt_print_bool(value: u8) {
 
 extern "C" fn rt_print_newline() {
     emit_runtime_output("\n");
+}
+
+extern "C" fn rt_free(value: *const c_char) {
+    if !value.is_null() {
+        JIT_FREE_CALL_COUNT.with(|c| *c.borrow_mut() += 1);
+    }
 }
 
 fn emit_runtime_output(fragment: &str) {
@@ -5441,5 +5523,178 @@ fn main() -> i32:
 
         assert_eq!(res_arc, Ok(JitValue::Int(42)));
         assert_eq!(res_arc, res_classic);
+    }
+
+    #[test]
+    fn test_stack_drop_destructor_string() {
+        test_reset_free_call_count();
+        let b0 = BlockId(0);
+        let v_str = ValueId(0);
+        let v_drop = ValueId(1);
+
+        let module = MirModule {
+            functions: vec![MirFunction {
+                name: "main".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: i32_ty(),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v_str,
+                            ty: TypeId(2), // Str
+                            op: Op::ConstString("hello_drop".into()),
+                        },
+                        Instruction {
+                            result: v_drop,
+                            ty: TypeId(0),
+                            op: Op::StackDrop { value: v_str },
+                        },
+                        Instruction {
+                            result: ValueId(2),
+                            ty: i32_ty(),
+                            op: Op::ConstInt(0),
+                        },
+                    ],
+                    terminator: Terminator::Return(ValueId(2)),
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
+        };
+
+        let compiled_res = CompiledJitModule::compile(&module, JitOptions::default());
+        assert!(compiled_res.is_ok(), "JIT compilation should succeed");
+        let Ok(compiled) = compiled_res else { return };
+
+        let res = compiled.run_function("main", &[]);
+        assert_eq!(res, Ok(JitValue::Int(0)));
+        assert_eq!(
+            test_get_free_call_count(),
+            1,
+            "free destructor hook should have been called for StackDrop on Str"
+        );
+    }
+
+    #[test]
+    fn test_stack_drop_destructor_struct_custom_hook_emitted() {
+        let b0 = BlockId(0);
+        let b_drop = BlockId(0);
+
+        let v_p = ValueId(0);
+        let v_drop_str = ValueId(10);
+        let v_call = ValueId(11);
+
+        let point_ty = TypeId(50);
+
+        let drop_fn = MirFunction {
+            name: "__agam_drop_Point".into(),
+            generics: vec![],
+            params: vec![MirParam {
+                name: "p".into(),
+                value: v_p,
+                ty: point_ty,
+                gpu_abi: Default::default(),
+                memory_type: None,
+            }],
+            return_ty: TypeId(0),
+            entry: b_drop,
+            blocks: vec![BasicBlock {
+                id: b_drop,
+                instructions: vec![
+                    Instruction {
+                        result: v_drop_str,
+                        ty: TypeId(2),
+                        op: Op::ConstString("dropped_point".into()),
+                    },
+                    Instruction {
+                        result: v_call,
+                        ty: TypeId(0),
+                        op: Op::Call {
+                            callee: "println".into(),
+                            args: vec![v_drop_str],
+                        },
+                    },
+                ],
+                terminator: Terminator::ReturnVoid,
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let main_fn = MirFunction {
+            name: "main".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: i32_ty(),
+            entry: b0,
+            blocks: vec![BasicBlock {
+                id: b0,
+                instructions: vec![
+                    Instruction {
+                        result: ValueId(0),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(10),
+                    },
+                    Instruction {
+                        result: ValueId(1),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(20),
+                    },
+                    Instruction {
+                        result: ValueId(2),
+                        ty: point_ty,
+                        op: Op::StructConstruct {
+                            name: "Point".into(),
+                            fields: vec![("x".into(), ValueId(0)), ("y".into(), ValueId(1))],
+                        },
+                    },
+                    Instruction {
+                        result: ValueId(3),
+                        ty: TypeId(0),
+                        op: Op::StackDrop { value: ValueId(2) },
+                    },
+                    Instruction {
+                        result: ValueId(4),
+                        ty: i32_ty(),
+                        op: Op::ConstInt(0),
+                    },
+                ],
+                terminator: Terminator::Return(ValueId(4)),
+            }],
+            target: Default::default(),
+            gpu_config: None,
+        };
+
+        let mut struct_layouts = HashMap::new();
+        struct_layouts.insert(
+            "Point".into(),
+            StructLayout {
+                name: "Point".into(),
+                fields: vec!["x".into(), "y".into()],
+            },
+        );
+
+        let module = MirModule {
+            functions: vec![drop_fn, main_fn],
+            struct_layouts,
+            enum_layouts: HashMap::new(),
+        };
+
+        let compiled_res = CompiledJitModule::compile(&module, JitOptions::default());
+        assert!(compiled_res.is_ok(), "JIT compilation should succeed");
+        let Ok(compiled) = compiled_res else { return };
+
+        let (res, output) = with_captured_output(|| compiled.run_function("main", &[]));
+        assert_eq!(res, Ok(JitValue::Int(0)));
+        assert!(
+            output.contains("dropped_point"),
+            "captured output should contain dropped_point from custom destructor, got: {:?}",
+            output
+        );
     }
 }
