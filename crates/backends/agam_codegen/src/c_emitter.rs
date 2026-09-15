@@ -60,6 +60,8 @@ struct FunctionLayout {
     return_ty: CType,
     value_types: HashMap<ValueId, CType>,
     local_types: HashMap<String, CType>,
+    value_struct_names: HashMap<ValueId, String>,
+    local_struct_names: HashMap<String, String>,
 }
 
 fn analyze_module(module: &MirModule) -> HashMap<String, FunctionLayout> {
@@ -104,6 +106,8 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
         return_ty: infer_ctype_from_type_id(func.return_ty).unwrap_or(CType::Int),
         value_types: HashMap::new(),
         local_types: HashMap::new(),
+        value_struct_names: HashMap::new(),
+        local_struct_names: HashMap::new(),
     };
 
     for block in &func.blocks {
@@ -161,8 +165,13 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                         }
                     }
                 }
-                Op::StructConstruct { .. } => {
+                Op::StructConstruct { name, .. } => {
                     layout.value_types.insert(instr.result, CType::Struct);
+                    layout.value_struct_names.insert(instr.result, name.clone());
+                }
+                Op::Alloca { name, .. } | Op::ArcAlloc { name, .. } => {
+                    layout.local_struct_names.insert(name.clone(), name.clone());
+                    layout.value_struct_names.insert(instr.result, name.clone());
                 }
                 Op::EnumConstruct { .. } => {
                     layout.value_types.insert(instr.result, CType::Enum);
@@ -170,6 +179,20 @@ fn analyze_function(func: &MirFunction, return_types: &HashMap<String, CType>) -
                 Op::StoreLocal { name, value } => {
                     if let Some(val_ty) = layout.value_types.get(value).copied() {
                         layout.local_types.insert(name.clone(), val_ty);
+                    }
+                    if let Some(sname) = layout.value_struct_names.get(value).cloned() {
+                        layout.local_struct_names.insert(name.clone(), sname);
+                    }
+                }
+                Op::LoadLocal(name) => {
+                    if let Some(sname) = layout.local_struct_names.get(name).cloned() {
+                        layout.value_struct_names.insert(instr.result, sname);
+                        layout.value_types.insert(instr.result, CType::Struct);
+                    }
+                }
+                Op::Copy(src) => {
+                    if let Some(sname) = layout.value_struct_names.get(src).cloned() {
+                        layout.value_struct_names.insert(instr.result, sname);
                     }
                 }
                 _ => {}
@@ -698,10 +721,12 @@ pub fn emit_c(module: &MirModule) -> String {
     }
     writeln!(output).unwrap();
 
+    let user_functions: HashSet<String> = module.functions.iter().map(|f| f.name.clone()).collect();
+
     // Function definitions
     for func in &module.functions {
         let layout = layouts.get(&func.name).expect("missing function layout");
-        emit_function(&mut output, func, layout, &module.struct_layouts);
+        emit_function(&mut output, func, layout, &module.struct_layouts, &user_functions);
         writeln!(output).unwrap();
     }
 
@@ -713,6 +738,7 @@ fn emit_function(
     func: &MirFunction,
     layout: &FunctionLayout,
     struct_layouts: &std::collections::HashMap<String, StructLayout>,
+    user_functions: &HashSet<String>,
 ) {
     // Function signature
     if func.name == "main" {
@@ -754,7 +780,7 @@ fn emit_function(
 
     // Emit all basic blocks
     for block in &func.blocks {
-        emit_block(out, block, layout, func.name == "main", struct_layouts);
+        emit_block(out, block, layout, func.name == "main", struct_layouts, user_functions);
     }
 
     writeln!(out, "}}").unwrap();
@@ -766,11 +792,12 @@ fn emit_block(
     layout: &FunctionLayout,
     is_main: bool,
     struct_layouts: &std::collections::HashMap<String, StructLayout>,
+    user_functions: &HashSet<String>,
 ) {
     writeln!(out, "block_{}:", block.id.0).unwrap();
 
     for instr in &block.instructions {
-        emit_instruction(out, instr, layout, struct_layouts);
+        emit_instruction(out, instr, layout, struct_layouts, user_functions);
     }
 
     emit_terminator(out, &block.terminator, layout, is_main);
@@ -781,6 +808,7 @@ fn emit_instruction(
     instr: &Instruction,
     layout: &FunctionLayout,
     struct_layouts: &std::collections::HashMap<String, StructLayout>,
+    user_functions: &HashSet<String>,
 ) {
     let v = format!("__v{}", instr.result.0);
     let result_ty = value_type(layout, instr.result);
@@ -942,7 +970,36 @@ fn emit_instruction(
         Op::ArcRetain { value } => {
             let _ = writeln!(out, "  {} {} = __v{};", result_ty.name(), v, value.0);
         }
-        Op::ArcRelease { .. } | Op::StackDrop { .. } => {
+        Op::ArcRelease { .. } => {
+            let _ = writeln!(
+                out,
+                "  {} {} = {};",
+                result_ty.name(),
+                v,
+                result_ty.default_value()
+            );
+        }
+        Op::StackDrop { value } => {
+            let val_ty = layout.value_types.get(value).copied().unwrap_or(CType::Int);
+            if val_ty == CType::Str {
+                let _ = writeln!(out, "  if (__v{}) free((void*)__v{});", value.0, value.0);
+            } else if val_ty == CType::Struct || layout.value_struct_names.contains_key(value) {
+                let sname = layout.value_struct_names.get(value).cloned();
+                let drop_hook = sname.as_ref().and_then(|name| {
+                    let hook1 = format!("__agam_drop_{}", name);
+                    let hook2 = format!("drop_{}", name);
+                    if user_functions.contains(&hook1) {
+                        Some(hook1)
+                    } else if user_functions.contains(&hook2) {
+                        Some(hook2)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(drop_fn) = drop_hook {
+                    let _ = writeln!(out, "  {}(__v{});", mangle_name(&drop_fn), value.0);
+                }
+            }
             let _ = writeln!(
                 out,
                 "  {} {} = {};",
@@ -1679,5 +1736,147 @@ mod tests {
         assert!(c_code.contains("_local_buf = 0;"), "C was:\n{c_code}");
         assert!(c_code.contains("_local_buf = __v1;"), "C was:\n{c_code}");
         assert!(c_code.contains("__v4 = __v3;"), "C was:\n{c_code}");
+    }
+
+    #[test]
+    fn test_stack_drop_destructor_string_emits_free() {
+        let b0 = BlockId(0);
+        let v_str = ValueId(0);
+        let v_drop = ValueId(1);
+
+        let module = MirModule {
+            functions: vec![MirFunction {
+                name: "test_string_drop".into(),
+                generics: vec![],
+                params: vec![],
+                return_ty: agam_sema::symbol::TypeId(0),
+                entry: b0,
+                blocks: vec![BasicBlock {
+                    id: b0,
+                    instructions: vec![
+                        Instruction {
+                            result: v_str,
+                            ty: agam_sema::symbol::TypeId(2), // Str
+                            op: Op::ConstString("hello c heap".into()),
+                        },
+                        Instruction {
+                            result: v_drop,
+                            ty: agam_sema::symbol::TypeId(0),
+                            op: Op::StackDrop { value: v_str },
+                        },
+                    ],
+                    terminator: Terminator::ReturnVoid,
+                }],
+                target: Default::default(),
+                gpu_config: None,
+            }],
+            struct_layouts: HashMap::new(),
+            enum_layouts: HashMap::new(),
+        };
+
+        let c_code = emit_c(&module);
+        assert!(
+            c_code.contains("free((void*)__v0);"),
+            "Expected free for string buffer drop in C, got:\n{c_code}"
+        );
+    }
+
+    #[test]
+    fn test_stack_drop_destructor_struct_custom_hook_emitted() {
+        let b0 = BlockId(0);
+        let b_drop = BlockId(0);
+
+        let v_p = ValueId(0);
+        let v_x = ValueId(1);
+        let v_y = ValueId(2);
+        let v_alloc = ValueId(3);
+        let v_drop = ValueId(4);
+
+        let point_ty = agam_sema::symbol::TypeId(50);
+
+        let mut struct_layouts = HashMap::new();
+        struct_layouts.insert(
+            "Point".into(),
+            StructLayout {
+                name: "Point".into(),
+                fields: vec!["x".into(), "y".into()],
+            },
+        );
+
+        let module = MirModule {
+            functions: vec![
+                // Destructor hook: fn __agam_drop_Point(p: Point)
+                MirFunction {
+                    name: "__agam_drop_Point".into(),
+                    generics: vec![],
+                    params: vec![MirParam {
+                        name: "p".into(),
+                        value: v_p,
+                        ty: point_ty,
+                        gpu_abi: Default::default(),
+                        memory_type: None,
+                    }],
+                    return_ty: agam_sema::symbol::TypeId(0),
+                    entry: b_drop,
+                    blocks: vec![BasicBlock {
+                        id: b_drop,
+                        instructions: vec![],
+                        terminator: Terminator::ReturnVoid,
+                    }],
+                    target: Default::default(),
+                    gpu_config: None,
+                },
+                // Calling function: constructs Point and drops it
+                MirFunction {
+                    name: "use_point".into(),
+                    generics: vec![],
+                    params: vec![],
+                    return_ty: agam_sema::symbol::TypeId(0),
+                    entry: b0,
+                    blocks: vec![BasicBlock {
+                        id: b0,
+                        instructions: vec![
+                            Instruction {
+                                result: v_x,
+                                ty: agam_sema::symbol::TypeId(1),
+                                op: Op::ConstInt(10),
+                            },
+                            Instruction {
+                                result: v_y,
+                                ty: agam_sema::symbol::TypeId(1),
+                                op: Op::ConstInt(20),
+                            },
+                            Instruction {
+                                result: v_alloc,
+                                ty: point_ty,
+                                op: Op::StructConstruct {
+                                    name: "Point".into(),
+                                    fields: vec![
+                                        ("x".into(), v_x),
+                                        ("y".into(), v_y),
+                                    ],
+                                },
+                            },
+                            Instruction {
+                                result: v_drop,
+                                ty: agam_sema::symbol::TypeId(0),
+                                op: Op::StackDrop { value: v_alloc },
+                            },
+                        ],
+                        terminator: Terminator::ReturnVoid,
+                    }],
+                    target: Default::default(),
+                    gpu_config: None,
+                },
+            ],
+            struct_layouts,
+            enum_layouts: HashMap::new(),
+        };
+
+        let c_code = emit_c(&module);
+        assert!(
+            c_code.contains("agam___agam_drop_Point(__v3);"),
+            "Expected call to destructor hook agam___agam_drop_Point in C, got:\n{c_code}"
+        );
     }
 }
