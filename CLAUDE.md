@@ -3,6 +3,7 @@
 > **Compiler Core Briefing.** Read this first when working inside `agam/`.  
 > **Workspace Authority:** All global rules, skills, and memory live at workspace root [`../.agent/`](../.agent/).  
 > **Syntax Reality:** Always check [`../note.md`](../note.md) and [`../examples/`](../examples/) before writing or documenting Agam code. Test via `python ../scripts/prove.py`.  
+> **Syntax Redesign Track:** Review [`../.agent/specs/syntax/000-INDEX.md`](../.agent/specs/syntax/000-INDEX.md) for active language & parser specs.  
 > **Live Problem Ledger:** Log all bugs, lowering gaps, and crashes in [`../issues.md`](../issues.md).
 
 ---
