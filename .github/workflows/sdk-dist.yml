@@ -35,10 +35,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -87,7 +87,7 @@ jobs:
 
       - name: Setup Android SDK on Linux
         if: runner.os == 'Linux'
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android NDK on Linux
         if: runner.os == 'Linux'
@@ -167,7 +167,7 @@ jobs:
               print(f"    - {target.get('name', '?')}: {target.get('target_triple', '?')}{suffix}")
 
       - name: Upload SDK artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdk-${{ matrix.host_platform }}
           if-no-files-found: error
@@ -184,12 +184,12 @@ jobs:
 
     steps:
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Download SDK artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: sdk-*
           merge-multiple: true
@@ -331,10 +331,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Download SDK artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: sdk-*
           merge-multiple: true
