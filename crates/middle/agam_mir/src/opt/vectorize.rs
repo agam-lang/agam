@@ -19,6 +19,12 @@ use agam_sema::symbol::TypeId;
 pub const DEFAULT_VECTOR_FACTOR_64: usize = 4;
 /// Default vector factor (VF) for 32-bit float / integer math.
 pub const DEFAULT_VECTOR_FACTOR_32: usize = 8;
+/// AVX-512 vector factor for 64-bit integer / double math (8 lanes in 512-bit ZMM).
+pub const AVX512_VECTOR_FACTOR_64: usize = 8;
+/// AVX-512 vector factor for 32-bit float / integer math (16 lanes in 512-bit ZMM).
+pub const AVX512_VECTOR_FACTOR_32: usize = 16;
+/// AVX-512 VNNI vector factor for 8-bit int dot products (64 lanes via VPDPBUSD).
+pub const AVX512_VNNI_VECTOR_FACTOR_8: usize = 64;
 /// Minimum trip count required to justify vector loop partitioning overhead.
 pub const MIN_VECTORIZATION_TRIP_COUNT: usize = 8;
 
@@ -225,7 +231,13 @@ pub fn analyze_loop_for_vectorization(
     // Invariant C: Identify loop-carried accumulator reductions
     let reductions = find_loop_reductions(body_block, &loop_var);
 
-    let vector_factor = DEFAULT_VECTOR_FACTOR_64;
+    let vector_factor = match function.target {
+        agam_sema::target::TargetProfile::Hpc => AVX512_VECTOR_FACTOR_32,
+        _ => DEFAULT_VECTOR_FACTOR_64,
+    };
+    if trip_count < vector_factor {
+        return None;
+    }
     let vector_iters = (trip_count / vector_factor) * vector_factor;
     let remainder_iters = trip_count % vector_factor;
 
@@ -1094,4 +1106,20 @@ mod tests {
             "Small trip counts (< 8) must fail closed to scalar execution"
         );
     }
+
+    #[test]
+    fn test_avx512_vectorize_hpc_target_16_lanes() {
+        let mut func = create_test_counting_loop(64);
+        func.target = agam_sema::target::TargetProfile::Hpc;
+        let changed = vectorize_function(&mut func);
+        assert!(
+            changed,
+            "HPC target on Zen 4 must vectorize with AVX-512 16-lane factor"
+        );
+
+        // Verify MIR dominance & SSA invariants
+        let res = MirVerifier::verify_function(&func);
+        assert!(res.is_ok(), "AVX-512 transformed MIR must pass verifier");
+    }
 }
+

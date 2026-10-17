@@ -23,6 +23,7 @@ pub enum Opcode {
     OpName = 5,
     OpExtension = 10,
     OpExtInstImport = 11,
+    OpExtInst = 12,
     OpCapability = 17,
     OpMemoryModel = 14,
     OpEntryPoint = 15,
@@ -159,6 +160,7 @@ pub struct SpirvModuleBuilder {
     pub next_id: u32,
     pub capabilities: Vec<Instruction>,
     pub extensions: Vec<Instruction>,
+    pub ext_inst_imports: Vec<Instruction>,
     pub memory_model: Vec<Instruction>,
     pub entry_points: Vec<Instruction>,
     pub execution_modes: Vec<Instruction>,
@@ -180,6 +182,7 @@ impl SpirvModuleBuilder {
             next_id: 1,
             capabilities: Vec::new(),
             extensions: Vec::new(),
+            ext_inst_imports: Vec::new(),
             memory_model: Vec::new(),
             entry_points: Vec::new(),
             execution_modes: Vec::new(),
@@ -226,6 +229,15 @@ impl SpirvModuleBuilder {
             .push(Instruction::new(Opcode::OpExtension, operands));
     }
 
+    pub fn add_ext_inst_import(&mut self, name: &str) -> u32 {
+        let id = self.alloc_id();
+        let mut operands = vec![id];
+        operands.extend(Self::encode_string(name));
+        self.ext_inst_imports
+            .push(Instruction::new(Opcode::OpExtInstImport, operands));
+        id
+    }
+
     pub fn set_memory_model(&mut self, addressing: AddressingModel, model: MemoryModel) {
         self.memory_model.push(Instruction::new(
             Opcode::OpMemoryModel,
@@ -262,6 +274,9 @@ impl SpirvModuleBuilder {
             instr.encode(&mut out);
         }
         for instr in &self.extensions {
+            instr.encode(&mut out);
+        }
+        for instr in &self.ext_inst_imports {
             instr.encode(&mut out);
         }
         for instr in &self.memory_model {
@@ -324,6 +339,7 @@ pub fn emit_spirv_module(module: &MirModule) -> Option<Vec<u32>> {
     builder.add_capability(Capability::CooperativeMatrixKHR);
 
     builder.add_extension("SPV_KHR_cooperative_matrix");
+    let _glsl_ext_id = builder.add_ext_inst_import("GLSL.std.450");
 
     builder.set_memory_model(AddressingModel::Logical, MemoryModel::GLSL450);
 
@@ -684,4 +700,55 @@ mod tests {
             "SPIR-V words must contain OpCooperativeMatrixMulAddKHR"
         );
     }
+
+    #[test]
+    fn test_spirv_glsl450_import_and_local_size() {
+        let block = BasicBlock {
+            id: BlockId(0),
+            instructions: vec![],
+            terminator: Terminator::Return(ValueId(0)),
+        };
+
+        let mut config = GpuKernelConfig::default();
+        config.threads_per_block = 256;
+
+        let func = MirFunction {
+            name: "vulkan_compute_kernel".into(),
+            generics: vec![],
+            params: vec![],
+            return_ty: TypeId(0),
+            blocks: vec![block],
+            entry: BlockId(0),
+            target: TargetProfile::Hpc,
+            gpu_config: Some(config),
+        };
+
+        let module = MirModule {
+            functions: vec![func],
+            enum_layouts: HashMap::new(),
+            struct_layouts: HashMap::new(),
+        };
+
+        let words = emit_spirv_module(&module).expect("emit vulkan compute spirv");
+        assert!(words.len() >= 10);
+
+        // Verify OpExtInstImport (opcode 11) is present
+        let has_ext_inst_import = words
+            .iter()
+            .any(|&w| (w & 0xFFFF) == Opcode::OpExtInstImport as u32);
+        assert!(
+            has_ext_inst_import,
+            "SPIR-V binary must contain OpExtInstImport for GLSL.std.450"
+        );
+
+        // Verify OpExecutionMode LocalSize (opcode 16) is present
+        let has_local_size = words
+            .iter()
+            .any(|&w| (w & 0xFFFF) == Opcode::OpExecutionMode as u32);
+        assert!(
+            has_local_size,
+            "SPIR-V binary must contain OpExecutionMode LocalSize"
+        );
+    }
 }
+
